@@ -51,6 +51,8 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 
 - `NODE_ENV`
 - `PORT`
+- `PAYPAL_CLIENT_ID`
+- `PAYPAL_CLIENT_SECRET`
 
 ## 8. Cómo correr y probar cada parte
 
