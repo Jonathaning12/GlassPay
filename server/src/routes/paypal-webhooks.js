@@ -1,55 +1,128 @@
 const express = require("express");
 
+class RetryableWebhookError extends Error {}
+
+function orderIdFromLink(link) {
+  if (typeof link !== "string") {
+    return null;
+  }
+  const match = link.match(/\/v2\/checkout\/orders\/([^/?]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 function getOrderId(event) {
-  return event.resource?.supplementary_data?.related_ids?.order_id
-    || (event.event_type === "CHECKOUT.ORDER.APPROVED" ? event.resource?.id : null);
+  const relatedOrderId = event.resource?.supplementary_data?.related_ids?.order_id;
+  if (relatedOrderId) {
+    return relatedOrderId;
+  }
+
+  const upLink = event.resource?.links?.find((link) => link.rel === "up");
+  const linkedOrderId = orderIdFromLink(upLink?.href);
+  if (linkedOrderId) {
+    return linkedOrderId;
+  }
+
+  return event.event_type === "CHECKOUT.ORDER.APPROVED" ? event.resource?.id : null;
 }
 
 function getCaptureId(event) {
-  return event.resource?.id
-    || event.resource?.supplementary_data?.related_ids?.capture_id;
+  return event.event_type.startsWith("PAYMENT.CAPTURE.")
+    ? event.resource?.id
+    : null;
 }
 
-async function processEvent(event, { database, paypal }) {
+function createCaptureCoordinator(paypal) {
+  const inFlight = new Map();
+
+  return async (orderId) => {
+    if (!inFlight.has(orderId)) {
+      const capturePromise = paypal.captureOrder(orderId)
+        .finally(() => inFlight.delete(orderId));
+      inFlight.set(orderId, capturePromise);
+    }
+    return inFlight.get(orderId);
+  };
+}
+
+async function processPayPalEvent(event, { database, paypal, captureOrder }) {
   const orderId = getOrderId(event);
-  const captureId = getCaptureId(event);
-  const transaction = (orderId && database.findByOrderId(orderId))
-    || (captureId && database.findByCaptureId(captureId));
+  if (!orderId) {
+    throw new RetryableWebhookError("Webhook has no correlated PayPal order ID");
+  }
 
+  const transaction = database.findByOrderId(orderId);
   if (!transaction) {
-    return;
+    throw new RetryableWebhookError("Transaction is not ready for this PayPal order");
   }
 
-  if (event.event_type === "CHECKOUT.ORDER.APPROVED") {
-    database.updateState(transaction.id, "aprobada");
-    if (!transaction.paypal_capture_id) {
-      const capture = await paypal.captureOrder(orderId);
-      const captureResource = capture.purchase_units?.[0]?.payments?.captures?.[0];
-      if (captureResource?.id) {
-        database.setCapture(transaction.id, captureResource.id);
+  const started = await database.startWebhookEvent(event.id, event.event_type);
+  if (!started) {
+    console.info("PayPal webhook ignored as duplicate", {
+      eventId: event.id,
+      eventType: event.event_type,
+    });
+    return { duplicate: true };
+  }
+
+  try {
+    if (event.event_type === "CHECKOUT.ORDER.APPROVED") {
+      const changed = await database.transitionState(transaction.id, "aprobada");
+      console.info("PayPal order approval processed", {
+        eventId: event.id,
+        orderId,
+        stateChanged: changed,
+      });
+
+      const current = database.getTransaction(transaction.id);
+      if (!current.paypal_capture_id && current.state !== "pagada") {
+        console.info("PayPal capture requested", { eventId: event.id, orderId });
+        const capture = await captureOrder(orderId);
+        const captureResource = capture.purchase_units?.[0]?.payments?.captures?.[0];
+        if (captureResource?.id) {
+          await database.setCapture(transaction.id, captureResource.id);
+        }
       }
+    } else if (event.event_type === "PAYMENT.CAPTURE.COMPLETED") {
+      const captureId = getCaptureId(event);
+      if (!captureId) {
+        throw new RetryableWebhookError("Capture webhook has no capture ID");
+      }
+      await database.setCapture(transaction.id, captureId);
+      const changed = await database.transitionState(transaction.id, "pagada");
+      console.info("PayPal capture marked as paid", {
+        eventId: event.id,
+        orderId,
+        stateChanged: changed,
+      });
+    } else if (event.event_type === "PAYMENT.CAPTURE.DENIED") {
+      const captureId = getCaptureId(event);
+      if (captureId) {
+        await database.setCapture(transaction.id, captureId);
+      }
+      const changed = await database.transitionState(transaction.id, "fallida");
+      console.info("PayPal capture marked as failed", {
+        eventId: event.id,
+        orderId,
+        stateChanged: changed,
+      });
+    } else {
+      console.info("PayPal webhook ignored as unsupported", {
+        eventId: event.id,
+        eventType: event.event_type,
+      });
     }
-    return;
-  }
 
-  if (event.event_type === "PAYMENT.CAPTURE.COMPLETED") {
-    if (captureId) {
-      database.setCapture(transaction.id, captureId);
-    }
-    database.updateState(transaction.id, "pagada");
-    return;
-  }
-
-  if (event.event_type === "PAYMENT.CAPTURE.DENIED") {
-    if (captureId) {
-      database.setCapture(transaction.id, captureId);
-    }
-    database.updateState(transaction.id, "fallida");
+    await database.completeWebhookEvent(event.id);
+    return { duplicate: false };
+  } catch (error) {
+    await database.failWebhookEvent(event.id);
+    throw error;
   }
 }
 
 function createPayPalWebhooksRouter({ database, paypal }) {
   const router = express.Router();
+  const captureOrder = createCaptureCoordinator(paypal);
 
   router.post("/", async (request, response) => {
     if (!Buffer.isBuffer(request.body)) {
@@ -67,9 +140,11 @@ function createPayPalWebhooksRouter({ database, paypal }) {
     try {
       verified = await paypal.verifyWebhookSignature(request.headers, event);
     } catch {
+      console.warn("PayPal webhook verification failed");
       return response.status(401).json({ error: "webhook verification failed" });
     }
     if (!verified) {
+      console.warn("PayPal webhook signature rejected");
       return response.status(401).json({ error: "webhook verification failed" });
     }
 
@@ -78,21 +153,37 @@ function createPayPalWebhooksRouter({ database, paypal }) {
       return response.status(400).json({ error: "invalid webhook event" });
     }
 
-    if (!database.startWebhookEvent(eventId, event.event_type)) {
-      return response.sendStatus(200);
-    }
+    console.info("PayPal webhook verified", {
+      eventId,
+      eventType: event.event_type,
+    });
 
-    response.sendStatus(200);
     try {
-      await processEvent(event, { database, paypal });
-      database.completeWebhookEvent(eventId);
-    } catch {
-      database.failWebhookEvent(eventId);
-      console.error("PayPal webhook processing failed", { eventId, eventType: event.event_type });
+      await processPayPalEvent(event, { database, paypal, captureOrder });
+      return response.sendStatus(200);
+    } catch (error) {
+      if (error instanceof RetryableWebhookError) {
+        console.warn("PayPal webhook deferred for retry", {
+          eventId,
+          eventType: event.event_type,
+        });
+        return response.sendStatus(503);
+      }
+
+      console.error("PayPal webhook processing failed", {
+        eventId,
+        eventType: event.event_type,
+      });
+      return response.sendStatus(500);
     }
   });
 
   return router;
 }
 
-module.exports = { createPayPalWebhooksRouter };
+module.exports = {
+  RetryableWebhookError,
+  createPayPalWebhooksRouter,
+  getOrderId,
+  processPayPalEvent,
+};

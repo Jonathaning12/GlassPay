@@ -50,6 +50,13 @@ La respuesta esperada es HTTP 201 con `paymentId` y `approveUrl`. El pago
 solo pasa a `pagada` después de la aprobación del pagador, la captura y el
 webhook verificado de PayPal.
 
+Para ejecutar las pruebas automatizadas:
+
+```powershell
+cd server
+npm test
+```
+
 ## Seguridad
 
 El proyecto usa únicamente PayPal Sandbox. Los secretos deben permanecer en

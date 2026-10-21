@@ -49,7 +49,7 @@ function createPaymentsRouter({ database, paypal, config }) {
 
     const paymentId = randomUUID();
     const referenceId = `glasspay-${paymentId}`;
-    database.createTransaction({
+    await database.createTransaction({
       id: paymentId,
       referenceId,
       amount,
@@ -66,13 +66,13 @@ function createPaymentsRouter({ database, paypal, config }) {
         returnUrl: config.paypal.returnUrl,
         cancelUrl: config.paypal.cancelUrl,
       });
-      database.updateOrder(paymentId, order);
+      await database.updateOrder(paymentId, order);
       return response.status(201).json({
         paymentId,
         approveUrl: order.approvalUrl,
       });
     } catch (error) {
-      database.updateState(paymentId, "fallida");
+      await database.transitionState(paymentId, "fallida");
       console.error("PayPal order creation failed", { paymentId });
       return response.status(502).json({ error: "payment provider unavailable" });
     }

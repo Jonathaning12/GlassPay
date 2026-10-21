@@ -47,6 +47,7 @@ async function createDatabase(databasePath) {
   const save = () => {
     fs.writeFileSync(databasePath, Buffer.from(database.export()));
   };
+  let writeQueue = Promise.resolve();
   const now = () => new Date().toISOString();
   const get = (query, parameters = []) => {
     const statement = database.prepare(query);
@@ -55,30 +56,37 @@ async function createDatabase(databasePath) {
     statement.free();
     return result;
   };
-  const run = (query, parameters = []) => {
-    database.run(query, parameters);
-    save();
+  const enqueueWrite = (operation) => {
+    const result = writeQueue.then(() => {
+      const value = operation();
+      save();
+      return value;
+    });
+    writeQueue = result.catch(() => undefined);
+    return result;
   };
 
   save();
 
   return {
     createTransaction(transaction) {
-      const timestamp = now();
-      run(`
-        INSERT INTO transactions
-          (id, reference_id, amount, currency, concept, state, created_at, updated_at)
-        VALUES
-          (?, ?, ?, ?, ?, 'creada', ?, ?)
-      `, [
-        transaction.id,
-        transaction.referenceId,
-        transaction.amount,
-        transaction.currency,
-        transaction.concept,
-        timestamp,
-        timestamp,
-      ]);
+      return enqueueWrite(() => {
+        const timestamp = now();
+        database.run(`
+          INSERT INTO transactions
+            (id, reference_id, amount, currency, concept, state, created_at, updated_at)
+          VALUES
+            (?, ?, ?, ?, ?, 'creada', ?, ?)
+        `, [
+          transaction.id,
+          transaction.referenceId,
+          transaction.amount,
+          transaction.currency,
+          transaction.concept,
+          timestamp,
+          timestamp,
+        ]);
+      });
     },
 
     getTransaction(id) {
@@ -89,58 +97,98 @@ async function createDatabase(databasePath) {
       return get("SELECT * FROM transactions WHERE paypal_order_id = ?", [orderId]);
     },
 
-    findByCaptureId(captureId) {
-      return get("SELECT * FROM transactions WHERE paypal_capture_id = ?", [captureId]);
-    },
-
     updateOrder(id, order) {
-      run(`
-        UPDATE transactions
-        SET paypal_order_id = ?, approval_url = ?, state = 'enviada', updated_at = ?
-        WHERE id = ?
-      `, [order.orderId, order.approvalUrl, now(), id]);
+      return enqueueWrite(() => {
+        database.run(`
+          UPDATE transactions
+          SET paypal_order_id = ?, approval_url = ?, state = 'enviada', updated_at = ?
+          WHERE id = ? AND state = 'creada'
+        `, [order.orderId, order.approvalUrl, now(), id]);
+      });
     },
 
-    updateState(id, state) {
+    transitionState(id, state) {
       if (!TRANSACTION_STATES.has(state)) {
         throw new Error(`Invalid transaction state: ${state}`);
       }
-      run("UPDATE transactions SET state = ?, updated_at = ? WHERE id = ?", [state, now(), id]);
+
+      if (!["enviada", "aprobada", "pagada", "fallida", "expirada"].includes(state)) {
+        throw new Error(`State cannot be transitioned: ${state}`);
+      }
+
+      return enqueueWrite(() => {
+        if (["fallida", "expirada"].includes(state)) {
+          database.run(`
+            UPDATE transactions
+            SET state = ?, updated_at = ?
+            WHERE id = ? AND state NOT IN ('pagada', 'fallida', 'expirada')
+          `, [state, now(), id]);
+        } else {
+          const ranks = {
+            creada: 0,
+            enviada: 1,
+            aprobada: 2,
+            pagada: 3,
+          };
+          database.run(`
+            UPDATE transactions
+            SET state = ?, updated_at = ?
+            WHERE id = ?
+              AND state IN ('creada', 'enviada', 'aprobada')
+              AND CASE state
+                WHEN 'creada' THEN 0
+                WHEN 'enviada' THEN 1
+                WHEN 'aprobada' THEN 2
+                ELSE 3
+              END < ?
+          `, [state, now(), id, ranks[state]]);
+        }
+        return database.getRowsModified() > 0;
+      });
     },
 
     setCapture(id, captureId) {
-      run(`
-        UPDATE transactions
-        SET paypal_capture_id = ?, updated_at = ?
-        WHERE id = ?
-      `, [captureId, now(), id]);
+      return enqueueWrite(() => {
+        database.run(`
+          UPDATE transactions
+          SET paypal_capture_id = ?, updated_at = ?
+          WHERE id = ? AND paypal_capture_id IS NULL
+        `, [captureId, now(), id]);
+      });
     },
 
     startWebhookEvent(eventId, eventType) {
-      const existing = get("SELECT status FROM webhook_events WHERE id = ?", [eventId]);
-      if (existing) {
-        return false;
-      }
-      run(`
-        INSERT INTO webhook_events (id, event_type, status, received_at)
-        VALUES (?, ?, 'processing', ?)
-      `, [eventId, eventType, now()]);
-      return true;
+      return enqueueWrite(() => {
+        const existing = get("SELECT status FROM webhook_events WHERE id = ?", [eventId]);
+        if (existing) {
+          return false;
+        }
+        database.run(`
+          INSERT INTO webhook_events (id, event_type, status, received_at)
+          VALUES (?, ?, 'processing', ?)
+        `, [eventId, eventType, now()]);
+        return true;
+      });
     },
 
     completeWebhookEvent(eventId) {
-      run(`
-        UPDATE webhook_events
-        SET status = 'processed', processed_at = ?
-        WHERE id = ?
-      `, [now(), eventId]);
+      return enqueueWrite(() => {
+        database.run(`
+          UPDATE webhook_events
+          SET status = 'processed', processed_at = ?
+          WHERE id = ?
+        `, [now(), eventId]);
+      });
     },
 
     failWebhookEvent(eventId) {
-      run("DELETE FROM webhook_events WHERE id = ?", [eventId]);
+      return enqueueWrite(() => {
+        database.run("DELETE FROM webhook_events WHERE id = ?", [eventId]);
+      });
     },
 
-    close() {
+    async close() {
+      await writeQueue;
       save();
       database.close();
     },
