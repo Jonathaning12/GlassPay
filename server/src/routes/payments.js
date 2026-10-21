@@ -31,6 +31,10 @@ function parseAmount(value, maxAmount) {
   return amount.toFixed(2);
 }
 
+function isPayPalOrderToken(value) {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(value);
+}
+
 function createPaymentsRouter({ database, paypal, config }) {
   const router = express.Router();
 
@@ -76,6 +80,26 @@ function createPaymentsRouter({ database, paypal, config }) {
       console.error("PayPal order creation failed", { paymentId });
       return response.status(502).json({ error: "payment provider unavailable" });
     }
+  });
+
+  router.get("/status", (request, response) => {
+    const token = request.query.token;
+    if (!isPayPalOrderToken(token)) {
+      return response.status(400).json({ error: "invalid payment token" });
+    }
+
+    const transaction = database.findByOrderId(token);
+    if (!transaction) {
+      return response.status(404).json({ error: "payment not found" });
+    }
+
+    response.set("Cache-Control", "no-store");
+    return response.status(200).json({
+      state: transaction.state,
+      amount: transaction.amount,
+      currency: transaction.currency,
+      concept: transaction.concept,
+    });
   });
 
   router.get("/:id", (request, response) => {

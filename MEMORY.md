@@ -51,8 +51,9 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - `GET /health` en `server/src/index.js`: responde HTTP 200 con `{ status: "ok", service: "glasspay-server" }`.
 - `POST /api/payments`: valida monto, moneda y concepto; crea una orden y devuelve `paymentId` y `approveUrl`.
 - `GET /api/payments/:id`: devuelve estado, monto, moneda, concepto e IDs de PayPal.
-- `GET /paypal/return`: informa que se espera la confirmación; no marca el pago como pagado.
-- `GET /paypal/cancel`: informa cancelación; no marca el pago como pagado.
+- `GET /api/payments/status?token=<orderId>`: devuelve únicamente `state`, `amount`, `currency` y `concept`; no expone IDs ni datos del pagador.
+- `GET /paypal/return`: página responsive en español que consulta el estado hasta 30 segundos; nunca marca el pago como pagado e ignora `PayerID`.
+- `GET /paypal/cancel`: página responsive en español que informa que no se hizo ningún cobro.
 - `POST /webhooks/paypal`: conserva el cuerpo crudo, verifica firma con PayPal, correlaciona capturas por orden y procesa eventos idempotentemente; responde `503` si aún no puede aplicar un evento para provocar reintento.
 - Producción: `https://glasspay-1qdu.onrender.com/health`.
 - PayPal Sandbox confirmado: OAuth `POST /v1/oauth2/token`, Orders API v2 en `/v2/checkout/orders` y verificación en `POST /v1/notifications/verify-webhook-signature`.
@@ -83,6 +84,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Consultar una transacción: `curl.exe http://localhost:3000/api/payments/<paymentId>`; debe devolver su estado.
 - Completar la prueba: abrir `approveUrl` con la cuenta Personal Sandbox, permitir la captura y esperar `PAYMENT.CAPTURE.COMPLETED`; el estado final debe ser `pagada`.
 - Tests: ejecutar `cd server` y `npm test`; deben pasar la prueba de carrera de captura y la prueba de transición monotónica.
+- Las pruebas también cubren respuestas pagadas/fallidas, pago inexistente, HTML UTF-8 y que `PayerID` no se incluya en la página.
 
 ## 9. Problemas conocidos y riesgos
 
@@ -91,6 +93,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - PayPal, webhooks y Render son riesgos principales de integración y demo.
 - El disco gratuito de Render es efímero; SQLite conserva datos durante el proceso, pero no es una persistencia durable para producción.
 - La prueba punta a punta requiere desplegar esta corrección antes de repetir el pago en Render.
+- Las páginas de retorno son temporales y serán reemplazadas por `payer-web/` en la Fase 3.
 
 ## 10. Registro de cambios
 
@@ -99,3 +102,4 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - 2026-10-21: Se implementó el flujo PayPal Sandbox con Orders API v2, SQLite, rutas de pagos y webhooks verificados.
 - 2026-10-21: Se validó una orden Sandbox de punta a punta en Render; terminó en `pagada` y el reenvío del webhook no duplicó el estado.
 - 2026-10-21: Se corrigió la carrera de webhooks con correlación por orden, transiciones monotónicas, cola de escrituras y pruebas automatizadas.
+- 2026-10-21: Se mejoraron las páginas PayPal de retorno/cancelación con consulta segura de estado y pruebas por estado.

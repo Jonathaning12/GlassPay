@@ -32,7 +32,9 @@ El servidor expone:
 
 - `POST /api/payments` para crear una orden y obtener `approveUrl`.
 - `GET /api/payments/:id` para consultar el estado de una transacción.
-- `GET /paypal/return` y `GET /paypal/cancel` para los retornos del pagador.
+- `GET /api/payments/status?token=<orderId>` para consultar solo el estado público del pago.
+- `GET /paypal/return` muestra el estado del pago y consulta hasta 30 segundos.
+- `GET /paypal/cancel` informa que el pago fue cancelado.
 - `POST /webhooks/paypal` para webhooks verificados e idempotentes.
 
 Configura en `server/.env` los valores de `.env.example`. Nunca coloques
@@ -49,6 +51,9 @@ curl.exe -X POST http://localhost:3000/api/payments `
 La respuesta esperada es HTTP 201 con `paymentId` y `approveUrl`. El pago
 solo pasa a `pagada` después de la aprobación del pagador, la captura y el
 webhook verificado de PayPal.
+
+La página de retorno nunca marca el pago como pagado: solo muestra el estado
+que devuelve el servidor. El `PayerID` de PayPal se ignora.
 
 Para ejecutar las pruebas automatizadas:
 
