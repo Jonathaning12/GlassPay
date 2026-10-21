@@ -83,6 +83,9 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - `MAX_PENDING_REQUESTS`
 - `PAYER_WEB_ORIGIN`
 - `VITE_API_URL` (solo `payer-web`)
+- `AI_PROVIDER`
+- `AI_MODEL`
+- `AI_API_KEY`
 
 ## 8. Cómo correr y probar cada parte
 
@@ -118,3 +121,4 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - 2026-10-21: Se corrigió la carrera de webhooks con correlación por orden, transiciones monotónicas, cola de escrituras y pruebas automatizadas.
 - 2026-10-21: Se mejoraron las páginas PayPal de retorno/cancelación con consulta segura de estado y pruebas por estado.
 - 2026-10-21: Se implementó la identidad por QR, solicitudes privadas del pagador, `payer-web` y pruebas de seguridad de Fase 3.
+- 2026-10-21: Se dejaron listas las variables genéricas de configuración para el proveedor de IA de la Fase 4.
