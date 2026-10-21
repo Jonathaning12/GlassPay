@@ -85,7 +85,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - `VITE_API_URL` (solo `payer-web`)
 - `AI_PROVIDER`
 - `AI_MODEL`
-- `AI_API_KEY`
+- `GEMINI_API_KEY`
 
 ## 8. Cómo correr y probar cada parte
 
