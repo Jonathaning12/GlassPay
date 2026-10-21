@@ -1,0 +1,19 @@
+{
+  "name": "glasspay-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GlassPay API server",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^5.1.0"
+  }
+}
+

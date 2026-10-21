@@ -18,7 +18,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 
 ## 3. Estado por fases
 
-- Fase 1 - Setup: pendiente (2026-10-20).
+- Fase 1 - Setup: en curso; estructura y `/health` local terminados, despliegue en Render pendiente (2026-10-20).
 - Fase 2 - PayPal: pendiente.
 - Fase 3 - QR y página del pagador: pendiente.
 - Fase 4 - Agente de IA: pendiente.
@@ -45,15 +45,18 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 
 ## 6. Endpoints y contratos de datos vigentes
 
-- Aún no definidos. La Fase 1 añadirá `GET /health`.
+- `GET /health` en `server/src/index.js`: responde HTTP 200 con `{ status: "ok", service: "glasspay-server" }`.
 
 ## 7. Variables de entorno necesarias
 
-- Aún no definidas. Se documentarán en `.env.example` sin valores secretos.
+- `NODE_ENV`
+- `PORT`
 
 ## 8. Cómo correr y probar cada parte
 
-- Aún no definido. Se documentará al completar la Fase 1.
+- Servidor: `cd server`, `npm install`, copiar `.env.example` a `.env` y ejecutar `npm start`.
+- Prueba: abrir `http://localhost:3000/health`; debe responder `status: "ok"`.
+- Render: usar `render.yaml`; el servicio tiene raíz `server`, build `npm install` y start `npm start`.
 
 ## 9. Problemas conocidos y riesgos
 
@@ -64,3 +67,4 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 ## 10. Registro de cambios
 
 - 2026-10-20: Se registraron decisiones iniciales y respuestas de configuración para comenzar la Fase 1.
+- 2026-10-20: Se creó el monorepo base, el servidor Express y `GET /health`; queda pendiente validar el despliegue en Render.
