@@ -32,4 +32,3 @@ El proyecto usa únicamente PayPal Sandbox. Los secretos deben permanecer en
 variables de entorno del servidor y nunca deben añadirse al repositorio.
 
 Consulta `AGENTS.md` para las decisiones, fases y reglas de trabajo del proyecto.
-
