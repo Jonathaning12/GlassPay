@@ -47,6 +47,14 @@ function createConfig() {
       maxPendingRequests: Number.parseInt(process.env.MAX_PENDING_REQUESTS || "5", 10),
       corsOrigin: process.env.PAYER_WEB_ORIGIN || "http://localhost:5173",
     },
+    agent: {
+      provider: (process.env.AI_PROVIDER || "gemini").toLowerCase(),
+      model: process.env.AI_MODEL || "gemini-2.5-flash-lite",
+      apiKey: process.env.GEMINI_API_KEY || "",
+      timeoutMs: Number.parseInt(process.env.AI_TIMEOUT_MS || "8000", 10),
+      dailyCallLimit: Number.parseInt(process.env.AI_DAILY_CALL_LIMIT || "100", 10),
+      proposalTtlSeconds: Number.parseInt(process.env.CHARGE_PROPOSAL_TTL_SECONDS || "120", 10),
+    },
     databasePath: path.resolve(process.env.DATABASE_PATH || ".data/glasspay.db"),
   };
 }

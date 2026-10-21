@@ -79,6 +79,19 @@ async function createDatabase(databasePath) {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS charge_proposals (
+      id TEXT PRIMARY KEY,
+      resolution_hash TEXT NOT NULL,
+      amount TEXT NOT NULL,
+      currency TEXT NOT NULL,
+      concept TEXT NOT NULL,
+      method TEXT NOT NULL,
+      status TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL
+    );
   `);
   const transactionColumns = database.exec("PRAGMA table_info(transactions)")[0]?.values || [];
   if (!transactionColumns.some(([, column]) => column === "payer_id")) {
@@ -275,6 +288,17 @@ async function createDatabase(databasePath) {
       });
     },
 
+    findPayerResolution(hash) {
+      return get(`
+        SELECT r.payer_id, p.display_name
+        FROM payer_resolutions r
+        JOIN payer_profiles p ON p.id = r.payer_id
+        WHERE r.resolution_hash = ?
+          AND r.used_at IS NULL
+          AND r.expires_at > ?
+      `, [hash, now()]);
+    },
+
     expirePaymentRequests() {
       return enqueueWrite(() => {
         const timestamp = now();
@@ -366,6 +390,44 @@ async function createDatabase(databasePath) {
           WHERE id = ? AND state = 'pendiente_de_pagador'
         `, [timestamp, request.transaction_id]);
         return database.getRowsModified() > 0;
+      });
+    },
+
+    createChargeProposal(proposal) {
+      return enqueueWrite(() => {
+        database.run(`
+          INSERT INTO charge_proposals
+            (id, resolution_hash, amount, currency, concept, method, status, expires_at, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'ready', ?, ?)
+        `, [
+          proposal.id,
+          proposal.resolutionHash,
+          proposal.amount,
+          proposal.currency,
+          proposal.concept,
+          proposal.method,
+          proposal.expiresAt,
+          now(),
+        ]);
+      });
+    },
+
+    consumeChargeProposal(proposalId) {
+      return enqueueWrite(() => {
+        const timestamp = now();
+        database.run(`
+          UPDATE charge_proposals
+          SET status = 'used', used_at = ?
+          WHERE id = ? AND status = 'ready' AND used_at IS NULL AND expires_at > ?
+        `, [timestamp, proposalId, timestamp]);
+        if (database.getRowsModified() !== 1) {
+          return null;
+        }
+        return get(`
+          SELECT id, resolution_hash, amount, currency, concept, method
+          FROM charge_proposals
+          WHERE id = ?
+        `, [proposalId]);
       });
     },
 

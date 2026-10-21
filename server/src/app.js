@@ -1,10 +1,11 @@
 const express = require("express");
+const { createAgentRouter } = require("./routes/agent");
 const { createPayPalPagesRouter } = require("./routes/paypal-pages");
 const { createPaymentsRouter } = require("./routes/payments");
 const { createPayersRouter } = require("./routes/payers");
 const { createPayPalWebhooksRouter } = require("./routes/paypal-webhooks");
 
-function createApp({ config, database, paypal }) {
+function createApp({ config, database, paypal, agent }) {
   const app = express();
   const payerConfig = config.payers || { corsOrigin: "" };
 
@@ -36,6 +37,7 @@ function createApp({ config, database, paypal }) {
   );
   app.use(express.json({ limit: "100kb" }));
   app.use("/api/payers", createPayersRouter({ database, paypal, config }));
+  app.use("/api/agent", createAgentRouter({ database, agent, paypal, config }));
   app.use("/api/payments", createPaymentsRouter({ database, paypal, config }));
   app.use("/paypal", createPayPalPagesRouter());
 

@@ -9,6 +9,10 @@ const {
   hashSessionSecret,
   verifySessionSecret,
 } = require("../services/payers");
+const {
+  PaymentRequestError,
+  createPaymentRequestFromResolutionHash,
+} = require("../services/payment-requests");
 const { parseAmount, sanitizeConcept } = require("./payments");
 
 function sanitizeDisplayName(value) {
@@ -138,54 +142,22 @@ function createPayersRouter({ database, paypal, config }) {
       return response.status(400).json({ error: "payment request is invalid" });
     }
 
-    await database.expirePaymentRequests();
-    const resolution = await database.consumePayerResolution(hashOpaqueToken(resolutionId));
-    if (!resolution) {
-      return response.status(404).json({ error: "payment request cannot be created" });
-    }
-    if (database.countPendingRequests(resolution.payer_id) >= config.payers.maxPendingRequests) {
-      return response.status(409).json({ error: "payer has too many pending requests" });
-    }
-
-    const transactionId = randomUUID();
-    const requestId = randomUUID();
-    const referenceId = `glasspay-${transactionId}`;
-    const expiresAt = new Date(Date.now() + config.payers.paymentRequestTtlSeconds * 1000).toISOString();
-    await database.createTransaction({
-      id: transactionId,
-      payerId: resolution.payer_id,
-      referenceId,
-      amount,
-      currency,
-      concept,
-      state: "pendiente_de_pagador",
-    });
-
     try {
-      const order = await paypal.createOrder({
+      const result = await createPaymentRequestFromResolutionHash({
+        database,
+        paypal,
+        config,
+        resolutionHash: hashOpaqueToken(resolutionId),
         amount,
         currency,
-        description: concept,
-        referenceId,
-        returnUrl: config.paypal.returnUrl,
-        cancelUrl: config.paypal.cancelUrl,
+        concept,
       });
-      await database.updateOrder(transactionId, order, "pendiente_de_pagador");
-      await database.createPaymentRequest({
-        id: requestId,
-        payerId: resolution.payer_id,
-        resolutionHash: hashOpaqueToken(resolutionId),
-        transactionId,
-        expiresAt,
-      });
-      return response.status(201).json({
-        requestId,
-        state: "pendiente_de_pagador",
-      });
-    } catch {
-      await database.transitionState(transactionId, "fallida");
-      console.error("PayPal payment request creation failed", { requestId });
-      return response.status(502).json({ error: "payment provider unavailable" });
+      return response.status(201).json(result);
+    } catch (error) {
+      if (error instanceof PaymentRequestError) {
+        return response.status(error.status).json({ error: error.message });
+      }
+      return response.status(500).json({ error: "payment request failed" });
     }
   });
 

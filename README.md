@@ -85,6 +85,33 @@ Endpoints de identidad:
 - `GET /api/payers/me/payment-requests` lista solicitudes autenticadas del pagador.
 - `POST /api/payers/payment-requests/:requestId/reject` rechaza una solicitud propia.
 
+## Agente de IA
+
+El servidor usa Gemini para convertir una frase transcrita en una propuesta
+estructurada. La clave se configura únicamente en `GEMINI_API_KEY`; la IA no
+puede ejecutar cobros ni acceder a la base de datos. Si Gemini falla, tarda o
+responde con límite 429, se usa el parser determinista de respaldo.
+
+Endpoints:
+
+- `POST /api/agent/interpret` recibe `resolutionId` y `text`; devuelve una propuesta o una aclaración.
+- `POST /api/agent/confirm` recibe solo `proposalId` y crea la solicitud de pago sin devolver `approveUrl`.
+
+La evaluación local de 25 frases no consume créditos:
+
+```powershell
+cd server
+npm run evaluate:agent
+```
+
+La corrida opcional contra Gemini requiere `GEMINI_API_KEY` y espera 15 segundos
+entre frases:
+
+```powershell
+$env:AI_MANUAL_DELAY_MS="15000"
+npm run evaluate:agent -- --real
+```
+
 Para ejecutar las pruebas automatizadas:
 
 ```powershell

@@ -15,14 +15,14 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - `android/`: Kotlin + Jetpack Compose; integración prevista con Meta Wearables DAT.
 - Despliegue: Render; el servidor puede servir la build de `payer-web/`.
 - URL pública: `https://glasspay-1qdu.onrender.com`.
-- Estado: Fase 3 implementada localmente; falta probarla en dos celulares y desplegar `payer-web`.
+- Estado: Fase 4 implementada localmente; falta ejecutar una prueba manual opcional con Gemini y desplegar los cambios.
 
 ## 3. Estado por fases
 
 - Fase 1 - Setup: terminada (2026-10-20); `/health` responde localmente y en Render.
 - Fase 2 - PayPal: en curso (2026-10-21); el pago Sandbox y la idempotencia del webhook fueron validados; falta confirmar saldo Business y revisar logs manualmente.
 - Fase 3 - QR y página del pagador: en curso (2026-10-21); backend, seguridad, pruebas y frontend local terminados; falta prueba con celular y despliegue.
-- Fase 4 - Agente de IA: pendiente.
+- Fase 4 - Agente de IA: en curso (2026-10-21); Gemini, fallback determinista, propuestas de un solo uso y evaluación local implementados.
 - Fase 5 - App Android: pendiente.
 - Fase 6 - Tiempo real y pulido: pendiente.
 - Fase 7 - Extras: pendiente.
@@ -31,7 +31,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 
 - Android confirmado; teléfono de pruebas: Samsung SM-A146U con Android 14.
 - No hay lentes físicos; se usará Mock Device Kit y la cámara del celular como respaldo.
-- La capa de IA será intercambiable; el proveedor/modelo queda pendiente.
+- La capa de IA es intercambiable; el proveedor actual es Gemini `gemini-2.5-flash-lite` mediante `GEMINI_API_KEY`.
 - País y moneda por defecto: México y MXN; interfaz y voz en español.
 - Tope inicial de cobro: $1,000 MXN.
 - Seguridad de demo: confirmación explícita del cobrador y aprobación del pagador.
@@ -62,6 +62,8 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Eventos manejados: `CHECKOUT.ORDER.APPROVED`, `PAYMENT.CAPTURE.COMPLETED` y `PAYMENT.CAPTURE.DENIED`.
 - Fase 3: `POST /api/payers`, `POST /api/payers/:id/qr`, `POST /api/payers/resolve`, `POST /api/payers/payment-requests`, `GET /api/payers/me/payment-requests` y `POST /api/payers/payment-requests/:requestId/reject`.
 - Las respuestas del cobrador nunca incluyen `approveUrl`; solo el listado autenticado del pagador lo entrega.
+- Fase 4: `POST /api/agent/interpret` recibe `resolutionId` y texto transcrito; `POST /api/agent/confirm` recibe solo `proposalId` y crea la solicitud de pago.
+- Las propuestas se almacenan en `charge_proposals` con ID aleatorio de 256 bits, expiración y consumo atómico de un solo uso.
 
 ## 7. Variables de entorno necesarias
 
@@ -100,6 +102,8 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Las pruebas también cubren respuestas pagadas/fallidas, pago inexistente, HTML UTF-8 y que `PayerID` no se incluya en la página.
 - `payer-web`: ejecutar `cd payer-web`, `npm install`, configurar opcionalmente `VITE_API_URL` y ejecutar `npm run dev`; el build se valida con `npm run build`.
 - Render Static Site: `rootDir=payer-web`, build `npm install && npm run build`, publish `dist`, `VITE_API_URL=https://glasspay-1qdu.onrender.com`; luego actualizar `PAYER_WEB_ORIGIN` del servidor con la URL del Static Site.
+- Evaluación local: ejecutar `cd server` y `npm run evaluate:agent`; debe aceptar 25/25 casos usando el parser determinista sin consumir créditos.
+- Evaluación manual opcional: configurar `GEMINI_API_KEY` y ejecutar `npm run evaluate:agent -- --real`; usa una pausa de 15 segundos entre casos (`AI_MANUAL_DELAY_MS` configurable) para respetar el nivel gratuito.
 
 ## 9. Problemas conocidos y riesgos
 
@@ -111,6 +115,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Las páginas de retorno son temporales y serán reemplazadas por `payer-web/` en la Fase 3.
 - El frontend requiere un Static Site separado en Render o un hosting equivalente; su origen debe coincidir con `PAYER_WEB_ORIGIN`.
 - Render confirma que un Static Site de monorepo puede usar `rootDir=payer-web` y publicar `dist`; los archivos fuera de esa raíz no están disponibles durante el build.
+- Gemini tiene límites bajos en el nivel gratuito; el servidor aplica límite diario, rate limiting, timeout, un reintento ante 429 y fallback determinista.
 
 ## 10. Registro de cambios
 
@@ -122,3 +127,4 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - 2026-10-21: Se mejoraron las páginas PayPal de retorno/cancelación con consulta segura de estado y pruebas por estado.
 - 2026-10-21: Se implementó la identidad por QR, solicitudes privadas del pagador, `payer-web` y pruebas de seguridad de Fase 3.
 - 2026-10-21: Se dejaron listas las variables genéricas de configuración para el proveedor de IA de la Fase 4.
+- 2026-10-21: Se implementó el agente Gemini, fallback determinista, propuestas de cobro de un solo uso y evaluación de 25 casos.
