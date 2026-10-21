@@ -175,3 +175,40 @@ Tareas:
 7. Pruebas: entrégame comandos curl exactos para cada paso y el resultado esperado en cada uno.
 
 Cuando termines: actualiza MEMORY.md (endpoints, estados, variables, cómo probar, riesgos) y dime qué pasos manuales debo hacer yo en el portal de PayPal.
+
+
+# FASE 3 - Identidad por QR y página del pagador
+
+Contexto: las Fases 1 y 2 están terminadas (servidor Express, PayPal Sandbox, webhooks verificados, estados monótonos, sql.js). Lee MEMORY.md y AGENTS.md antes de empezar. Antes de escribir código, muéstrame un plan corto (archivos que tocarás, tablas nuevas, endpoints y decisiones) y espera mi aprobación.
+
+Objetivo: el pagador genera un QR con un token opaco; el cobrador lo resuelve; se crea una solicitud de pago que aparece en el celular del pagador, quien la aprueba con PayPal o la rechaza.
+
+Servidor (server/):
+1. Tabla de perfiles de pagador: id, nombre visible (saneado, longitud máxima), secreto de sesión (se guarda solo su hash), fecha de creación.
+2. Tokens de QR: aleatorios y no adivinables (mínimo 128 bits), de vida corta (por ejemplo 2-5 minutos, configurable), renovables, y guardados solo como hash. Un token expirado o inexistente devuelve el mismo error genérico. El QR no debe contener nombre, correo ni ningún dato personal.
+3. Endpoints (propón nombres coherentes con los existentes):
+   - Crear perfil de pagador (devuelve el secreto de sesión una sola vez).
+   - Emitir/renovar token de QR (requiere el secreto de sesión en un header, no en la URL).
+   - Resolver token de QR (lo usa el cobrador): devuelve solo el nombre visible y un identificador de resolución de corta vida.
+   - Crear solicitud de pago para un pagador resuelto (reutiliza la lógica de Fase 2 con las mismas validaciones de monto, moneda y concepto). Guarda la solicitud vinculada al pagador. El approveUrl NO se devuelve al cobrador.
+   - Listar solicitudes pendientes del pagador (requiere su secreto de sesión): devuelve monto, moneda, concepto, estado y el approveUrl solo a él.
+   - Rechazar solicitud (solo el pagador dueño).
+4. Estados nuevos o ajustados: pendiente_de_pagador, rechazada, expirada. Las solicitudes pendientes expiran (por ejemplo a los 10 minutos). Mantén las transiciones monótonas y que "pagada" solo se asigne por webhook verificado.
+5. Seguridad: limitación de tasa (rate limiting) en resolver token y crear perfil; CORS restringido al origen de payer-web (configurable por variable de entorno); validación y saneamiento de todas las entradas; comparación de secretos en tiempo constante; errores genéricos; sin secretos, tokens ni hashes en logs. Un tope máximo de solicitudes pendientes por pagador.
+6. Variables de entorno nuevas: documéntalas en .env.example (solo nombres o valores no sensibles) y dime cuáles debo agregar en Render.
+
+Página del pagador (payer-web/, React + Vite):
+1. Pantalla "Mi QR": pide un nombre, crea el perfil, muestra el QR (librería ligera) y lo renueva automáticamente antes de que expire, con una cuenta regresiva visible. Guarda el secreto de sesión en localStorage dentro de try/catch.
+2. Pantalla de solicitudes: consulta cada 2 segundos las pendientes (polling; SSE queda para la Fase 6). Muestra quién cobra, monto, concepto y dos botones: "Aprobar con PayPal" y "Rechazar".
+3. Pantalla de resultado: "Pago recibido" o el estado correspondiente, consultando el estado hasta que se confirme.
+4. Diseño: mobile-first, minimalista, accesible, en español, con estados de carga y error claros. Estilo sobrio, pensado para evolucionar a un HUD.
+5. La URL del backend sale de una variable de entorno de Vite (VITE_API_URL). Sin secretos en el frontend.
+
+Despliegue:
+- Recomiéndame una opción y justifícala: (a) Render Static Site para payer-web, con CORS restringido; o (b) servir la build desde Express. Verifica en la documentación de Render si con Root Directory = server se puede construir payer-web; no lo asumas.
+
+Pruebas:
+- Pruebas automatizadas: token expirado, token reutilizado o inexistente, secreto de sesión incorrecto, solicitud de otro pagador, límite de tasa, estados monótonos, y que el approveUrl nunca aparezca en las respuestas al cobrador.
+- Dame comandos curl para simular al cobrador y los pasos exactos para probar con mi celular.
+
+Al terminar: actualiza MEMORY.md (endpoints, tablas, estados, variables locales vs producción, riesgos). Recuerda que el disco de Render es efímero: si la base se vacía, los perfiles y QR dejan de ser válidos; propón una forma de mitigarlo para la demo.

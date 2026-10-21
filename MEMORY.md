@@ -15,13 +15,13 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - `android/`: Kotlin + Jetpack Compose; integración prevista con Meta Wearables DAT.
 - Despliegue: Render; el servidor puede servir la build de `payer-web/`.
 - URL pública: `https://glasspay-1qdu.onrender.com`.
-- Estado: Fase 2 implementada localmente; falta ejecutar el pago real Sandbox.
+- Estado: Fase 3 implementada localmente; falta probarla en dos celulares y desplegar `payer-web`.
 
 ## 3. Estado por fases
 
 - Fase 1 - Setup: terminada (2026-10-20); `/health` responde localmente y en Render.
-- Fase 2 - PayPal: en curso (2026-10-21); el pago Sandbox y la idempotencia del webhook fueron validados; la corrección de la carrera queda lista para desplegar y falta confirmar saldo Business y revisar logs manualmente.
-- Fase 3 - QR y página del pagador: pendiente.
+- Fase 2 - PayPal: en curso (2026-10-21); el pago Sandbox y la idempotencia del webhook fueron validados; falta confirmar saldo Business y revisar logs manualmente.
+- Fase 3 - QR y página del pagador: en curso (2026-10-21); backend, seguridad, pruebas y frontend local terminados; falta prueba con celular y despliegue.
 - Fase 4 - Agente de IA: pendiente.
 - Fase 5 - App Android: pendiente.
 - Fase 6 - Tiempo real y pulido: pendiente.
@@ -40,6 +40,8 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Se eligió Orders API v2 sobre Invoicing API porque el flujo requiere aprobación y captura inmediata desde el teléfono del pagador.
 - La persistencia usa `sql.js` sobre SQLite para evitar dependencias nativas; el archivo local está en `.data/glasspay.db`.
 - Las transiciones de estado usan una sentencia SQL atómica monotónica y las escrituras de `sql.js` se serializan mediante una cola.
+- Los secretos de sesión y tokens QR se generan aleatoriamente y solo se guardan como hashes; el frontend conserva el secreto en `localStorage`.
+- `payer-web` usa polling de solicitudes cada 2 segundos; SSE queda reservado para la Fase 6.
 
 ## 5. Preguntas abiertas
 
@@ -58,6 +60,8 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Producción: `https://glasspay-1qdu.onrender.com/health`.
 - PayPal Sandbox confirmado: OAuth `POST /v1/oauth2/token`, Orders API v2 en `/v2/checkout/orders` y verificación en `POST /v1/notifications/verify-webhook-signature`.
 - Eventos manejados: `CHECKOUT.ORDER.APPROVED`, `PAYMENT.CAPTURE.COMPLETED` y `PAYMENT.CAPTURE.DENIED`.
+- Fase 3: `POST /api/payers`, `POST /api/payers/:id/qr`, `POST /api/payers/resolve`, `POST /api/payers/payment-requests`, `GET /api/payers/me/payment-requests` y `POST /api/payers/payment-requests/:requestId/reject`.
+- Las respuestas del cobrador nunca incluyen `approveUrl`; solo el listado autenticado del pagador lo entrega.
 
 ## 7. Variables de entorno necesarias
 
@@ -73,6 +77,12 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - `PAYMENT_DEFAULT_CURRENCY`
 - `PAYMENT_ALLOWED_CURRENCIES`
 - `DATABASE_PATH`
+- `QR_TOKEN_TTL_SECONDS`
+- `QR_RESOLUTION_TTL_SECONDS`
+- `PAYMENT_REQUEST_TTL_SECONDS`
+- `MAX_PENDING_REQUESTS`
+- `PAYER_WEB_ORIGIN`
+- `VITE_API_URL` (solo `payer-web`)
 
 ## 8. Cómo correr y probar cada parte
 
@@ -85,6 +95,8 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Completar la prueba: abrir `approveUrl` con la cuenta Personal Sandbox, permitir la captura y esperar `PAYMENT.CAPTURE.COMPLETED`; el estado final debe ser `pagada`.
 - Tests: ejecutar `cd server` y `npm test`; deben pasar la prueba de carrera de captura y la prueba de transición monotónica.
 - Las pruebas también cubren respuestas pagadas/fallidas, pago inexistente, HTML UTF-8 y que `PayerID` no se incluya en la página.
+- `payer-web`: ejecutar `cd payer-web`, `npm install`, configurar opcionalmente `VITE_API_URL` y ejecutar `npm run dev`; el build se valida con `npm run build`.
+- Render Static Site: `rootDir=payer-web`, build `npm install && npm run build`, publish `dist`, `VITE_API_URL=https://glasspay-1qdu.onrender.com`; luego actualizar `PAYER_WEB_ORIGIN` del servidor con la URL del Static Site.
 
 ## 9. Problemas conocidos y riesgos
 
@@ -94,6 +106,8 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - El disco gratuito de Render es efímero; SQLite conserva datos durante el proceso, pero no es una persistencia durable para producción.
 - La prueba punta a punta requiere desplegar esta corrección antes de repetir el pago en Render.
 - Las páginas de retorno son temporales y serán reemplazadas por `payer-web/` en la Fase 3.
+- El frontend requiere un Static Site separado en Render o un hosting equivalente; su origen debe coincidir con `PAYER_WEB_ORIGIN`.
+- Render confirma que un Static Site de monorepo puede usar `rootDir=payer-web` y publicar `dist`; los archivos fuera de esa raíz no están disponibles durante el build.
 
 ## 10. Registro de cambios
 
@@ -103,3 +117,4 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - 2026-10-21: Se validó una orden Sandbox de punta a punta en Render; terminó en `pagada` y el reenvío del webhook no duplicó el estado.
 - 2026-10-21: Se corrigió la carrera de webhooks con correlación por orden, transiciones monotónicas, cola de escrituras y pruebas automatizadas.
 - 2026-10-21: Se mejoraron las páginas PayPal de retorno/cancelación con consulta segura de estado y pruebas por estado.
+- 2026-10-21: Se implementó la identidad por QR, solicitudes privadas del pagador, `payer-web` y pruebas de seguridad de Fase 3.

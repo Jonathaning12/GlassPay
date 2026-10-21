@@ -125,4 +125,4 @@ function createPaymentsRouter({ database, paypal, config }) {
   return router;
 }
 
-module.exports = { createPaymentsRouter };
+module.exports = { createPaymentsRouter, parseAmount, sanitizeConcept };

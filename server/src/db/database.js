@@ -4,11 +4,13 @@ const initSqlJs = require("sql.js");
 
 const TRANSACTION_STATES = new Set([
   "creada",
+  "pendiente_de_pagador",
   "enviada",
   "aprobada",
   "pagada",
   "fallida",
   "expirada",
+  "rechazada",
 ]);
 
 async function createDatabase(databasePath) {
@@ -26,6 +28,7 @@ async function createDatabase(databasePath) {
       paypal_order_id TEXT UNIQUE,
       paypal_capture_id TEXT UNIQUE,
       reference_id TEXT NOT NULL UNIQUE,
+      payer_id TEXT,
       amount TEXT NOT NULL,
       currency TEXT NOT NULL,
       concept TEXT NOT NULL,
@@ -42,7 +45,45 @@ async function createDatabase(databasePath) {
       received_at TEXT NOT NULL,
       processed_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS payer_profiles (
+      id TEXT PRIMARY KEY,
+      display_name TEXT NOT NULL,
+      session_salt TEXT NOT NULL,
+      session_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS qr_tokens (
+      token_hash TEXT PRIMARY KEY,
+      payer_id TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS payer_resolutions (
+      resolution_hash TEXT PRIMARY KEY,
+      payer_id TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS payment_requests (
+      id TEXT PRIMARY KEY,
+      payer_id TEXT NOT NULL,
+      resolution_hash TEXT NOT NULL UNIQUE,
+      transaction_id TEXT NOT NULL UNIQUE,
+      state TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
+  const transactionColumns = database.exec("PRAGMA table_info(transactions)")[0]?.values || [];
+  if (!transactionColumns.some(([, column]) => column === "payer_id")) {
+    database.run("ALTER TABLE transactions ADD COLUMN payer_id TEXT");
+  }
 
   const save = () => {
     fs.writeFileSync(databasePath, Buffer.from(database.export()));
@@ -55,6 +96,16 @@ async function createDatabase(databasePath) {
     const result = statement.step() ? statement.getAsObject() : null;
     statement.free();
     return result;
+  };
+  const all = (query, parameters = []) => {
+    const statement = database.prepare(query);
+    statement.bind(parameters);
+    const results = [];
+    while (statement.step()) {
+      results.push(statement.getAsObject());
+    }
+    statement.free();
+    return results;
   };
   const enqueueWrite = (operation) => {
     const result = writeQueue.then(() => {
@@ -74,15 +125,17 @@ async function createDatabase(databasePath) {
         const timestamp = now();
         database.run(`
           INSERT INTO transactions
-            (id, reference_id, amount, currency, concept, state, created_at, updated_at)
+            (id, reference_id, payer_id, amount, currency, concept, state, created_at, updated_at)
           VALUES
-            (?, ?, ?, ?, ?, 'creada', ?, ?)
+            (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
           transaction.id,
           transaction.referenceId,
+          transaction.payerId || null,
           transaction.amount,
           transaction.currency,
           transaction.concept,
+          transaction.state || "creada",
           timestamp,
           timestamp,
         ]);
@@ -97,13 +150,13 @@ async function createDatabase(databasePath) {
       return get("SELECT * FROM transactions WHERE paypal_order_id = ?", [orderId]);
     },
 
-    updateOrder(id, order) {
+    updateOrder(id, order, state = "enviada") {
       return enqueueWrite(() => {
         database.run(`
           UPDATE transactions
-          SET paypal_order_id = ?, approval_url = ?, state = 'enviada', updated_at = ?
-          WHERE id = ? AND state = 'creada'
-        `, [order.orderId, order.approvalUrl, now(), id]);
+          SET paypal_order_id = ?, approval_url = ?, state = ?, updated_at = ?
+          WHERE id = ? AND state IN ('creada', 'pendiente_de_pagador')
+        `, [order.orderId, order.approvalUrl, state, now(), id]);
       });
     },
 
@@ -126,20 +179,22 @@ async function createDatabase(databasePath) {
         } else {
           const ranks = {
             creada: 0,
-            enviada: 1,
-            aprobada: 2,
-            pagada: 3,
+            pendiente_de_pagador: 1,
+            enviada: 2,
+            aprobada: 3,
+            pagada: 4,
           };
           database.run(`
             UPDATE transactions
             SET state = ?, updated_at = ?
             WHERE id = ?
-              AND state IN ('creada', 'enviada', 'aprobada')
+              AND state IN ('creada', 'pendiente_de_pagador', 'enviada', 'aprobada')
               AND CASE state
                 WHEN 'creada' THEN 0
-                WHEN 'enviada' THEN 1
-                WHEN 'aprobada' THEN 2
-                ELSE 3
+                WHEN 'pendiente_de_pagador' THEN 1
+                WHEN 'enviada' THEN 2
+                WHEN 'aprobada' THEN 3
+                ELSE 4
               END < ?
           `, [state, now(), id, ranks[state]]);
         }
@@ -154,6 +209,163 @@ async function createDatabase(databasePath) {
           SET paypal_capture_id = ?, updated_at = ?
           WHERE id = ? AND paypal_capture_id IS NULL
         `, [captureId, now(), id]);
+      });
+    },
+
+    createPayerProfile(profile) {
+      return enqueueWrite(() => {
+        database.run(`
+          INSERT INTO payer_profiles (id, display_name, session_salt, session_hash, created_at)
+          VALUES (?, ?, ?, ?, ?)
+        `, [profile.id, profile.displayName, profile.sessionSalt, profile.sessionHash, now()]);
+      });
+    },
+
+    getPayerProfile(id) {
+      return get("SELECT * FROM payer_profiles WHERE id = ?", [id]);
+    },
+
+    createQrToken(token) {
+      return enqueueWrite(() => {
+        database.run(`
+          INSERT INTO qr_tokens (token_hash, payer_id, expires_at, created_at)
+          VALUES (?, ?, ?, ?)
+        `, [token.hash, token.payerId, token.expiresAt, now()]);
+      });
+    },
+
+    findPayerByQrHash(hash) {
+      return get(`
+        SELECT p.id, p.display_name
+        FROM qr_tokens q
+        JOIN payer_profiles p ON p.id = q.payer_id
+        WHERE q.token_hash = ? AND q.expires_at > ?
+      `, [hash, now()]);
+    },
+
+    createPayerResolution(resolution) {
+      return enqueueWrite(() => {
+        database.run(`
+          INSERT INTO payer_resolutions
+            (resolution_hash, payer_id, expires_at, created_at)
+          VALUES (?, ?, ?, ?)
+        `, [resolution.hash, resolution.payerId, resolution.expiresAt, now()]);
+      });
+    },
+
+    consumePayerResolution(hash) {
+      return enqueueWrite(() => {
+        const resolution = get(`
+          SELECT r.payer_id, p.display_name
+          FROM payer_resolutions r
+          JOIN payer_profiles p ON p.id = r.payer_id
+          WHERE r.resolution_hash = ?
+            AND r.used_at IS NULL
+            AND r.expires_at > ?
+        `, [hash, now()]);
+        if (!resolution) {
+          return null;
+        }
+        database.run(`
+          UPDATE payer_resolutions
+          SET used_at = ?
+          WHERE resolution_hash = ? AND used_at IS NULL
+        `, [now(), hash]);
+        return resolution;
+      });
+    },
+
+    expirePaymentRequests() {
+      return enqueueWrite(() => {
+        const timestamp = now();
+        database.run(`
+          UPDATE payment_requests
+          SET state = 'expirada', updated_at = ?
+          WHERE state = 'pendiente_de_pagador' AND expires_at <= ?
+        `, [timestamp, timestamp]);
+        database.run(`
+          UPDATE transactions
+          SET state = 'expirada', updated_at = ?
+          WHERE state = 'pendiente_de_pagador'
+            AND id IN (
+              SELECT transaction_id FROM payment_requests
+              WHERE state = 'expirada' AND updated_at = ?
+            )
+        `, [timestamp, timestamp]);
+      });
+    },
+
+    countPendingRequests(payerId) {
+      return get(`
+        SELECT COUNT(*) AS count
+        FROM payment_requests
+        WHERE payer_id = ? AND state = 'pendiente_de_pagador' AND expires_at > ?
+      `, [payerId, now()]).count;
+    },
+
+    createPaymentRequest(request) {
+      return enqueueWrite(() => {
+        const timestamp = now();
+        database.run(`
+          INSERT INTO payment_requests
+            (id, payer_id, resolution_hash, transaction_id, state, expires_at, created_at, updated_at)
+          VALUES (?, ?, ?, ?, 'pendiente_de_pagador', ?, ?, ?)
+        `, [
+          request.id,
+          request.payerId,
+          request.resolutionHash,
+          request.transactionId,
+          request.expiresAt,
+          timestamp,
+          timestamp,
+        ]);
+      });
+    },
+
+    listPayerRequests(payerId) {
+      return all(`
+        SELECT r.id, r.state, r.expires_at, r.created_at, r.updated_at,
+          t.amount, t.currency, t.concept, t.approval_url
+        FROM payment_requests r
+        JOIN transactions t ON t.id = r.transaction_id
+        WHERE r.payer_id = ?
+          AND r.state IN ('pendiente_de_pagador', 'aprobada', 'pagada', 'rechazada', 'expirada', 'fallida')
+        ORDER BY r.created_at DESC
+      `, [payerId]).map((request) => ({
+        id: request.id,
+        state: request.state,
+        expiresAt: request.expires_at,
+        createdAt: request.created_at,
+        updatedAt: request.updated_at,
+        amount: request.amount,
+        currency: request.currency,
+        concept: request.concept,
+        approvalUrl: request.approval_url,
+      }));
+    },
+
+    rejectPaymentRequest(requestId, payerId) {
+      return enqueueWrite(() => {
+        const request = get(`
+          SELECT transaction_id
+          FROM payment_requests
+          WHERE id = ? AND payer_id = ? AND state = 'pendiente_de_pagador'
+        `, [requestId, payerId]);
+        if (!request) {
+          return false;
+        }
+        const timestamp = now();
+        database.run(`
+          UPDATE payment_requests
+          SET state = 'rechazada', updated_at = ?
+          WHERE id = ? AND payer_id = ? AND state = 'pendiente_de_pagador'
+        `, [timestamp, requestId, payerId]);
+        database.run(`
+          UPDATE transactions
+          SET state = 'rechazada', updated_at = ?
+          WHERE id = ? AND state = 'pendiente_de_pagador'
+        `, [timestamp, request.transaction_id]);
+        return database.getRowsModified() > 0;
       });
     },
 

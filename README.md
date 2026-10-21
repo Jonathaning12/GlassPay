@@ -55,6 +55,36 @@ webhook verificado de PayPal.
 La página de retorno nunca marca el pago como pagado: solo muestra el estado
 que devuelve el servidor. El `PayerID` de PayPal se ignora.
 
+## Página del pagador
+
+Desde `payer-web/`:
+
+```powershell
+cd payer-web
+npm install
+$env:VITE_API_URL="http://localhost:3000"
+npm run dev
+```
+
+La página permite crear el perfil del pagador, mostrar el QR, consultar
+solicitudes cada 2 segundos y aprobar o rechazar solicitudes. El secreto de
+sesión se guarda únicamente en el `localStorage` del navegador.
+
+Para Render, crea un Static Site con `rootDir: payer-web`, build
+`npm install && npm run build`, publish directory `dist` y
+`VITE_API_URL=https://glasspay-1qdu.onrender.com`. Después configura
+`PAYER_WEB_ORIGIN` en el Web Service del servidor con la URL pública del
+Static Site.
+
+Endpoints de identidad:
+
+- `POST /api/payers` crea el perfil y entrega el secreto de sesión una sola vez.
+- `POST /api/payers/:id/qr` emite un QR temporal.
+- `POST /api/payers/resolve` resuelve el token del QR.
+- `POST /api/payers/payment-requests` crea una solicitud sin revelar `approveUrl` al cobrador.
+- `GET /api/payers/me/payment-requests` lista solicitudes autenticadas del pagador.
+- `POST /api/payers/payment-requests/:requestId/reject` rechaza una solicitud propia.
+
 Para ejecutar las pruebas automatizadas:
 
 ```powershell

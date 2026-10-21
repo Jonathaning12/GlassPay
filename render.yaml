@@ -10,4 +10,12 @@ services:
         value: production
       - key: PORT
         value: 10000
-
+  - type: web
+    name: glasspay-payer-web
+    runtime: static
+    rootDir: payer-web
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        sync: false
