@@ -9,5 +9,6 @@ local.properties
 *.keystore
 *.jks
 coverage/
+.data/
+*.db
 .DS_Store
-

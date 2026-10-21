@@ -1,21 +1,23 @@
-const express = require("express");
 const dotenv = require("dotenv");
+const { createApp } = require("./app");
+const { createConfig } = require("./config");
+const { createDatabase } = require("./db/database");
+const { PayPalService } = require("./services/paypal");
 
 dotenv.config();
 
-const app = express();
-const port = Number.parseInt(process.env.PORT || "3000", 10);
+async function start() {
+  const config = createConfig();
+  const database = await createDatabase(config.databasePath);
+  const paypal = new PayPalService(config.paypal);
+  const app = createApp({ config, database, paypal });
 
-app.use(express.json());
-
-app.get("/health", (_request, response) => {
-  response.status(200).json({
-    status: "ok",
-    service: "glasspay-server",
+  app.listen(config.port, () => {
+    console.log(`GlassPay server listening on port ${config.port}`);
   });
-});
+}
 
-app.listen(port, () => {
-  console.log(`GlassPay server listening on port ${port}`);
+start().catch(() => {
+  console.error("GlassPay server failed to start");
+  process.exitCode = 1;
 });
-
