@@ -147,3 +147,31 @@ No escribas código todavía. En tu primera respuesta:
 2. Crea `MEMORY.md` con la estructura indicada (puede estar casi vacío pero bien armado).
 3. Hazme tu primera ronda de preguntas (máximo 8) según el protocolo.
 4. Propón qué harías primero en la Fase 1, para que yo lo apruebe.
+
+# FASE 2 - PayPal (solo Sandbox)
+
+Antes de escribir código, verifica en la documentación oficial vigente de PayPal (developer.paypal.com) los endpoints, el formato del body y los nombres de eventos de Orders API v2 y de webhooks. No uses nada de memoria que no hayas verificado. Anota en MEMORY.md lo que confirmes.
+
+Objetivo: flujo completo de punta a punta: crear orden -> el pagador aprueba -> capturar -> webhook verificado -> estado "pagada".
+
+Tareas:
+1. Servicio server/src/services/paypal.js:
+   - Obtener y cachear el access token (OAuth client credentials), renovándolo antes de que expire.
+   - Base URL desde variable de entorno; por defecto sandbox (https://api-m.sandbox.paypal.com). Rechaza arrancar si apunta a producción.
+   - Crear orden (intent CAPTURE, moneda y monto validados, descripción saneada, reference_id propio, return_url y cancel_url desde variables de entorno). Extraer el enlace de aprobación (acepta rel "payer-action" o "approve").
+   - Capturar orden.
+   - Consultar orden (Show order details).
+   - Verificar firma de webhook llamando al endpoint de verificación de PayPal.
+   - Usar un PayPal-Request-Id (idempotencia) en creación y captura.
+2. Rutas:
+   - POST /api/payments: valida entrada (monto > 0, tope máximo configurable, moneda permitida, concepto saneado), crea la orden, guarda la transacción y devuelve { paymentId, approveUrl }.
+   - GET /api/payments/:id: devuelve el estado.
+   - GET /paypal/return y /paypal/cancel: páginas simples que informan al pagador; NO marcan como pagado.
+   - POST /webhooks/paypal: usa el cuerpo crudo SOLO en esta ruta, verifica la firma, responde 200 rápido, procesa de forma idempotente (guarda el ID de evento y descarta repetidos).
+3. Eventos a manejar: CHECKOUT.ORDER.APPROVED (capturar la orden si sigue sin capturarse), PAYMENT.CAPTURE.COMPLETED (marcar pagada), PAYMENT.CAPTURE.DENIED (marcar fallida). Correlaciona la captura con la orden usando el enlace "up" o el reference_id.
+4. Base de datos: transacciones con estados creada, enviada, aprobada, pagada, fallida, expirada; IDs de orden y captura; monto; moneda; timestamps; tabla de eventos de webhook procesados. Recuerda que el disco de Render gratis es efímero: anótalo como riesgo en MEMORY.md.
+5. Variables de entorno: lee las que ya existen y propón las nuevas (PAYPAL_WEBHOOK_ID, URLs de retorno, tope de monto, moneda por defecto). Actualiza .env.example sin valores reales.
+6. Seguridad: nunca registres secretos ni tokens en logs; saneamiento de entradas; manejo de errores sin filtrar detalles internos.
+7. Pruebas: entrégame comandos curl exactos para cada paso y el resultado esperado en cada uno.
+
+Cuando termines: actualiza MEMORY.md (endpoints, estados, variables, cómo probar, riesgos) y dime qué pasos manuales debo hacer yo en el portal de PayPal.
