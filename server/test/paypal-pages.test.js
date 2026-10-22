@@ -72,6 +72,11 @@ test("return page polls safely and cancel page uses Spanish UTF-8 text", async (
     assert.equal(returnResponse.status, 200);
     assert.match(returnHtml, /charset="UTF-8"/);
     assert.match(returnHtml, /Confirmando tu pago…/);
+    assert.match(returnHtml, /Preparando tu comprobante…/);
+    assert.match(returnHtml, /Terminando detalles…/);
+    assert.match(returnHtml, /Esto está tardando un poco más de lo normal…/);
+    assert.match(returnHtml, /Tu pago está en proceso…/);
+    assert.match(returnHtml, /El servidor aún no confirma un pago recibido/);
     assert.match(returnHtml, /api\/payments\/status\?token=/);
     assert.doesNotMatch(returnHtml, /PayerID|must-not-be-used/);
 

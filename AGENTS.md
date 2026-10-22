@@ -250,3 +250,66 @@ Evaluación:
 Variables: documenta las nuevas en .env.example (solo nombres o valores no sensibles) y dime cuáles agregar en Render.
 
 Al terminar: actualiza MEMORY.md (endpoints, esquema de la propuesta, variables, resultados de la evaluación, riesgos). No avances a Android sin mi aprobación.
+
+# # FASE 5 - App Android del cobrador (entregas 5.0, 5A, 5B y 5C)
+
+## Contexto
+Las Fases 1-4 están terminadas y desplegadas: servidor Express en Render, PayPal Sandbox con webhooks verificados, perfiles de pagador con QR de token opaco, página payer-web (React + Vite), y agente de IA con Gemini (POST /api/agent/interpret y /api/agent/confirm). Lee MEMORY.md y AGENTS.md antes de empezar y respeta todas las reglas de seguridad ya definidas.
+
+El flujo que debe quedar funcionando de punta a punta:
+1. El cobrador apunta la cámara al QR del pagador y la app lo resuelve.
+2. El cobrador dicta en español: "cóbrale 350 pesos por la cena".
+3. El servidor interpreta la frase y devuelve una propuesta; la app muestra una vista previa del recibo y la lee en voz alta.
+4. El cobrador confirma (voz o toque). Solo entonces se crea la solicitud.
+5. El pagador aprueba en su teléfono.
+6. La app muestra "Pago recibido" cuando el servidor confirma el pago.
+
+## Reglas globales
+- Trabaja por entregas (5.0, 5A, 5B, 5C). Antes de cada una, muéstrame un plan corto (archivos, dependencias, decisiones) y espera mi aprobación. No avances a la siguiente entrega sin mi aprobación.
+- Verifica siempre en la documentación oficial vigente las APIs de Android, las librerías y el toolkit de Meta. No uses memoria para versiones ni nombres de métodos; no inventes APIs.
+- No leas ni imprimas el contenido de server/.env ni de ningún archivo con secretos. La app no contiene secretos: sin claves de PayPal, Gemini ni nada sensible.
+- Cambios pequeños y verificables; sugiere commits con mensajes claros al terminar cada paso lógico (los commits los hago yo).
+- Explícame brevemente los conceptos nuevos de Android que aparezcan (permisos, ciclo de vida, corrutinas, Compose), sin extenderte.
+- Cuida el consumo: no repitas pruebas completas sin necesidad ni reescribas archivos enteros para ajustes pequeños.
+- Al terminar cada entrega, actualiza MEMORY.md (estructura, dependencias y versiones, endpoints usados, cómo compilar y probar, riesgos).
+
+## Primera respuesta (antes de cualquier código)
+1. Confirma en pocas líneas que entendiste el flujo y las reglas.
+2. Hazme una ronda de preguntas agrupadas (máximo 8, con tu suposición propuesta en cada una). Temas: modelo y versión de Android de mi celular, si Android Studio está instalado, si tengo acceso al Wearables Developer Center y al toolkit de Meta (depende de mi región) y si tengo lentes físicos, idioma y acento de voz (es-MX), cómo prefiero confirmar (voz, toque o ambos), nivel de pulido visual y tiempo disponible.
+3. Registra mis respuestas en MEMORY.md y propón el plan de la entrega 5.0.
+
+## ENTREGA 5.0 - Pendientes del servidor y de payer-web (sin Android todavía)
+1. Endpoint de estado para el cobrador: GET /api/payers/payment-requests/:requestId/status. Devuelve únicamente: estado (pendiente_de_pagador, rechazada, expirada, aprobada, pagada, fallida), monto, moneda y concepto. Nunca approveUrl, IDs de PayPal ni datos del pagador. Protección: exige el resolutionId con el que se creó la solicitud (en un header, no en la URL) mientras siga vigente; ante cualquier discrepancia, error genérico. Rate limiting y pruebas automatizadas.
+2. Prefijo del QR: el QR codifica "glasspay:<token>". El servidor sigue aceptando tokens sin prefijo solo de forma temporal (documéntalo). payer-web genera el QR con el prefijo.
+3. Recuperación en payer-web: si cualquier endpoint del pagador responde 401 por secreto inválido (por ejemplo porque la base de Render se vació), borra el secreto guardado y vuelve a la pantalla de crear perfil con un mensaje claro en español, sin mostrar el error técnico.
+4. Verifica en la documentación vigente de Render si la base se pierde también cuando el servicio se duerme por inactividad y documéntalo en MEMORY.md como riesgo, junto con la mitigación recomendada para la demo (despertar el servicio antes de empezar).
+Criterio de terminado: pruebas automatizadas en verde, y yo puedo consultar el estado de una solicitud con PowerShell usando requestId y resolutionId.
+
+## ENTREGA 5A - Cámara y lectura de QR
+1. Proyecto en android/ (Kotlin + Jetpack Compose), con .gitignore apropiado (local.properties, build/, .gradle/, *.keystore). Propón la versión mínima de Android y justifícala.
+2. Arquitectura: interfaz CameraSource que entrega frames; primera implementación PhoneCameraSource con CameraX. Diseña para añadir después MetaGlassesCameraSource sin cambiar el resto de la app.
+3. Lectura de QR con ML Kit Barcode Scanning (u otra opción que justifiques tras verificar su documentación). Maneja el permiso de cámara, el ciclo de vida y la rotación.
+4. Cliente HTTP (OkHttp/Retrofit o equivalente): URL base en BuildConfig, solo HTTPS (sin tráfico en claro), timeouts razonables, errores traducidos a mensajes en español.
+5. Flujo: la app ignora cualquier QR sin el prefijo "glasspay:" sin llamar al servidor. Con un QR válido llama a POST /api/payers/resolve, muestra el nombre del pagador y guarda el resolutionId solo en memoria. Evita llamadas repetidas con el mismo QR, vibra brevemente al leerlo y maneja el vencimiento de la resolución (5 minutos) volviendo a pedir un QR.
+6. UI: cámara a pantalla completa con un HUD mínimo encima ("Busca un QR", "Pagador: <nombre>"), alto contraste, texto grande, en español.
+7. Pruebas unitarias (parseo del prefijo, manejo de errores del cliente) y pasos exactos para probar por USB en mi celular.
+Criterio de terminado: apunto al QR de payer-web desde otro dispositivo y aparece el nombre del pagador; un QR ajeno no genera llamadas al servidor.
+
+## ENTREGA 5B - Voz, vista previa y confirmación
+1. Reconocimiento de voz en español (es-MX) con el reconocedor de Android, con resultados parciales y activación manual (botón o toque; propón la mejor opción para manos libres). Maneja permisos de micrófono, errores, silencios y reintentos. Si el reconocimiento no está disponible, ofrece entrada de texto como alternativa para la demo.
+2. POST /api/agent/interpret con { resolutionId, text }. Si el servidor pide aclaración, la app muestra y lee la pregunta y deja volver a dictar. Si rechaza, muestra un mensaje claro.
+3. Vista previa del recibo: monto, moneda, concepto y nombre del pagador, y lectura en voz alta con TextToSpeech en español: "Cobro de 350 pesos a Ana por cena. ¿Confirmas?".
+4. Confirmación explícita: por voz ("confirmar", "sí") o por toque, y cancelación ("cancelar", "no"). Nunca se confirma automáticamente ni por un silencio. Un solo uso por propuesta; la propuesta vence a los 2 minutos y la app lo muestra.
+5. POST /api/agent/confirm con { proposalId }. La app solo envía el ID de la propuesta, nunca monto ni concepto.
+6. Seguridad: no registrar tokens, resolutionId, textos dictados ni respuestas del servidor en Logcat; no guardar nada sensible en disco.
+7. Pruebas unitarias de la máquina de estados (esperando QR, pagador identificado, escuchando, interpretando, vista previa, confirmando) y pasos para probarlo en mi celular.
+Criterio de terminado: dicto la frase, veo y escucho el recibo, confirmo por voz, y la solicitud aparece en el celular del pagador.
+
+# ENTREGA 5C - Estado del pago, HUD final y lentes
+1. Tras confirmar, consulta GET /api/payers/payment-requests/:requestId/status cada 1-2 segundos (hasta un máximo razonable). Estados en pantalla: "Esperando al pagador", "Pago recibido" (con vibración y voz), "Rechazado", "Expirado", "Falló". Si no se confirma a tiempo, "Pago en proceso" sin marcarlo como fallido. La app nunca marca nada como pagado por su cuenta: solo muestra lo que dice el servidor.
+2. HUD final: minimalista, oscuro, de alto contraste y texto grande, pensado para pantallas pequeñas y para evolucionar a lentes; en español; con estados de carga y error claros; botón para reiniciar el flujo.
+3. Resiliencia para la demo: manejo de pérdida de red, servicio de Render dormido (primera petición lenta: mostrar "Despertando el servidor…"), reintentos acotados y un modo de prueba que permita ensayar el flujo completo sin depender del micrófono (texto).
+4. Integración de lentes: implementa MetaGlassesCameraSource con el Wearables Device Access Toolkit (repositorio oficial facebook/meta-wearables-dat-android) usando el Mock Device Kit, de modo que la cámara del celular actúe como feed de los lentes simulados. Verifica en la documentación vigente la instalación, los permisos y el flujo de registro. Si no tengo acceso al toolkit, deja el módulo preparado detrás de la interfaz, documenta el bloqueo en MEMORY.md y NO bloquees la entrega: la app debe funcionar completa con PhoneCameraSource.
+5. Guion de demo de 2 minutos en docs/, con datos de prueba, orden de pasos y plan B para cada punto de fallo (QR, voz, red, Render, Gemini).
+6. Documenta en MEMORY.md como limitación conocida que los endpoints del cobrador no tienen autenticación fuerte (solo rate limiting, resolutionId y tokens de vida corta) y propón, sin implementarla aún, una mejora sencilla para después del hackathon.
+Criterio de terminado: flujo completo con el dispositivo simulado de Meta (o con el celular si no hay acceso), "Pago recibido" visible y audible sin intervención manual, y tres ejecuciones seguidas sin fallos.

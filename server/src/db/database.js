@@ -74,6 +74,8 @@ async function createDatabase(databasePath) {
       payer_id TEXT NOT NULL,
       resolution_hash TEXT NOT NULL UNIQUE,
       transaction_id TEXT NOT NULL UNIQUE,
+      status_token_hash TEXT UNIQUE,
+      status_token_expires_at TEXT,
       state TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
@@ -97,6 +99,18 @@ async function createDatabase(databasePath) {
   if (!transactionColumns.some(([, column]) => column === "payer_id")) {
     database.run("ALTER TABLE transactions ADD COLUMN payer_id TEXT");
   }
+  const paymentRequestColumns = database.exec("PRAGMA table_info(payment_requests)")[0]?.values || [];
+  if (!paymentRequestColumns.some(([, column]) => column === "status_token_hash")) {
+    database.run("ALTER TABLE payment_requests ADD COLUMN status_token_hash TEXT");
+  }
+  if (!paymentRequestColumns.some(([, column]) => column === "status_token_expires_at")) {
+    database.run("ALTER TABLE payment_requests ADD COLUMN status_token_expires_at TEXT");
+  }
+  database.run(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_requests_status_token_hash
+    ON payment_requests(status_token_hash)
+    WHERE status_token_hash IS NOT NULL
+  `);
 
   const save = () => {
     fs.writeFileSync(databasePath, Buffer.from(database.export()));
@@ -306,6 +320,10 @@ async function createDatabase(databasePath) {
           UPDATE payment_requests
           SET state = 'expirada', updated_at = ?
           WHERE state = 'pendiente_de_pagador' AND expires_at <= ?
+            AND transaction_id IN (
+              SELECT id FROM transactions
+              WHERE state NOT IN ('aprobada', 'pagada', 'fallida', 'rechazada', 'expirada')
+            )
         `, [timestamp, timestamp]);
         database.run(`
           UPDATE transactions
@@ -332,13 +350,16 @@ async function createDatabase(databasePath) {
         const timestamp = now();
         database.run(`
           INSERT INTO payment_requests
-            (id, payer_id, resolution_hash, transaction_id, state, expires_at, created_at, updated_at)
-          VALUES (?, ?, ?, ?, 'pendiente_de_pagador', ?, ?, ?)
+            (id, payer_id, resolution_hash, transaction_id, status_token_hash,
+             status_token_expires_at, state, expires_at, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'pendiente_de_pagador', ?, ?, ?)
         `, [
           request.id,
           request.payerId,
           request.resolutionHash,
           request.transactionId,
+          request.statusTokenHash,
+          request.statusTokenExpiresAt,
           request.expiresAt,
           timestamp,
           timestamp,
@@ -366,6 +387,18 @@ async function createDatabase(databasePath) {
         concept: request.concept,
         approvalUrl: request.approval_url,
       }));
+    },
+
+    getPaymentRequestStatus(requestId, resolutionHash) {
+      return get(`
+        SELECT r.id, r.state AS request_state, r.expires_at,
+          t.state AS transaction_state, t.amount, t.currency, t.concept
+        FROM payment_requests r
+        JOIN transactions t ON t.id = r.transaction_id
+        WHERE r.id = ?
+          AND r.status_token_hash = ?
+          AND r.status_token_expires_at > ?
+      `, [requestId, resolutionHash, now()]);
     },
 
     rejectPaymentRequest(requestId, payerId) {

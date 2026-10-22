@@ -28,6 +28,14 @@ function sanitizeDisplayName(value) {
   return displayName || null;
 }
 
+function normalizeQrToken(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const token = value.startsWith("glasspay:") ? value.slice("glasspay:".length) : value;
+  return token.length >= 20 ? token : null;
+}
+
 function authenticatePayer(request, database) {
   const payerId = request.params.id || request.get("X-Payer-Id");
   const secret = request.get("X-Payer-Session");
@@ -42,6 +50,11 @@ function createPayersRouter({ database, paypal, config }) {
   const router = express.Router();
   const profileLimiter = createRateLimiter({ maxRequests: 5, windowMs: 60_000 });
   const resolverLimiter = createRateLimiter({ maxRequests: 30, windowMs: 60_000 });
+  const statusLimiter = createRateLimiter({
+    maxRequests: 2,
+    windowMs: 1_000,
+    key: (request) => request.get("X-Status-Token") || `missing:${request.ip || "unknown"}`,
+  });
 
   router.post("/", profileLimiter, async (request, response) => {
     const displayName = sanitizeDisplayName(request.body?.displayName);
@@ -63,8 +76,8 @@ function createPayersRouter({ database, paypal, config }) {
   });
 
   router.post("/resolve", resolverLimiter, async (request, response) => {
-    const token = request.body?.token;
-    if (typeof token !== "string" || token.length < 20) {
+    const token = normalizeQrToken(request.body?.token);
+    if (!token) {
       return response.status(404).json({ error: "payer token not found" });
     }
 
@@ -102,7 +115,7 @@ function createPayersRouter({ database, paypal, config }) {
       expiresAt,
     });
 
-    return response.status(201).json({ token, expiresAt });
+    return response.status(201).json({ token: `glasspay:${token}`, expiresAt });
   });
 
   router.get("/me/payment-requests", async (request, response) => {
@@ -159,6 +172,29 @@ function createPayersRouter({ database, paypal, config }) {
       }
       return response.status(500).json({ error: "payment request failed" });
     }
+  });
+
+  router.get("/payment-requests/:requestId/status", statusLimiter, async (request, response) => {
+    const statusToken = request.get("X-Status-Token");
+    if (typeof statusToken !== "string" || statusToken.length < 20) {
+      return response.status(404).json({ error: "payment request not found" });
+    }
+
+    await database.expirePaymentRequests();
+    const paymentRequest = database.getPaymentRequestStatus(
+      request.params.requestId,
+      hashOpaqueToken(statusToken),
+    );
+    if (!paymentRequest) {
+      return response.status(404).json({ error: "payment request not found" });
+    }
+
+    return response.status(200).json({
+      state: paymentRequest.transaction_state,
+      amount: paymentRequest.amount,
+      currency: paymentRequest.currency,
+      concept: paymentRequest.concept,
+    });
   });
 
   router.post("/payment-requests/:requestId/reject", async (request, response) => {

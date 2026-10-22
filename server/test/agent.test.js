@@ -5,6 +5,7 @@ const path = require("node:path");
 const { test } = require("node:test");
 const { createApp } = require("../src/app");
 const { createDatabase } = require("../src/db/database");
+const { createOpaqueToken, hashOpaqueToken } = require("../src/services/payers");
 const {
   createAgentService,
   deterministicParse,
@@ -21,6 +22,67 @@ function agentConfig(overrides = {}) {
     proposalTtlSeconds: 120,
     ...overrides,
   };
+}
+
+async function createAgentTestEnvironment({ resolutionTtlSeconds = 60 } = {}) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "glasspay-agent-resolution-"));
+  const database = await createDatabase(path.join(directory, "test.db"));
+  const resolutionId = "resolution-test-12345678901234567890";
+  await database.createPayerProfile({
+    id: "payer-resolution-test",
+    displayName: "Ana",
+    sessionSalt: "c2FsdA==",
+    sessionHash: "aGFzaA==",
+  });
+  await database.createPayerResolution({
+    hash: hashOpaqueToken(resolutionId),
+    payerId: "payer-resolution-test",
+    expiresAt: new Date(Date.now() + resolutionTtlSeconds * 1000).toISOString(),
+  });
+  const config = {
+    payments: { maxAmount: 1000, defaultCurrency: "MXN", allowedCurrencies: ["MXN"] },
+    payers: {
+      paymentRequestTtlSeconds: 600,
+      statusTokenFinalMarginSeconds: 300,
+      maxPendingRequests: 5,
+      corsOrigin: "http://localhost:5173",
+    },
+    agent: agentConfig(),
+    paypal: { returnUrl: "http://localhost/return", cancelUrl: "http://localhost/cancel" },
+  };
+  const agent = {
+    async parseCharge() {
+      return {
+        amount: 25,
+        currency: "MXN",
+        concept: "café",
+        needsClarification: false,
+        clarificationQuestion: "",
+        method: "deterministic",
+      };
+    },
+  };
+  const paypal = {
+    async createOrder() {
+      return { orderId: "ORDER-AGENT", approvalUrl: "https://paypal.test/approve" };
+    },
+  };
+  const server = createApp({ config, database, paypal, agent }).listen(0);
+  return {
+    baseUrl: `http://127.0.0.1:${server.address().port}`,
+    database,
+    resolutionId,
+    close: async () => {
+      await new Promise((resolve) => server.close(resolve));
+      await database.close();
+      fs.rmSync(directory, { recursive: true, force: true });
+    },
+  };
+}
+
+async function assertGenericAgentError(response, expectedMessage) {
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), { error: expectedMessage });
 }
 
 test("deterministic parser understands Spanish amounts and asks for missing data", () => {
@@ -191,63 +253,22 @@ test("timeouts are retried once before deterministic fallback", async () => {
   assert.equal(result.method, "deterministic");
 });
 
-test("interpretation creates a one-use 256-bit proposal and confirmation hides approveUrl", async () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "glasspay-agent-"));
-  const database = await createDatabase(path.join(directory, "test.db"));
-  const payerId = "payer-1";
-  await database.createPayerProfile({
-    id: payerId,
-    displayName: "Ana",
-    sessionSalt: "c2FsdA==",
-    sessionHash: "aGFzaA==",
-  });
-  const resolutionId = "resolution-test-12345678901234567890";
-  await database.createPayerResolution({
-    hash: require("../src/services/payers").hashOpaqueToken(resolutionId),
-    payerId,
-    expiresAt: new Date(Date.now() + 60_000).toISOString(),
-  });
-
-  const config = {
-    payments: { maxAmount: 1000, defaultCurrency: "MXN", allowedCurrencies: ["MXN"] },
-    payers: {
-      paymentRequestTtlSeconds: 600,
-      maxPendingRequests: 5,
-      corsOrigin: "http://localhost:5173",
-    },
-    agent: agentConfig(),
-    paypal: { returnUrl: "http://localhost/return", cancelUrl: "http://localhost/cancel" },
-  };
-  const agent = {
-    async parseCharge() {
-      return {
-        amount: 25,
-        currency: "MXN",
-        concept: "café",
-        needsClarification: false,
-        clarificationQuestion: "",
-        method: "deterministic",
-      };
-    },
-  };
-  const paypal = {
-    async createOrder() {
-      return { orderId: "ORDER-AGENT", approvalUrl: "https://paypal.test/approve" };
-    },
-  };
-  const server = createApp({ config, database, paypal, agent }).listen(0);
-  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+test("interpretation creates a one-use 256-bit proposal and confirmation returns only statusToken", async () => {
+  const environment = await createAgentTestEnvironment();
   try {
-    const interpretation = await fetch(`${baseUrl}/api/agent/interpret`, {
+    const interpretation = await fetch(`${environment.baseUrl}/api/agent/interpret`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ resolutionId, text: "cóbrale 25 pesos por el café" }),
+      body: JSON.stringify({
+        resolutionId: environment.resolutionId,
+        text: "cóbrale 25 pesos por el café",
+      }),
     });
     const proposal = await interpretation.json();
     assert.equal(interpretation.status, 201);
     assert.ok(proposal.proposalId.length >= 43);
 
-    const confirmation = await fetch(`${baseUrl}/api/agent/confirm`, {
+    const confirmation = await fetch(`${environment.baseUrl}/api/agent/confirm`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ proposalId: proposal.proposalId }),
@@ -256,16 +277,123 @@ test("interpretation creates a one-use 256-bit proposal and confirmation hides a
     assert.equal(confirmation.status, 201);
     assert.equal(confirmationBody.state, "pendiente_de_pagador");
     assert.equal("approveUrl" in confirmationBody, false);
+    assert.equal(confirmationBody.statusToken.length >= 43, true);
+    assert.doesNotMatch(JSON.stringify(confirmationBody), /paypal|order|capture/i);
 
-    const repeated = await fetch(`${baseUrl}/api/agent/confirm`, {
+    const repeated = await fetch(`${environment.baseUrl}/api/agent/confirm`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ proposalId: proposal.proposalId }),
     });
     assert.equal(repeated.status, 404);
   } finally {
-    await new Promise((resolve) => server.close(resolve));
-    await database.close();
-    fs.rmSync(directory, { recursive: true, force: true });
+    await environment.close();
+  }
+});
+
+test("interpret rejects a nonexistent resolution with a generic error", async () => {
+  const environment = await createAgentTestEnvironment();
+  try {
+    const response = await fetch(`${environment.baseUrl}/api/agent/interpret`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        resolutionId: "resolution-missing-12345678901234567890",
+        text: "cóbrale 25 pesos por el café",
+      }),
+    });
+    await assertGenericAgentError(response, "interpretation request not found");
+  } finally {
+    await environment.close();
+  }
+});
+
+test("interpret rejects an expired resolution with a generic error", async () => {
+  const environment = await createAgentTestEnvironment({ resolutionTtlSeconds: 1 });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const response = await fetch(`${environment.baseUrl}/api/agent/interpret`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        resolutionId: environment.resolutionId,
+        text: "cóbrale 25 pesos por el café",
+      }),
+    });
+    await assertGenericAgentError(response, "interpretation request not found");
+  } finally {
+    await environment.close();
+  }
+});
+
+test("confirm rejects a proposal whose resolution expired with a generic error", async () => {
+  const environment = await createAgentTestEnvironment({ resolutionTtlSeconds: 1 });
+  try {
+    const interpretation = await fetch(`${environment.baseUrl}/api/agent/interpret`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        resolutionId: environment.resolutionId,
+        text: "cóbrale 25 pesos por el café",
+      }),
+    });
+    const proposal = await interpretation.json();
+    assert.equal(interpretation.status, 201);
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const response = await fetch(`${environment.baseUrl}/api/agent/confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ proposalId: proposal.proposalId }),
+    });
+    await assertGenericAgentError(response, "payment request cannot be created");
+  } finally {
+    await environment.close();
+  }
+});
+
+test("interpret rejects a statusToken used as a resolutionId", async () => {
+  const environment = await createAgentTestEnvironment();
+  try {
+    const response = await fetch(`${environment.baseUrl}/api/agent/interpret`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        resolutionId: createOpaqueToken(32),
+        text: "cóbrale 25 pesos por el café",
+      }),
+    });
+    await assertGenericAgentError(response, "interpretation request not found");
+  } finally {
+    await environment.close();
+  }
+});
+
+test("confirm rejects a statusToken used as a proposalId", async () => {
+  const environment = await createAgentTestEnvironment();
+  try {
+    const interpretation = await fetch(`${environment.baseUrl}/api/agent/interpret`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        resolutionId: environment.resolutionId,
+        text: "cóbrale 25 pesos por el café",
+      }),
+    });
+    const proposal = await interpretation.json();
+    const confirmation = await fetch(`${environment.baseUrl}/api/agent/confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ proposalId: proposal.proposalId }),
+    });
+    const confirmationBody = await confirmation.json();
+    assert.equal(confirmation.status, 201);
+    const response = await fetch(`${environment.baseUrl}/api/agent/confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ proposalId: confirmationBody.statusToken }),
+    });
+    await assertGenericAgentError(response, "proposal not found");
+  } finally {
+    await environment.close();
   }
 });

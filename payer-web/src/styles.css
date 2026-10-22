@@ -131,3 +131,7 @@ input {
 .error {
   color: #a32929;
 }
+
+.success {
+  color: #126b42;
+}

@@ -42,7 +42,7 @@ function renderReturnPage() {
       const message = document.getElementById("message");
       const details = document.getElementById("details");
       const retry = document.getElementById("retry");
-      const startedAt = Date.now();
+      let startedAt = Date.now();
       let timer;
 
       function showDetails(payment) {
@@ -60,10 +60,25 @@ function renderReturnPage() {
         }
       }
 
+      function waitingText(elapsedMs) {
+        if (elapsedMs < 4000) return "Confirmando tu pago con PayPal…";
+        if (elapsedMs < 10000) return "Preparando tu comprobante…";
+        if (elapsedMs < 20000) return "Terminando detalles…";
+        if (elapsedMs < 30000) return "Esto está tardando un poco más de lo normal…";
+        return "Tu pago está en proceso…";
+      }
+
+      function showWaiting() {
+        title.textContent = waitingText(Date.now() - startedAt);
+        message.className = "loading";
+        message.innerHTML = '<span class="spinner" aria-hidden="true"></span><span>El servidor aún no confirma un pago recibido.</span>';
+        retry.hidden = true;
+      }
+
       function showPending() {
         title.textContent = "Tu pago está en proceso";
         message.className = "muted";
-        message.textContent = "Puedes cerrar esta página; te avisaremos cuando se confirme.";
+        message.textContent = "El servidor aún no confirma un pago recibido. Puedes volver a consultar.";
         retry.hidden = false;
       }
 
@@ -106,21 +121,22 @@ function renderReturnPage() {
             showPending();
             return;
           }
+          showWaiting();
           timer = window.setTimeout(checkStatus, 1500);
         } catch {
           if (Date.now() - startedAt >= 30000) {
             showPending();
             return;
           }
+          showWaiting();
           timer = window.setTimeout(checkStatus, 1500);
         }
       }
 
       retry.addEventListener("click", () => {
+        startedAt = Date.now();
         retry.hidden = true;
-        title.textContent = "Confirmando tu pago…";
-        message.className = "loading";
-        message.textContent = "Estamos verificando el estado con el servidor.";
+        showWaiting();
         checkStatus();
       });
 

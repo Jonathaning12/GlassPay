@@ -44,6 +44,10 @@ function createConfig() {
       qrTokenTtlSeconds: Number.parseInt(process.env.QR_TOKEN_TTL_SECONDS || "180", 10),
       resolutionTtlSeconds: Number.parseInt(process.env.QR_RESOLUTION_TTL_SECONDS || "300", 10),
       paymentRequestTtlSeconds: Number.parseInt(process.env.PAYMENT_REQUEST_TTL_SECONDS || "600", 10),
+      statusTokenFinalMarginSeconds: Number.parseInt(
+        process.env.PAYMENT_STATUS_TOKEN_FINAL_MARGIN_SECONDS || "300",
+        10,
+      ),
       maxPendingRequests: Number.parseInt(process.env.MAX_PENDING_REQUESTS || "5", 10),
       corsOrigin: process.env.PAYER_WEB_ORIGIN || "http://localhost:5173",
     },

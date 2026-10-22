@@ -6,6 +6,14 @@ import "./styles.css";
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
 const STORAGE_KEY = "glasspay-payer-session";
 
+function waitingMessage(elapsedMs) {
+  if (elapsedMs < 4000) return "Confirmando tu pago con PayPal…";
+  if (elapsedMs < 10000) return "Preparando tu comprobante…";
+  if (elapsedMs < 20000) return "Terminando detalles…";
+  if (elapsedMs < 30000) return "Esto está tardando un poco más de lo normal…";
+  return "Tu pago está en proceso…";
+}
+
 function loadSession() {
   try {
     const value = window.localStorage.getItem(STORAGE_KEY);
@@ -24,6 +32,14 @@ function saveSession(session) {
   }
 }
 
+function clearSession() {
+  try {
+    window.localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Ignore storage cleanup failures; the in-memory session is still cleared.
+  }
+}
+
 async function apiRequest(path, options = {}) {
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
@@ -35,7 +51,9 @@ async function apiRequest(path, options = {}) {
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(body.error || "No pudimos completar la solicitud.");
+    const error = new Error(body.error || "No pudimos completar la solicitud.");
+    error.status = response.status;
+    throw error;
   }
   return body;
 }
@@ -48,7 +66,19 @@ function App() {
   const [requests, setRequests] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [approvalStartedAt, setApprovalStartedAt] = useState(null);
+  const [clock, setClock] = useState(Date.now());
   const canvasRef = useRef(null);
+
+  function handleSessionError(requestError) {
+    if (requestError.status !== 401) {
+      return false;
+    }
+    clearSession();
+    setSession(null);
+    setError("Tu sesión expiró. Crea un nuevo QR para continuar.");
+    return true;
+  }
 
   async function issueQr(currentSession = session) {
     if (!currentSession) {
@@ -84,6 +114,9 @@ function App() {
       setSession(nextSession);
       await issueQr(nextSession);
     } catch (requestError) {
+      if (handleSessionError(requestError)) {
+        return;
+      }
       setError(requestError.message);
     } finally {
       setLoading(false);
@@ -104,6 +137,9 @@ function App() {
       setRequests(result.requests);
       setError("");
     } catch (requestError) {
+      if (handleSessionError(requestError)) {
+        return;
+      }
       setError(requestError.message);
     }
   }
@@ -120,6 +156,9 @@ function App() {
       });
       await loadRequests();
     } catch (requestError) {
+      if (handleSessionError(requestError)) {
+        return;
+      }
       setError(requestError.message);
     }
   }
@@ -156,6 +195,14 @@ function App() {
     }, 10_000);
     return () => window.clearInterval(interval);
   }, [qrExpiresAt]);
+
+  useEffect(() => {
+    if (!approvalStartedAt) {
+      return undefined;
+    }
+    const interval = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [approvalStartedAt]);
 
   if (!session) {
     return (
@@ -209,10 +256,25 @@ function App() {
                 <strong>{request.amount} {request.currency}</strong>
                 <p>{request.concept}</p>
                 <span className="badge">{request.state.replaceAll("_", " ")}</span>
+                {request.state === "pagada" && <p className="success">Pago recibido</p>}
+                {request.state === "pendiente_de_pagador" &&
+                  approvalStartedAt &&
+                  approvalStartedAt.requestId === request.requestId && (
+                    <p className="muted" aria-live="polite">
+                      {waitingMessage(clock - approvalStartedAt.startedAt)}
+                      {" El servidor aún no confirma un pago recibido."}
+                    </p>
+                  )}
               </div>
               {request.state === "pendiente_de_pagador" && (
                 <div className="actions">
-                  <button type="button" onClick={() => window.open(request.approveUrl, "_blank", "noopener,noreferrer")}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setApprovalStartedAt({ requestId: request.requestId, startedAt: Date.now() });
+                      window.open(request.approveUrl, "_blank", "noopener,noreferrer");
+                    }}
+                  >
                     Aprobar con PayPal
                   </button>
                   <button type="button" className="secondary" onClick={() => rejectRequest(request.requestId)}>

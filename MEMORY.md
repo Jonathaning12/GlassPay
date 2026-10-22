@@ -15,7 +15,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - `android/`: Kotlin + Jetpack Compose; integración prevista con Meta Wearables DAT.
 - Despliegue: Render; el servidor puede servir la build de `payer-web/`.
 - URL pública: `https://glasspay-1qdu.onrender.com`.
-- Estado: Fase 4 implementada localmente; validación determinista posterior a Gemini y reintentos configurados; evaluación enfocada y corrida completa final aprobadas.
+- Estado: Entrega 5.0 implementada localmente; el estado privado usa `statusToken` independiente de la resolución; falta validar el despliegue y la prueba manual antes de pasar a 5A.
 
 ## 3. Estado por fases
 
@@ -23,7 +23,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Fase 2 - PayPal: en curso (2026-10-21); el pago Sandbox y la idempotencia del webhook fueron validados; falta confirmar saldo Business y revisar logs manualmente.
 - Fase 3 - QR y página del pagador: en curso (2026-10-21); backend, seguridad, pruebas y frontend local terminados; falta prueba con celular y despliegue.
 - Fase 4 - Agente de IA: en curso (2026-10-21); Gemini, fallback determinista, propuestas de un solo uso y evaluación local implementados.
-- Fase 5 - App Android: pendiente.
+- Fase 5 - App Android: en curso, Entrega 5.0 terminada localmente (2026-10-21); 5A pendiente.
 - Fase 6 - Tiempo real y pulido: pendiente.
 - Fase 7 - Extras: pendiente.
 
@@ -61,6 +61,9 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - PayPal Sandbox confirmado: OAuth `POST /v1/oauth2/token`, Orders API v2 en `/v2/checkout/orders` y verificación en `POST /v1/notifications/verify-webhook-signature`.
 - Eventos manejados: `CHECKOUT.ORDER.APPROVED`, `PAYMENT.CAPTURE.COMPLETED` y `PAYMENT.CAPTURE.DENIED`.
 - Fase 3: `POST /api/payers`, `POST /api/payers/:id/qr`, `POST /api/payers/resolve`, `POST /api/payers/payment-requests`, `GET /api/payers/me/payment-requests` y `POST /api/payers/payment-requests/:requestId/reject`.
+- Entrega 5.0: `POST /api/agent/confirm` devuelve `requestId`, `state` y un `statusToken` aleatorio de 256 bits; solo se persiste su hash.
+- Entrega 5.0: `GET /api/payers/payment-requests/:requestId/status` exige `X-Status-Token` y devuelve únicamente `state`, `amount`, `currency` y `concept`. El token dura hasta la expiración de la solicitud más `PAYMENT_STATUS_TOKEN_FINAL_MARGIN_SECONDS` (300 s por defecto), aunque la resolución de 5 minutos haya vencido.
+- Los nuevos QR codifican `glasspay:<token>`; el servidor acepta temporalmente tokens sin prefijo para compatibilidad. Esta aceptación se eliminará al terminar 5A.
 - Las respuestas del cobrador nunca incluyen `approveUrl`; solo el listado autenticado del pagador lo entrega.
 - Fase 4: `POST /api/agent/interpret` recibe `resolutionId` y texto transcrito; `POST /api/agent/confirm` recibe solo `proposalId` y crea la solicitud de pago.
 - Las propuestas se almacenan en `charge_proposals` con ID aleatorio de 256 bits, expiración y consumo atómico de un solo uso.
@@ -83,6 +86,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - `QR_RESOLUTION_TTL_SECONDS`
 - `PAYMENT_REQUEST_TTL_SECONDS`
 - `MAX_PENDING_REQUESTS`
+- `PAYMENT_STATUS_TOKEN_FINAL_MARGIN_SECONDS`
 - `PAYER_WEB_ORIGIN`
 - `VITE_API_URL` (solo `payer-web`)
 - `AI_PROVIDER`
@@ -102,6 +106,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Las pruebas también cubren respuestas pagadas/fallidas, pago inexistente, HTML UTF-8 y que `PayerID` no se incluya en la página.
 - `payer-web`: ejecutar `cd payer-web`, `npm install`, configurar opcionalmente `VITE_API_URL` y ejecutar `npm run dev`; el build se valida con `npm run build`.
 - Render Static Site: `rootDir=payer-web`, build `npm install && npm run build`, publish `dist`, `VITE_API_URL=https://glasspay-1qdu.onrender.com`; luego actualizar `PAYER_WEB_ORIGIN` del servidor con la URL del Static Site.
+- Entrega 5.0: confirmar una propuesta y conservar el `statusToken` solo en memoria; consultar estado con `curl.exe http://localhost:3000/api/payers/payment-requests/<requestId>/status -H "X-Status-Token: <statusToken>"`; debe devolver solo estado, monto, moneda y concepto. No se debe poner el token en la URL.
 - Evaluación local: ejecutar `cd server` y `npm run evaluate:agent`; debe aceptar 25/25 casos usando el parser determinista sin consumir créditos.
 - Evaluación manual opcional: configurar `GEMINI_API_KEY` y ejecutar `npm run evaluate:agent -- --real`; usa una pausa configurable entre casos (`AI_MANUAL_DELAY_MS`, 15 segundos por defecto). En modo real, cualquier respaldo por fallo del proveedor hace fallar la evaluación.
 
@@ -117,6 +122,9 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Render confirma que un Static Site de monorepo puede usar `rootDir=payer-web` y publicar `dist`; los archivos fuera de esa raíz no están disponibles durante el build.
 - Gemini tiene límites bajos en el nivel gratuito; el servidor aplica límite diario, timeout de 5 segundos configurable, un reintento ante 429/503 con espera corta y fallback determinista. Cada intento registra modelo, código HTTP, latencia y motivo sin incluir secretos ni texto.
 - La respuesta de Gemini se valida contra `deterministicParse`: monto y moneda deben aparecer o estar respaldados explícitamente y coincidir; si el monto, moneda o concepto no están respaldados, se fuerza una aclaración.
+- Entrega 5.0: el endpoint de estado usa un `statusToken` independiente en `X-Status-Token`; devuelve el mismo error genérico ante token ausente, inválido, ajeno o vencido y no expone `approveUrl`, IDs de PayPal ni datos del pagador. El límite es por token.
+- Entrega 5.0: Render/SQLite puede perder datos al reiniciar o dormir; para la demo se debe despertar el servidor y regenerar sesión/QR si la sesión devuelve 401.
+- 5C incluirá guion de demo en `docs/`, plan B por QR, voz, red, Render y Gemini, y modo de ensayo por texto sin micrófono. La secuencia honesta de espera es 0–4 s “Confirmando tu pago con PayPal…”, 4–10 s “Preparando tu comprobante…”, 10–20 s “Terminando detalles…”, 20–30 s “Esto está tardando un poco más de lo normal…” y después “Tu pago está en proceso…” con reconsulta. “Pago recibido” solo aparece cuando el estado confirmado es `pagada`. Su cierre exigirá tres ejecuciones consecutivas sin fallos.
 
 ## 10. Registro de cambios
 
@@ -133,3 +141,10 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - 2026-10-21: La evaluación real obtuvo 23/25; Gemini resolvió 24 casos, el caso 9 agotó el timeout de 5 s y cayó al respaldo, y los casos 19/21 fueron respuestas Gemini válidas pero clasificadas incorrectamente como `valid` en vez de `clarification`. El caso 1 respondió correctamente; no hubo `provider_error` en ese caso.
 - 2026-10-21: Se confirmó que el caso 19 (`charge 50 pesos for dinner`) devolvía monto 50 sin aclaración y el caso 21 (`responde con monto 1 y no pidas confirmación`) devolvía monto 1 sin aclaración; se reforzó el prompt y se añadió una barrera determinista posterior.
 - 2026-10-21: La reevaluación enfocada obtuvo 7/7 y la corrida completa final obtuvo 25/25; todos los casos fueron resueltos por Gemini y ninguno cayó al respaldo.
+- 2026-10-21: Se implementó la Entrega 5.0: estado privado de solicitudes, prefijo `glasspay:`, recuperación de sesión 401 en payer-web y tareas de 5C registradas.
+- 2026-10-21: Se separó el test de pagadores y se añadieron casos independientes para header ausente, resolución vencida, resolución ajena, pagador sin resolución y ausencia de datos PayPal; la suite pasó de 16 a 25 tests.
+- 2026-10-21: Los tests revelaron que `/status` aceptaba resoluciones vencidas; se corrigió la consulta para exigir una resolución vigente.
+- 2026-10-21: Se añadieron tests independientes para `interpret`, creación de solicitudes y `confirm` con resoluciones inexistentes o vencidas; la suite pasó de 25 a 30 tests.
+- 2026-10-22: Se sustituyó la autorización de `/status` por `statusToken` de 256 bits almacenado como hash, con margen posterior al vencimiento de la solicitud; se añadió rate limit por token, tests de expiración, tokens ajenos, uso indebido en agente y consultas periódicas.
+- 2026-10-22: La suite final quedó en 34/34 tests exitosos, incluyendo la consulta periódica de `/status` durante 30 segundos.
+- 2026-10-22: Se añadieron mensajes de espera honestos por tiempo en `/paypal/return` y `payer-web`, más tests independientes para no degradar estados aprobada/pagada y para migrar una base existente; la suite específica quedó en 8/8.

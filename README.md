@@ -84,6 +84,17 @@ Endpoints de identidad:
 - `POST /api/payers/payment-requests` crea una solicitud sin revelar `approveUrl` al cobrador.
 - `GET /api/payers/me/payment-requests` lista solicitudes autenticadas del pagador.
 - `POST /api/payers/payment-requests/:requestId/reject` rechaza una solicitud propia.
+- `GET /api/payers/payment-requests/:requestId/status` devuelve el estado público usando `X-Status-Token`.
+  El token se entrega una sola vez al confirmar (`POST /api/agent/confirm` o
+  `POST /api/payers/payment-requests`), se almacena únicamente como hash y no
+  debe enviarse en la URL. Su vigencia cubre la solicitud y el margen de
+  `PAYMENT_STATUS_TOKEN_FINAL_MARGIN_SECONDS`, aunque la resolución original ya
+  haya vencido.
+
+Los QR nuevos contienen `glasspay:<token>`. El servidor todavía acepta el token
+sin prefijo durante la transición a Android; esa compatibilidad se eliminará al
+terminar la Entrega 5A. Si la sesión del pagador responde 401, `payer-web`
+borra la sesión local y vuelve a mostrar la pantalla para crear un perfil.
 
 ## Agente de IA
 
@@ -98,7 +109,11 @@ HTTP, latencia y motivo del fallo.
 Endpoints:
 
 - `POST /api/agent/interpret` recibe `resolutionId` y `text`; devuelve una propuesta o una aclaración.
-- `POST /api/agent/confirm` recibe solo `proposalId` y crea la solicitud de pago sin devolver `approveUrl`.
+- `POST /api/agent/confirm` recibe solo `proposalId` y devuelve
+  `{ requestId, state, statusToken }`; no devuelve `approveUrl` ni IDs de PayPal.
+  El `statusToken` se usa después únicamente en el header `X-Status-Token` de
+  `/status`. La resolución sigue siendo de un solo uso y con vigencia de cinco
+  minutos.
 
 La evaluación local de 25 frases no consume créditos:
 

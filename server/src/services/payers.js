@@ -29,15 +29,15 @@ function hashOpaqueToken(token) {
   return createHash("sha256").update(token).digest("hex");
 }
 
-function createRateLimiter({ maxRequests, windowMs }) {
+function createRateLimiter({ maxRequests, windowMs, key = (request) => request.ip || "unknown" }) {
   const buckets = new Map();
 
   return (request, response, next) => {
     const now = Date.now();
-    const key = request.ip || "unknown";
-    const bucket = buckets.get(key);
+    const bucketKey = key(request);
+    const bucket = buckets.get(bucketKey);
     if (!bucket || now - bucket.startedAt >= windowMs) {
-      buckets.set(key, { startedAt: now, count: 1 });
+      buckets.set(bucketKey, { startedAt: now, count: 1 });
       return next();
     }
     if (bucket.count >= maxRequests) {

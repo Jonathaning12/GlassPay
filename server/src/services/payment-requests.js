@@ -1,4 +1,5 @@
 const { randomUUID } = require("node:crypto");
+const { createOpaqueToken, hashOpaqueToken } = require("./payers");
 
 class PaymentRequestError extends Error {
   constructor(message, status = 400) {
@@ -27,8 +28,12 @@ async function createPaymentRequestFromResolutionHash({
 
   const transactionId = randomUUID();
   const requestId = randomUUID();
+  const statusToken = createOpaqueToken(32);
   const referenceId = `glasspay-${transactionId}`;
   const expiresAt = new Date(Date.now() + config.payers.paymentRequestTtlSeconds * 1000).toISOString();
+  const statusTokenExpiresAt = new Date(
+    Date.parse(expiresAt) + config.payers.statusTokenFinalMarginSeconds * 1000,
+  ).toISOString();
   await database.createTransaction({
     id: transactionId,
     payerId: resolution.payer_id,
@@ -54,9 +59,11 @@ async function createPaymentRequestFromResolutionHash({
       payerId: resolution.payer_id,
       resolutionHash,
       transactionId,
+      statusTokenHash: hashOpaqueToken(statusToken),
+      statusTokenExpiresAt,
       expiresAt,
     });
-    return { requestId, state: "pendiente_de_pagador" };
+    return { requestId, state: "pendiente_de_pagador", statusToken };
   } catch {
     await database.transitionState(transactionId, "fallida");
     console.error("PayPal payment request creation failed", { requestId });
