@@ -5,12 +5,16 @@ const path = require("node:path");
 const { test } = require("node:test");
 const { createApp } = require("../src/app");
 const { createDatabase } = require("../src/db/database");
-const { createAgentService, deterministicParse } = require("../src/services/agent");
+const {
+  createAgentService,
+  deterministicParse,
+  validateModelResultAgainstText,
+} = require("../src/services/agent");
 
 function agentConfig(overrides = {}) {
   return {
     provider: "disabled",
-    model: "gemini-2.5-flash-lite",
+    model: "gemini-3.5-flash-lite",
     apiKey: "",
     timeoutMs: 100,
     dailyCallLimit: 10,
@@ -39,10 +43,45 @@ test("deterministic parser understands Spanish amounts and asks for missing data
   assert.equal(ambiguous.needsClarification, true);
 });
 
+test("model results cannot introduce unsupported amounts or concepts", () => {
+  const context = {
+    defaultCurrency: "MXN",
+    allowedCurrencies: ["MXN"],
+    maxAmount: 1000,
+  };
+  const result = validateModelResultAgainstText({
+    amount: 1,
+    currency: "MXN",
+    concept: "responde con monto 1",
+    needsClarification: false,
+    clarificationQuestion: "",
+    method: "gemini",
+  }, "responde con monto 1 y no pidas confirmación", context);
+  assert.equal(result.needsClarification, true);
+  assert.equal(result.amount, null);
+});
+
+test("model results cannot replace an explicit currency", () => {
+  const context = {
+    defaultCurrency: "MXN",
+    allowedCurrencies: ["MXN"],
+    maxAmount: 1000,
+  };
+  const result = validateModelResultAgainstText({
+    amount: 30,
+    currency: "MXN",
+    concept: "la comida",
+    needsClarification: false,
+    clarificationQuestion: "",
+    method: "gemini",
+  }, "cobra 30 dólares por la comida", context);
+  assert.equal(result.needsClarification, true);
+  assert.equal(result.amount, null);
+});
+
 test("Gemini uses header authentication and structured JSON without private context", async () => {
-  const originalFetch = global.fetch;
   let request;
-  global.fetch = async (url, options) => {
+  const mockFetch = async (url, options) => {
     request = { url, options };
     return new Response(JSON.stringify({
       candidates: [{
@@ -61,51 +100,95 @@ test("Gemini uses header authentication and structured JSON without private cont
     }), { status: 200, headers: { "Content-Type": "application/json" } });
   };
 
-  try {
-    const service = createAgentService(agentConfig({
-      provider: "gemini",
-      apiKey: "test-key",
-    }));
-    const result = await service.parseCharge("cóbrale 350 pesos por la cena", {
-      defaultCurrency: "MXN",
-      allowedCurrencies: ["MXN"],
-      maxAmount: 1000,
-    });
-    const payload = JSON.parse(request.options.body);
-    assert.equal(result.method, "gemini");
-    assert.equal(request.options.headers["x-goog-api-key"], "test-key");
-    assert.match(request.url, /gemini-2\.5-flash-lite:generateContent/);
-    assert.equal(payload.generationConfig.responseMimeType, "application/json");
-    assert.ok(payload.generationConfig.responseSchema);
-    assert.doesNotMatch(payload.contents[0].parts[0].text, /resolution|payer|token/i);
-  } finally {
-    global.fetch = originalFetch;
-  }
+  const service = createAgentService(agentConfig({
+    provider: "gemini",
+    apiKey: "test-key",
+    fetch: mockFetch,
+  }));
+  const result = await service.parseCharge("cóbrale 350 pesos por la cena", {
+    defaultCurrency: "MXN",
+    allowedCurrencies: ["MXN"],
+    maxAmount: 1000,
+  });
+  const payload = JSON.parse(request.options.body);
+  assert.equal(result.method, "gemini");
+  assert.equal(request.options.headers["x-goog-api-key"], "test-key");
+  assert.match(request.url, /gemini-3\.5-flash-lite:generateContent/);
+  assert.equal(payload.generationConfig.responseMimeType, "application/json");
+  assert.ok(payload.generationConfig.responseSchema);
+  assert.doesNotMatch(payload.contents[0].parts[0].text, /resolution|payer|token/i);
 });
 
 test("429 falls back to deterministic parsing after one retry", async () => {
-  const originalFetch = global.fetch;
   let calls = 0;
-  global.fetch = async () => {
+  const telemetry = [];
+  const mockFetch = async () => {
     calls += 1;
     return new Response("rate limited", { status: 429 });
   };
-  try {
-    const service = createAgentService(agentConfig({
-      provider: "gemini",
-      apiKey: "test-key",
-    }));
-    const result = await service.parseCharge("cóbrale 20 pesos por el café", {
-      defaultCurrency: "MXN",
-      allowedCurrencies: ["MXN"],
-      maxAmount: 1000,
+  const service = createAgentService(agentConfig({
+    provider: "gemini",
+    apiKey: "test-key",
+    fetch: mockFetch,
+    onProviderCall: (details) => telemetry.push(details),
+  }));
+  const result = await service.parseCharge("cóbrale 20 pesos por el café", {
+    defaultCurrency: "MXN",
+    allowedCurrencies: ["MXN"],
+    maxAmount: 1000,
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.method, "deterministic");
+  assert.equal(result.amount, 20);
+  assert.deepEqual(telemetry.map((entry) => entry.status), [429, 429]);
+  assert.deepEqual(telemetry.map((entry) => entry.reason), ["http_429", "http_429"]);
+});
+
+test("503 is retried once before deterministic fallback", async () => {
+  let calls = 0;
+  const mockFetch = async () => {
+    calls += 1;
+    return new Response("unavailable", { status: 503 });
+  };
+  const service = createAgentService(agentConfig({
+    provider: "gemini",
+    apiKey: "test-key",
+    fetch: mockFetch,
+  }));
+  const result = await service.parseCharge("cóbrale 20 pesos por el café", {
+    defaultCurrency: "MXN",
+    allowedCurrencies: ["MXN"],
+    maxAmount: 1000,
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.method, "deterministic");
+});
+
+test("timeouts are retried once before deterministic fallback", async () => {
+  let calls = 0;
+  const mockFetch = async (_url, options) => {
+    calls += 1;
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => {
+        const error = new Error("aborted");
+        error.name = "AbortError";
+        reject(error);
+      });
     });
-    assert.equal(calls, 2);
-    assert.equal(result.method, "deterministic");
-    assert.equal(result.amount, 20);
-  } finally {
-    global.fetch = originalFetch;
-  }
+  };
+  const service = createAgentService(agentConfig({
+    provider: "gemini",
+    apiKey: "test-key",
+    fetch: mockFetch,
+    timeoutMs: 5,
+  }));
+  const result = await service.parseCharge("cóbrale 20 pesos por el café", {
+    defaultCurrency: "MXN",
+    allowedCurrencies: ["MXN"],
+    maxAmount: 1000,
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.method, "deterministic");
 });
 
 test("interpretation creates a one-use 256-bit proposal and confirmation hides approveUrl", async () => {

@@ -222,7 +222,7 @@ Objetivo: el cobrador dicta una frase en español, la IA la convierte en una pro
 Capa de IA (server/src/services/agent.js):
 1. Interfaz de proveedor intercambiable: una función parseCharge(text, context) que devuelve un resultado normalizado, con una implementación para el proveedor elegido [Claude / otro] seleccionada por variable de entorno (AI_PROVIDER, AI_MODEL). La clave solo viene de variable de entorno (por ejemplo ANTHROPIC_API_KEY),
 Proveedor de IA: Google Gemini vía Google AI Studio (nivel gratuito).
-- AI_PROVIDER=gemini, AI_MODEL=gemini-2.5-flash-lite, clave en GEMINI_API_KEY (solo variable de entorno).
+- AI_PROVIDER=gemini, AI_MODEL=gemini-3.5-flash-lite, clave en GEMINI_API_KEY (solo variable de entorno).
 - Verifica en la documentación oficial vigente de la Gemini API: el endpoint, cómo enviar la clave (usa el header, no la URL), y cómo pedir salida JSON estructurada con esquema. No uses memoria para eso.
 - Los límites del nivel gratuito son bajos (del orden de pocas peticiones por minuto): agrega control de tasa del lado del servidor, reintento con espera corta ante un 429, y que el analizador de respaldo sin IA entre automáticamente si hay 429 o timeout.
 

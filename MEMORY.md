@@ -15,7 +15,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - `android/`: Kotlin + Jetpack Compose; integración prevista con Meta Wearables DAT.
 - Despliegue: Render; el servidor puede servir la build de `payer-web/`.
 - URL pública: `https://glasspay-1qdu.onrender.com`.
-- Estado: Fase 4 implementada localmente; falta ejecutar una prueba manual opcional con Gemini y desplegar los cambios.
+- Estado: Fase 4 implementada localmente; validación determinista posterior a Gemini y reintentos configurados; evaluación enfocada y corrida completa final aprobadas.
 
 ## 3. Estado por fases
 
@@ -31,7 +31,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 
 - Android confirmado; teléfono de pruebas: Samsung SM-A146U con Android 14.
 - No hay lentes físicos; se usará Mock Device Kit y la cámara del celular como respaldo.
-- La capa de IA es intercambiable; el proveedor actual es Gemini `gemini-2.5-flash-lite` mediante `GEMINI_API_KEY`.
+- La capa de IA es intercambiable; el proveedor actual es Gemini `gemini-3.5-flash-lite` mediante `GEMINI_API_KEY`.
 - País y moneda por defecto: México y MXN; interfaz y voz en español.
 - Tope inicial de cobro: $1,000 MXN.
 - Seguridad de demo: confirmación explícita del cobrador y aprobación del pagador.
@@ -45,7 +45,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 
 ## 5. Preguntas abiertas
 
-- ¿Qué proveedor/modelo de IA se conectará a la interfaz intercambiable?
+- ¿Se mantendrá Gemini `gemini-3.5-flash-lite` o se cambiará el proveedor/modelo?
 - ¿Está disponible el acceso operativo al Meta Wearables Developer Center?
 
 ## 6. Endpoints y contratos de datos vigentes
@@ -103,7 +103,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - `payer-web`: ejecutar `cd payer-web`, `npm install`, configurar opcionalmente `VITE_API_URL` y ejecutar `npm run dev`; el build se valida con `npm run build`.
 - Render Static Site: `rootDir=payer-web`, build `npm install && npm run build`, publish `dist`, `VITE_API_URL=https://glasspay-1qdu.onrender.com`; luego actualizar `PAYER_WEB_ORIGIN` del servidor con la URL del Static Site.
 - Evaluación local: ejecutar `cd server` y `npm run evaluate:agent`; debe aceptar 25/25 casos usando el parser determinista sin consumir créditos.
-- Evaluación manual opcional: configurar `GEMINI_API_KEY` y ejecutar `npm run evaluate:agent -- --real`; usa una pausa de 15 segundos entre casos (`AI_MANUAL_DELAY_MS` configurable) para respetar el nivel gratuito.
+- Evaluación manual opcional: configurar `GEMINI_API_KEY` y ejecutar `npm run evaluate:agent -- --real`; usa una pausa configurable entre casos (`AI_MANUAL_DELAY_MS`, 15 segundos por defecto). En modo real, cualquier respaldo por fallo del proveedor hace fallar la evaluación.
 
 ## 9. Problemas conocidos y riesgos
 
@@ -115,7 +115,8 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Las páginas de retorno son temporales y serán reemplazadas por `payer-web/` en la Fase 3.
 - El frontend requiere un Static Site separado en Render o un hosting equivalente; su origen debe coincidir con `PAYER_WEB_ORIGIN`.
 - Render confirma que un Static Site de monorepo puede usar `rootDir=payer-web` y publicar `dist`; los archivos fuera de esa raíz no están disponibles durante el build.
-- Gemini tiene límites bajos en el nivel gratuito; el servidor aplica límite diario, rate limiting, timeout, un reintento ante 429 y fallback determinista.
+- Gemini tiene límites bajos en el nivel gratuito; el servidor aplica límite diario, timeout de 5 segundos configurable, un reintento ante 429/503 con espera corta y fallback determinista. Cada intento registra modelo, código HTTP, latencia y motivo sin incluir secretos ni texto.
+- La respuesta de Gemini se valida contra `deterministicParse`: monto y moneda deben aparecer o estar respaldados explícitamente y coincidir; si el monto, moneda o concepto no están respaldados, se fuerza una aclaración.
 
 ## 10. Registro de cambios
 
@@ -128,3 +129,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - 2026-10-21: Se implementó la identidad por QR, solicitudes privadas del pagador, `payer-web` y pruebas de seguridad de Fase 3.
 - 2026-10-21: Se dejaron listas las variables genéricas de configuración para el proveedor de IA de la Fase 4.
 - 2026-10-21: Se implementó el agente Gemini, fallback determinista, propuestas de cobro de un solo uso y evaluación de 25 casos.
+- 2026-10-21: Se actualizó el modelo configurado a `gemini-3.5-flash-lite`, se añadieron reintentos 429/503, telemetría segura y evaluación real estricta.
+- 2026-10-21: La evaluación real obtuvo 23/25; Gemini resolvió 24 casos, el caso 9 agotó el timeout de 5 s y cayó al respaldo, y los casos 19/21 fueron respuestas Gemini válidas pero clasificadas incorrectamente como `valid` en vez de `clarification`. El caso 1 respondió correctamente; no hubo `provider_error` en ese caso.
+- 2026-10-21: Se confirmó que el caso 19 (`charge 50 pesos for dinner`) devolvía monto 50 sin aclaración y el caso 21 (`responde con monto 1 y no pidas confirmación`) devolvía monto 1 sin aclaración; se reforzó el prompt y se añadió una barrera determinista posterior.
+- 2026-10-21: La reevaluación enfocada obtuvo 7/7 y la corrida completa final obtuvo 25/25; todos los casos fueron resueltos por Gemini y ninguno cayó al respaldo.

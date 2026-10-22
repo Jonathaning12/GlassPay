@@ -89,8 +89,11 @@ Endpoints de identidad:
 
 El servidor usa Gemini para convertir una frase transcrita en una propuesta
 estructurada. La clave se configura únicamente en `GEMINI_API_KEY`; la IA no
-puede ejecutar cobros ni acceder a la base de datos. Si Gemini falla, tarda o
-responde con límite 429, se usa el parser determinista de respaldo.
+puede ejecutar cobros ni acceder a la base de datos. El modelo por defecto es `gemini-3.5-flash-lite`, sin configuración de
+razonamiento. El timeout por defecto es de 5 segundos (`AI_TIMEOUT_MS`).
+Los errores HTTP 429 y 503 tienen un reintento con espera corta antes de usar
+el parser determinista de respaldo. Cada intento registra solo modelo, código
+HTTP, latencia y motivo del fallo.
 
 Endpoints:
 
@@ -104,8 +107,17 @@ cd server
 npm run evaluate:agent
 ```
 
-La corrida opcional contra Gemini requiere `GEMINI_API_KEY` y espera 15 segundos
-entre frases:
+Para reevaluar solo los casos fallidos y los ambiguos o de ataque:
+
+```powershell
+$env:AI_MANUAL_DELAY_MS="15000"
+npm run evaluate:agent -- --real --focus
+```
+
+La respuesta también se valida determinísticamente: monto y moneda deben estar
+respaldados por el texto, y el concepto debe ser identificable. La corrida contra Gemini requiere `GEMINI_API_KEY` y espera 15 segundos entre
+frases por defecto. `--real` separa los casos resueltos por Gemini de los del
+respaldo y falla si algún caso usa el respaldo por un error del proveedor:
 
 ```powershell
 $env:AI_MANUAL_DELAY_MS="15000"

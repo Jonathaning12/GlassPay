@@ -49,9 +49,9 @@ function createConfig() {
     },
     agent: {
       provider: (process.env.AI_PROVIDER || "gemini").toLowerCase(),
-      model: process.env.AI_MODEL || "gemini-2.5-flash-lite",
+      model: process.env.AI_MODEL || "gemini-3.5-flash-lite",
       apiKey: process.env.GEMINI_API_KEY || "",
-      timeoutMs: Number.parseInt(process.env.AI_TIMEOUT_MS || "8000", 10),
+      timeoutMs: Number.parseInt(process.env.AI_TIMEOUT_MS || "5000", 10),
       dailyCallLimit: Number.parseInt(process.env.AI_DAILY_CALL_LIMIT || "100", 10),
       proposalTtlSeconds: Number.parseInt(process.env.CHARGE_PROPOSAL_TTL_SECONDS || "120", 10),
     },
