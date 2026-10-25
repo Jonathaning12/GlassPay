@@ -5,3 +5,7 @@ local.properties
 *.jks
 captures/
 .cxx/
+
+.idea/
+.kotlin/
+*.iml
