@@ -3,6 +3,7 @@ package com.glasspay.android
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -45,6 +46,10 @@ import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import java.time.Instant
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
@@ -60,51 +65,113 @@ private fun GlassPayApp() {
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val api = remember { PaymentApi() }
+    val stateMachine = remember { ResolveStateMachine() }
     var cameraGranted by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
                 PackageManager.PERMISSION_GRANTED,
         )
     }
-    var payerName by remember { mutableStateOf<String?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var resolving by remember { mutableStateOf(false) }
-    var lastToken by remember { mutableStateOf<String?>(null) }
+    var uiState by remember { mutableStateOf<ResolveState>(ResolveState.Scanning) }
+    var attemptCounter by remember { mutableStateOf(0L) }
+    var serverReady by remember { mutableStateOf(false) }
+    var activeJob by remember { mutableStateOf<Job?>(null) }
+    var cameraError by remember { mutableStateOf<String?>(null) }
+    var rejectedToken by remember { mutableStateOf<String?>(null) }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         cameraGranted = granted
-        if (!granted) error = "Necesitamos la cámara para leer el QR."
+        if (!granted) cameraError = "Necesitamos la cámara para leer el QR."
     }
 
     LaunchedEffect(Unit) {
         if (!cameraGranted) permissionLauncher.launch(Manifest.permission.CAMERA)
+        launch {
+            try {
+                api.warmUp()
+                serverReady = true
+            } catch (exception: ApiException) {
+                Log.i("GlassPay", "health failure type=${exception.type} httpCode=${exception.httpCode}")
+            }
+        }
+    }
+
+    fun dispatch(event: ResolveEvent) {
+        uiState = stateMachine.dispatch(event)
+    }
+
+    fun cancelActiveRequest() {
+        activeJob?.cancel()
+        activeJob = null
+    }
+
+    fun resolveToken(token: String) {
+        if (uiState is ResolveState.Identified) return
+        if (uiState is ResolveState.Failed) return
+        if (token == rejectedToken) return
+        if (token != rejectedToken) rejectedToken = null
+        if (uiState is ResolveState.Resolving &&
+            (uiState as ResolveState.Resolving).token == token
+        ) {
+            return
+        }
+        cancelActiveRequest()
+        attemptCounter += 1
+        val attemptId = attemptCounter
+        val waking = !serverReady
+        dispatch(ResolveEvent.Begin(attemptId, token, waking))
+        activeJob = scope.launch {
+            try {
+                val resolution = api.resolveQrToken(token, if (waking) 60_000 else 15_000)
+                serverReady = true
+                dispatch(
+                    ResolveEvent.Success(
+                        attemptId,
+                        resolution.displayName,
+                        resolution.resolutionId,
+                        resolution.expiresAt,
+                    ),
+                )
+                vibrate(context)
+            } catch (exception: ApiException) {
+                if (isActive) {
+                    Log.i(
+                        "GlassPay",
+                        "resolve attempt=$attemptId failure type=${exception.type} httpCode=${exception.httpCode}",
+                    )
+                    if (exception.type == ApiFailureType.NOT_FOUND) rejectedToken = token
+                    dispatch(ResolveEvent.Failure(attemptId, exception.type.toResolveFailureType()))
+                }
+            } catch (_: Exception) {
+                if (isActive) {
+                    Log.i("GlassPay", "resolve attempt=$attemptId failure type=UNKNOWN httpCode=none")
+                    dispatch(ResolveEvent.Failure(attemptId, ResolveFailureType.NETWORK))
+                }
+            } finally {
+                if (isActive) activeJob = null
+            }
+        }
+    }
+
+    LaunchedEffect(uiState) {
+        val identified = uiState as? ResolveState.Identified ?: return@LaunchedEffect
+        val expiresAt = runCatching { Instant.parse(identified.expiresAt) }.getOrNull() ?: return@LaunchedEffect
+        val remaining = expiresAt.toEpochMilli() - System.currentTimeMillis()
+        if (remaining > 0) {
+            delay(remaining)
+        }
+        if (stateMachine.state == identified) {
+            cancelActiveRequest()
+            dispatch(ResolveEvent.Reset)
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color(0xFF0B1020))) {
-        if (cameraGranted && payerName == null) {
+        if (cameraGranted && uiState !is ResolveState.Identified) {
             CameraPreview(
                 lifecycleOwner = lifecycleOwner,
-                onTokenDetected = { token ->
-                    if (token == lastToken || resolving) return@CameraPreview
-                    lastToken = token
-                    resolving = true
-                    error = null
-                    scope.launch {
-                        try {
-                            payerName = api.resolveQrToken(token).displayName
-                            vibrate(context)
-                        } catch (exception: ApiException) {
-                            error = exception.message
-                            lastToken = null
-                        } catch (_: Exception) {
-                            error = "No pudimos conectar con GlassPay."
-                            lastToken = null
-                        } finally {
-                            resolving = false
-                        }
-                    }
-                },
+                onTokenDetected = ::resolveToken,
             )
         }
 
@@ -114,22 +181,36 @@ private fun GlassPayApp() {
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                text = if (payerName == null) "Busca un QR de GlassPay" else "Pagador identificado",
+                text = when (val state = uiState) {
+                    is ResolveState.Identified -> "Pagador identificado"
+                    is ResolveState.Resolving -> if (state.waking) "Despertando el servidor…" else "Resolviendo QR…"
+                    else -> "Busca un QR de GlassPay"
+                },
                 color = Color.White,
                 style = MaterialTheme.typography.headlineSmall,
             )
-            payerName?.let {
-                Text("Pagador: $it", color = Color.White, style = MaterialTheme.typography.titleLarge)
+            if (uiState is ResolveState.Resolving && (uiState as ResolveState.Resolving).waking) {
+                CircularProgressIndicator()
+            }
+            (uiState as? ResolveState.Identified)?.let { identified ->
+                Text("Pagador: ${identified.displayName}", color = Color.White, style = MaterialTheme.typography.titleLarge)
                 Button(onClick = {
-                    payerName = null
-                    lastToken = null
-                    error = null
+                    cancelActiveRequest()
+                    dispatch(ResolveEvent.Reset)
                 }) {
                     Text("Escanear otro QR")
                 }
             }
-            if (resolving) CircularProgressIndicator()
-            error?.let { Text(it, color = Color(0xFFFFB4AB)) }
+            (uiState as? ResolveState.RetryableError)?.let { retryable ->
+                Text(retryable.message, color = Color(0xFFFFB4AB))
+                Button(onClick = { resolveToken(retryable.token) }) {
+                    Text("Reintentar")
+                }
+            }
+            (uiState as? ResolveState.Failed)?.let { failed ->
+                Text(failed.message, color = Color(0xFFFFB4AB))
+            }
+            cameraError?.let { Text(it, color = Color(0xFFFFB4AB)) }
         }
     }
 }
@@ -149,6 +230,7 @@ private fun CameraPreview(
                 .build(),
         )
     }
+    val latestCallback = androidx.compose.runtime.rememberUpdatedState(onTokenDetected)
 
     LaunchedEffect(Unit) {
         val provider = ProcessCameraProvider.getInstance(context).get()
@@ -159,7 +241,7 @@ private fun CameraPreview(
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
         analysis.setAnalyzer(executor) { imageProxy ->
-            analyzeFrame(imageProxy, scanner, onTokenDetected)
+            analyzeFrame(imageProxy, scanner) { token -> latestCallback.value(token) }
         }
         provider.unbindAll()
         provider.bindToLifecycle(
@@ -199,5 +281,17 @@ private fun vibrate(context: android.content.Context) {
         @Suppress("DEPRECATION")
         context.getSystemService(Vibrator::class.java)
     }
+
     vibrator.vibrate(VibrationEffect.createOneShot(80, VibrationEffect.DEFAULT_AMPLITUDE))
+}
+
+private fun ApiFailureType.toResolveFailureType(): ResolveFailureType {
+    return when (this) {
+        ApiFailureType.NETWORK -> ResolveFailureType.NETWORK
+        ApiFailureType.TIMEOUT -> ResolveFailureType.TIMEOUT
+        ApiFailureType.NOT_FOUND -> ResolveFailureType.NOT_FOUND
+        ApiFailureType.RATE_LIMITED -> ResolveFailureType.RATE_LIMITED
+        ApiFailureType.SERVER -> ResolveFailureType.SERVER
+        ApiFailureType.INVALID_RESPONSE -> ResolveFailureType.INVALID_RESPONSE
+    }
 }

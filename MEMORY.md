@@ -12,7 +12,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Monorepo: `android/`, `server/`, `payer-web/`, `docs/`.
 - `server/`: Node.js LTS + Express; único componente que habla con PayPal y la IA.
 - `payer-web/`: React + Vite para generar QR y aprobar pagos.
-- `android/`: Kotlin + Jetpack Compose; integración prevista con Meta Wearables DAT.
+- `android/`: Kotlin + Jetpack Compose; app de teléfono para 5A compilable, con integración Meta Wearables DAT pospuesta.
 - Despliegue: Render; el servidor puede servir la build de `payer-web/`.
 - URL pública: `https://glasspay-1qdu.onrender.com`.
 - Estado: Entrega 5.0 implementada localmente; el estado privado usa `statusToken` independiente de la resolución; falta validar el despliegue y la prueba manual antes de pasar a 5A.
@@ -23,7 +23,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Fase 2 - PayPal: en curso (2026-10-21); el pago Sandbox y la idempotencia del webhook fueron validados; falta confirmar saldo Business y revisar logs manualmente.
 - Fase 3 - QR y página del pagador: en curso (2026-10-21); backend, seguridad, pruebas y frontend local terminados; falta prueba con celular y despliegue.
 - Fase 4 - Agente de IA: en curso (2026-10-21); Gemini, fallback determinista, propuestas de un solo uso y evaluación local implementados.
-- Fase 5 - App Android: en curso, Entrega 5.0 terminada localmente (2026-10-21); 5A pendiente.
+- Fase 5 - App Android: en curso; 5.0 terminada (2026-10-21), 5A compila y está pendiente de prueba en el Samsung SM-A146U.
 - Fase 6 - Tiempo real y pulido: pendiente.
 - Fase 7 - Extras: pendiente.
 
@@ -42,6 +42,9 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Las transiciones de estado usan una sentencia SQL atómica monotónica y las escrituras de `sql.js` se serializan mediante una cola.
 - Los secretos de sesión y tokens QR se generan aleatoriamente y solo se guardan como hashes; el frontend conserva el secreto en `localStorage`.
 - `payer-web` usa polling de solicitudes cada 2 segundos; SSE queda reservado para la Fase 6.
+- Android 5A usa AGP 9.4.0 con Kotlin integrado, por lo que no aplica `org.jetbrains.kotlin.android`; el plugin Compose declarado es 2.2.20.
+- Android 5A usa Gradle 9.6.0, JDK 25.0.3 mediante JBR de Android Studio, compile/target SDK 36 y min SDK 31. El JDK 17 es el mínimo/default documentado por AGP 9.4, pero el daemon local usa JDK 25 por `gradle/gradle-daemon-jvm.properties`.
+- La corrección actual de 5A usa una máquina de estados pura Kotlin en `android/app/src/main/java/com/glasspay/android/ResolveState.kt`; los intentos tienen contador/ID, el `resolutionId` permanece solo en memoria y los callbacks atrasados no cambian el estado actual.
 
 ## 5. Preguntas abiertas
 
@@ -109,6 +112,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Entrega 5.0: confirmar una propuesta y conservar el `statusToken` solo en memoria; consultar estado con `curl.exe http://localhost:3000/api/payers/payment-requests/<requestId>/status -H "X-Status-Token: <statusToken>"`; debe devolver solo estado, monto, moneda y concepto. No se debe poner el token en la URL.
 - Evaluación local: ejecutar `cd server` y `npm run evaluate:agent`; debe aceptar 25/25 casos usando el parser determinista sin consumir créditos.
 - Evaluación manual opcional: configurar `GEMINI_API_KEY` y ejecutar `npm run evaluate:agent -- --real`; usa una pausa configurable entre casos (`AI_MANUAL_DELAY_MS`, 15 segundos por defecto). En modo real, cualquier respaldo por fallo del proveedor hace fallar la evaluación.
+- Android: desde PowerShell, configurar `$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"`, ejecutar `cd android; .\gradlew.bat testDebugUnitTest` y `cd android; .\gradlew.bat assembleDebug`. Para ADB, añadir `$env:Path += ";$env:LOCALAPPDATA\Android\Sdk\platform-tools"`. `android/local.properties` apunta al SDK local y no se versiona.
 
 ## 9. Problemas conocidos y riesgos
 
@@ -123,8 +127,19 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Gemini tiene límites bajos en el nivel gratuito; el servidor aplica límite diario, timeout de 5 segundos configurable, un reintento ante 429/503 con espera corta y fallback determinista. Cada intento registra modelo, código HTTP, latencia y motivo sin incluir secretos ni texto.
 - La respuesta de Gemini se valida contra `deterministicParse`: monto y moneda deben aparecer o estar respaldados explícitamente y coincidir; si el monto, moneda o concepto no están respaldados, se fuerza una aclaración.
 - Entrega 5.0: el endpoint de estado usa un `statusToken` independiente en `X-Status-Token`; devuelve el mismo error genérico ante token ausente, inválido, ajeno o vencido y no expone `approveUrl`, IDs de PayPal ni datos del pagador. El límite es por token.
+- Entrega 5A: `PaymentApi` hace un `GET /health` silencioso al iniciar con timeout de hasta 60 s; la primera resolución también tolera hasta 60 s y muestra `Despertando el servidor…`. Las siguientes usan timeout normal.
+- Entrega 5A: `POST /api/payers/resolve` se ejecuta una vez por intento activo; repetir el mismo token en el servidor no lo consume ni reutiliza la resolución, sino que crea otra resolución independiente (sujeta a rate limit).
 - Entrega 5.0: Render/SQLite puede perder datos al reiniciar o dormir; para la demo se debe despertar el servidor y regenerar sesión/QR si la sesión devuelve 401.
 - 5C incluirá guion de demo en `docs/`, plan B por QR, voz, red, Render y Gemini, y modo de ensayo por texto sin micrófono. La secuencia honesta de espera es 0–4 s “Confirmando tu pago con PayPal…”, 4–10 s “Preparando tu comprobante…”, 10–20 s “Terminando detalles…”, 20–30 s “Esto está tardando un poco más de lo normal…” y después “Tu pago está en proceso…” con reconsulta. “Pago recibido” solo aparece cuando el estado confirmado es `pagada`. Su cierre exigirá tres ejecuciones consecutivas sin fallos.
+- Incidente Android 5A: `gradle-9.6-bin.zip` devolvía 404; AGP exigía `gradle-9.6.0`, que es la URL vigente.
+- Incidente Android 5A: AGP 9.x rechazaba `org.jetbrains.kotlin.android`; se eliminó del proyecto porque Kotlin está integrado en AGP.
+- Incidente Android 5A: se eliminó `kotlinOptions`; con AGP 9.x la configuración JVM anterior ya no se usa y el proyecto compila con Java 17 en `compileOptions`, aunque el daemon local usa JDK 25.
+- Incidente Android 5A: el wrapper estaba incompleto; se generaron `gradlew`, `gradlew.bat` y `gradle/wrapper/gradle-wrapper.jar`, que deben permanecer versionados.
+- Incidente Android 5A: `gradle-daemon-jvm.properties` contenía URLs de toolchain y `updateDaemonJvm` fallaba porque no hay repositorios configurados. Se dejó `toolchainVersion=25` sin URLs; no ejecutar ni regenerar esa tarea. Si Android Studio regenera el archivo, revisar `git diff`.
+- Riesgo Android conocido: el selector “Gradle JVM criteria” del IDE muestra 17, pero el daemon usa JBR/OpenJDK 25.0.3 por el archivo de criterios. Una clonación necesita JBR 25 de Android Studio o ajustar conscientemente esa configuración.
+- 5A corregida: el éxito limpia el error anterior; un fallo atrasado no pisa un pagador identificado; HTTP 404 vuelve a `Scanning`; red/timeout conserva el QR y ofrece `Reintentar`; HTTP 429 muestra `Demasiados intentos. Espera unos segundos.`; otros errores muestran mensaje genérico no reintentable.
+- 5A corregida: cada cancelación de flujo cancela el `Job` y el `OkHttp Call`; los logs solo incluyen contador de intento, tipo de fallo y código HTTP, nunca token, `resolutionId` ni cuerpo.
+- 5A: después de un 404 el token rechazado se ignora mientras siga frente a la cámara; al detectar un QR distinto vuelve a intentarse. El botón `Reintentar` es la vía explícita para red/timeout.
 
 ## 10. Registro de cambios
 
@@ -151,3 +166,6 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - 2026-10-23: Se creó `.github/copilot-instructions.md` con comandos verificados, arquitectura y convenciones específicas para futuras sesiones de Copilot.
 - 2026-10-23: Se aprobó el plan de la Entrega 5A. Android Studio ya está instalado en su última versión; hay laptop, dos pantallas, un móvil Samsung SM-A146U con Android 14 y una segunda pantalla/dispositivo para mostrar el QR. La integración de Meta Glasses queda para el final; primero se prioriza una app funcional con la cámara del teléfono.
 - 2026-10-23: Se inició la Entrega 5A con un proyecto Android Compose en `android/`: AGP 9.4.0, Gradle 9.6, Kotlin 2.2.20, JDK 17, compile/target SDK 36 y min SDK 31. Se añadieron CameraX 1.4.2, ML Kit Barcode Scanning bundled 17.3.0 y OkHttp 4.12.0. La app solo acepta QR `glasspay:<token>`, resuelve el pagador mediante `POST /api/payers/resolve`, conserva la resolución en memoria y no incluye todavía Meta DAT. La terminal tiene Java pero no `adb` ni `sdkmanager` en PATH; falta compilar en Android Studio o configurar esas herramientas.
+- 2026-10-24: Se registraron las correcciones del primer Sync de Android, el wrapper completo, JDK/daemon real y el estado 5A: compila; pendiente de prueba en dispositivo. No se actualizaron versiones de Gradle, plugins ni dependencias.
+- 2026-10-24: Con `JAVA_HOME=C:\Program Files\Android\Android Studio\jbr`, `android\gradlew.bat testDebugUnitTest` terminó `BUILD SUCCESSFUL` y `android\gradlew.bat assembleDebug` terminó `BUILD SUCCESSFUL` (38 tareas up-to-date). 5A sigue pendiente de instalación y prueba en el Samsung.
+- 2026-10-24: Se corrigió el estado QR de 5A con máquina pura, callback Compose actualizado, cancelación de OkHttp, health check de arranque en frío, clasificación segura de red/timeout/404/429/servidor y expiración de resolución en memoria. Se añadieron pruebas de reintento, 404, resultado atrasado y deduplicación; `testDebugUnitTest` y `assembleDebug` terminaron `BUILD SUCCESSFUL`. Sin commit ni push.

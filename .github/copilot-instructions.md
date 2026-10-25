@@ -34,9 +34,32 @@ npm run preview
 
 The server uses Node's built-in test runner (`server/test/*.test.js`); a single
 file can be selected with `npm test -- test/agent.test.js`. There is currently
-no lint script in either package manifest and no Android Gradle project yet.
+no lint script in either package manifest.
 For local API development, copy `server/.env.example` to `server/.env`; never
 commit or print `server/.env`.
+
+### Android
+
+The Android project is under `android/` and currently covers delivery 5A:
+phone CameraX preview, bundled ML Kit QR scanning, and the HTTPS payer resolve
+call. Meta Wearables DAT is intentionally deferred. The checked-in Gradle
+wrapper is required:
+
+```powershell
+$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+cd android
+.\gradlew.bat testDebugUnitTest
+.\gradlew.bat assembleDebug
+$env:Path += ";$env:LOCALAPPDATA\Android\Sdk\platform-tools"
+adb devices
+```
+
+The current project uses AGP `9.4.0`, Gradle `9.6.0`, integrated Kotlin,
+Compose compiler plugin `2.2.20`, JDK 25 through Android Studio JBR, and
+compile/target SDK 36 with min SDK 31. Do not regenerate
+`android/gradle/gradle-daemon-jvm.properties` with `updateDaemonJvm`; it
+intentionally has no toolchain download URLs. `android/local.properties` and
+IDE files remain local.
 
 ## Architecture and data flow
 
@@ -62,7 +85,7 @@ commit or print `server/.env`.
   `approveUrl`.
 - The cobrador-facing status endpoint uses a separate one-time opaque
   `statusToken` in `X-Status-Token`; it returns only payment state and display
-  fields. Android is not implemented yet and should consume this API rather than
+  fields. Android should consume this API rather than
   embedding PayPal or Gemini credentials.
 - Render deploys the server as a Node web service rooted at `server` and the
   payer UI as a separate static site rooted at `payer-web`; `render.yaml` is the
@@ -102,3 +125,8 @@ commit or print `server/.env`.
 - Before Android work, verify current official Android, Meta Wearables DAT,
   PayPal, Gemini, and Render documentation rather than guessing SDK APIs or
   versions. Follow the phase/approval gates in `AGENTS.md`.
+- Before writing any tool, plugin, Gradle distribution, SDK, Kotlin, Compose,
+  CameraX, ML Kit, OkHttp, or other dependency version, verify that the exact
+  version exists in its official repository/documentation and that it is
+  compatible with the selected AGP/Gradle/Kotlin versions. Do not update a
+  version, plugin, or Gradle file without explicit approval.
