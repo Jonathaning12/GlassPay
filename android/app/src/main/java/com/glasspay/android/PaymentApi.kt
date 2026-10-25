@@ -20,6 +20,23 @@ data class PayerResolution(
     val expiresAt: String,
 )
 
+data class InterpretResult(
+    val proposal: ChargeProposal?,
+    val clarificationQuestion: String?,
+)
+
+data class PaymentRequestCreated(
+    val requestId: String,
+    val statusToken: String,
+)
+
+data class PaymentStatus(
+    val state: String,
+    val amount: String,
+    val currency: String,
+    val concept: String,
+)
+
 enum class ApiFailureType {
     NETWORK,
     TIMEOUT,
@@ -61,15 +78,86 @@ class PaymentApi(
         }
     }
 
+    suspend fun interpret(
+        resolutionId: String,
+        text: String,
+    ): InterpretResult {
+        var attempt = 0
+        while (true) {
+            try {
+                val body = JSONObject()
+                    .put("resolutionId", resolutionId)
+                    .put("text", text)
+                    .toString()
+                    .toRequestBody("application/json".toMediaType())
+                val json = JSONObject(execute("POST", "/api/agent/interpret", body, 20_000))
+                if (json.optBoolean("needsClarification")) {
+                    return InterpretResult(null, json.optString("clarificationQuestion"))
+                }
+                return InterpretResult(
+                    proposal = ChargeProposal(
+                        proposalId = json.getString("proposalId"),
+                        amount = json.getString("amount"),
+                        currency = json.getString("currency"),
+                        concept = json.getString("concept"),
+                        expiresAt = json.getString("expiresAt"),
+                    ),
+                    clarificationQuestion = null,
+                )
+            } catch (exception: ApiException) {
+                if (attempt == 0 && (exception.type == ApiFailureType.NETWORK || exception.type == ApiFailureType.TIMEOUT)) {
+                    attempt += 1
+                    continue
+                }
+                throw exception
+            }
+        }
+    }
+
+    suspend fun confirm(proposalId: String): PaymentRequestCreated {
+        val body = JSONObject()
+            .put("proposalId", proposalId)
+            .toString()
+            .toRequestBody("application/json".toMediaType())
+        val json = JSONObject(execute("POST", "/api/agent/confirm", body, 20_000))
+        return PaymentRequestCreated(
+            requestId = json.getString("requestId"),
+            statusToken = json.getString("statusToken"),
+        )
+    }
+
+    suspend fun getPaymentStatus(requestId: String, statusToken: String): PaymentStatus {
+        val responseBody = execute(
+            method = "GET",
+            path = "/api/payers/payment-requests/$requestId/status",
+            body = null,
+            timeoutMs = 15_000,
+            headers = mapOf("X-Status-Token" to statusToken),
+        )
+        try {
+            val json = JSONObject(responseBody)
+            return PaymentStatus(
+                state = json.getString("state"),
+                amount = json.getString("amount"),
+                currency = json.getString("currency"),
+                concept = json.getString("concept"),
+            )
+        } catch (_: Exception) {
+            throw ApiException(ApiFailureType.INVALID_RESPONSE)
+        }
+    }
+
     private suspend fun execute(
         method: String,
         path: String,
         body: okhttp3.RequestBody?,
         timeoutMs: Long,
+        headers: Map<String, String> = emptyMap(),
     ): String = suspendCancellableCoroutine { continuation ->
         val requestBuilder = Request.Builder()
             .url("$baseUrl$path")
             .header("Accept", "application/json")
+        headers.forEach { (name, value) -> requestBuilder.header(name, value) }
         if (method == "POST") {
             requestBuilder.post(requireNotNull(body))
         } else {

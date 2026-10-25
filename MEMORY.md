@@ -12,10 +12,10 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Monorepo: `android/`, `server/`, `payer-web/`, `docs/`.
 - `server/`: Node.js LTS + Express; único componente que habla con PayPal y la IA.
 - `payer-web/`: React + Vite para generar QR y aprobar pagos.
-- `android/`: Kotlin + Jetpack Compose; app de teléfono con 5A terminada y la integración Meta Wearables DAT pospuesta.
+- `android/`: Kotlin + Jetpack Compose; app de teléfono con 5A terminada, 5B implementada y polling de estado de pago añadido como entrega acotada previa a 5C; la integración Meta Wearables DAT sigue pospuesta.
 - Despliegue: Render; el servidor puede servir la build de `payer-web/`.
 - URL pública: `https://glasspay-1qdu.onrender.com`.
-- Estado: Entrega 5.0 y 5A implementadas localmente; el estado privado usa `statusToken` independiente de la resolución; 5B queda pendiente de aprobación.
+- Estado: Entrega 5.0, 5A y la implementación 5B están en el árbol local; el estado privado usa `statusToken` independiente de la resolución. 5B queda pendiente de prueba manual del flujo de voz/texto en el Samsung; 5C no iniciada.
 
 ## 3. Estado por fases
 
@@ -45,6 +45,9 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Android 5A usa AGP 9.4.0 con Kotlin integrado, por lo que no aplica `org.jetbrains.kotlin.android`; el plugin Compose declarado es 2.2.20.
 - Android 5A usa Gradle 9.6.0, JDK 25.0.3 mediante JBR de Android Studio, compile/target SDK 36 y min SDK 31. El JDK 17 es el mínimo/default documentado por AGP 9.4, pero el daemon local usa JDK 25 por `gradle/gradle-daemon-jvm.properties`.
 - La corrección actual de 5A usa una máquina de estados pura Kotlin en `android/app/src/main/java/com/glasspay/android/ResolveState.kt`; los intentos tienen contador/ID, el `resolutionId` permanece solo en memoria y los callbacks atrasados no cambian el estado actual.
+- 5B usa `ChargeStateMachine` en `android/app/src/main/java/com/glasspay/android/ChargeState.kt`; la confirmación táctil es principal y la confirmación por voz solo acepta exactamente `confirmar` o `sí`, con `no`/`cancelar` prioritarios.
+- 5B no añade dependencias ni cambia versiones. Usa `SpeechRecognizer` y `TextToSpeech` del sistema; el micrófono se abre únicamente desde el callback de fin de TTS.
+- Tras aprobarlo el usuario, Android consulta el estado privado de la solicitud cada 2 segundos usando `requestId` y `X-Status-Token`, ambos solo en memoria. Solo muestra/vibra/lee “Pago recibido” cuando el servidor devuelve `pagada`, que únicamente puede asignar el webhook PayPal verificado.
 
 ## 5. Preguntas abiertas
 
@@ -69,6 +72,8 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Los QR codifican siempre `glasspay:<token>` y `POST /api/payers/resolve` exige el prefijo; tokens sin prefijo, inexistentes o vencidos devuelven el mismo error genérico.
 - Las respuestas del cobrador nunca incluyen `approveUrl`; solo el listado autenticado del pagador lo entrega.
 - Fase 4: `POST /api/agent/interpret` recibe `resolutionId` y texto transcrito; `POST /api/agent/confirm` recibe solo `proposalId` y crea la solicitud de pago.
+- 5B Android consume `POST /api/agent/interpret` con timeout de 20 s y un solo reintento ante red/timeout; `POST /api/agent/confirm` usa únicamente `proposalId`, no reintenta y conserva `requestId`/`statusToken` solo en memoria para 5C.
+- Android consume `GET /api/payers/payment-requests/:requestId/status` cada 2 s después de confirmar, enviando `X-Status-Token`; la respuesta solo se usa para mostrar estados de espera, rechazo, expiración, fallo o pago recibido.
 - Las propuestas se almacenan en `charge_proposals` con ID aleatorio de 256 bits, expiración y consumo atómico de un solo uso.
 
 ## 7. Variables de entorno necesarias
@@ -141,6 +146,20 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - 5A corregida: cada cancelación de flujo cancela el `Job` y el `OkHttp Call`; los logs solo incluyen contador de intento, tipo de fallo y código HTTP, nunca token, `resolutionId` ni cuerpo.
 - 5A: después de un 404 el token rechazado se ignora mientras siga frente a la cámara; al detectar un QR distinto vuelve a intentarse. El botón `Reintentar` es la vía explícita para red/timeout.
 - 5A está cerrada: el Samsung validó lectura de QR, resolución sin errores obsoletos, reintento y arranque en frío. No fue necesario modificar Android ni payer-web al retirar la compatibilidad del servidor con tokens sin prefijo.
+- 5B implementada: `RECORD_AUDIO` se declara y solicita en runtime; el manifiesto incluye visibilidad de `android.speech.RecognitionService` para Android 14. Hay entrada por voz y modo texto manual; el texto transcrito nunca se usa para pintar el recibo: la vista previa usa monto, moneda y concepto devueltos por el servidor.
+- Incidente 5B voz: el reconocedor solo exponía el resultado final y no daba señales visibles de disponibilidad/inicio/fin; se añadieron estados `Preparando micrófono…`, `Escuchando…` y `Procesando voz…`, resultados parciales y manejo seguro de fallos de `startListening`. El APK recompiló correctamente; falta repetir la prueba manual de voz.
+- Diagnóstico 5B voz (2026-10-24): se añadió instrumentación temporal solo en builds debug para registrar `isRecognitionAvailable`, permiso `RECORD_AUDIO` y el código numérico de `RecognitionListener.onError`, sin texto dictado. La causa aún no está confirmada; se separaron como problemas de UI el modo texto oculto durante voz y la duplicación del mensaje/acciones de error.
+- Corrección 5B aprobada (2026-10-24): la entrada de texto queda siempre visible desde pagador identificado y usa `interpretText()`/`ChargeStateMachine`; `ChargeState` es la única fuente del error y cada error muestra una sola acción contextual. Se añadieron mensajes para permiso denegado, servicio no disponible/ocupado y ausencia de voz.
+- Diagnóstico temporal ampliado (solo `BuildConfig.DEBUG`): registra disponibilidad, permiso, clase/mensaje de excepciones y antes/después de `createSpeechRecognizer`, `cancel` y `startListening`; nunca texto dictado. Debe eliminarse al cerrar 5B. No se modificó el ciclo de vida del reconocedor; queda pendiente analizar Logcat del Samsung.
+- Diagnóstico confirmado 5B voz (2026-10-24): Logcat muestra `java.lang.RuntimeException: SpeechRecognizer should be used only from the application's main thread` al entrar en `startListening`. El callback de fin de TTS invoca la acción desde un hilo que no es el principal; `SpeechRecognizer` exige que sus métodos se llamen en el hilo principal. La corrección debe publicar el inicio (incluido `cancel`) al main thread, sin cambiar aún la creación/destrucción del reconocedor.
+- Corrección de hilo 5B (2026-10-24): `VoiceRecognizer.start()` y `cancel()` publican las llamadas al `SpeechRecognizer` mediante `Handler(Looper.getMainLooper())`; no se cambió la creación/destrucción. `testDebugUnitTest` y `assembleDebug` pasaron. Falta instalar/probar el APK en Samsung y confirmar que desapareció la excepción.
+- Corrección de carrera 5B (2026-10-24): después de recibir un resultado de voz, `VoiceRecognizer` ignora `onError` tardíos; la UI también ignora errores de voz cuando está en `Confirming` o `Created`. Esto evita reemplazar una solicitud creada por “No entendí”; el polling existente puede continuar hasta recibir `pagada`.
+- Corrección 5B aprobada (2026-10-24): se declaró `VIBRATE` y `vibrate()` ahora comprueba el permiso y captura fallos para no cerrar la app. `VoiceRecognizer.release()` cancela y destruye el reconocedor al confirmar, y lo recrea en el siguiente uso.
+- Las aclaraciones 5B se acumulan solo en memoria por `resolutionId`, con máximo 3 rondas y 480 caracteres (el servidor acepta hasta 500); se limpian al crear propuesta, cancelar, reiniciar, cambiar de QR y vencer resolución/propuesta. La corrección `"cóbrale 350 por la cena"` + `"no, mejor 400"` se envía como ambas frases concatenadas, de forma predecible.
+- `ERROR_NO_MATCH` (7), `ERROR_SPEECH_TIMEOUT` (6) y `ERROR_RECOGNIZER_BUSY` (8) son errores recuperables manuales; no hay reintentos automáticos. Otros códigos muestran un mensaje genérico.
+- 5B implementada: la propuesta muestra cuenta regresiva de dos minutos; al vencer se deshabilita `Confirmar`. Si vence la resolución de cinco minutos, la app vuelve a `Scanning` con mensaje claro. Un fallo de confirmación por red/timeout bloquea reintentos y muestra el mensaje aprobado; errores 4xx de propuesta vuelven a `Identified`/estado listo con mensaje genérico.
+- Estado de pago Android implementado localmente: polling acotado de 2 s, estados terminales detenidos, mensajes honestos por tiempo y reintentos silenciosos solo para red/timeout. La prueba manual pendiente es completar un pago Sandbox y verificar “Pago recibido” en el Samsung.
+- El polling de estado de pago y “Pago recibido” fue trabajo adelantado de 5C; no se considera 5B cerrada ni sustituye la corrección/prueba del flujo de voz.
 
 ## 10. Registro de cambios
 
@@ -165,9 +184,17 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - 2026-10-22: La suite final quedó en 34/34 tests exitosos, incluyendo la consulta periódica de `/status` durante 30 segundos.
 - 2026-10-22: Se añadieron mensajes de espera honestos por tiempo en `/paypal/return` y `payer-web`, más tests independientes para no degradar estados aprobada/pagada y para migrar una base existente; la suite específica quedó en 8/8.
 - 2026-10-23: Se creó `.github/copilot-instructions.md` con comandos verificados, arquitectura y convenciones específicas para futuras sesiones de Copilot.
+- 2026-10-24: Se añadió polling Android del endpoint privado de estado; la app solo anuncia “Pago recibido” tras `pagada` confirmada por webhook y las pruebas/build de Android pasaron.
+- 2026-10-24: Se agregó diagnóstico temporal debug del reconocimiento de voz; quedan pendientes la prueba de Logcat en Samsung y la corrección aprobada de UI.
+- 2026-10-24: Se hizo visible permanentemente la entrada de texto, se eliminó el error duplicado y se clasificaron mensajes de voz; baseline y suite posterior pasaron, sin cambios en `gradle-daemon-jvm.properties`.
+- 2026-10-24: Se corrigió la carrera de confirmación por voz: un `onError` tardío ya no pisa `Confirming`/`Created`; se añadieron pruebas de aceptación de errores por estado y `testDebugUnitTest`/`assembleDebug` pasaron.
+- 2026-10-24: Se corrigió la vibración sin permiso, se liberó el reconocedor al confirmar y se añadió acumulación acotada de aclaraciones; Android pasó de 15 a 22 tests, todos verdes. No se tocaron `server/`, `payer-web/`, versiones ni Gradle.
+- 2026-10-24: Se centralizó en `ChargeState.inputSessionAfter` la política pura de limpieza del acumulador de aclaraciones: limpia al crear propuesta, cancelar, reiniciar, cambiar QR, vencer resolución/propuesta y ante error definitivo de interpretación; conserva la sesión ante errores recuperables de voz. Android pasó de 22 a 30 tests; se mantuvieron intactos `server/`, `payer-web/`, versiones, Gradle y `gradle-daemon-jvm.properties`.
+- 2026-10-25: Entrega A Android: una nueva frase que inicia con `cóbrale`, `cobrales`, `cobra` o `cobrar` reemplaza la sesión acumulada; otras respuestas se concatenan. Se añadieron comandos exactos de voz para cancelar, empezar de nuevo y confirmar, botón `Empezar de nuevo` en aclaración/vista previa y texto reconocido/acumulado visible solo en UI con límites. Sin cambios en servidor, versiones ni Gradle.
 - 2026-10-23: Se aprobó el plan de la Entrega 5A. Android Studio ya está instalado en su última versión; hay laptop, dos pantallas, un móvil Samsung SM-A146U con Android 14 y una segunda pantalla/dispositivo para mostrar el QR. La integración de Meta Glasses queda para el final; primero se prioriza una app funcional con la cámara del teléfono.
 - 2026-10-23: Se inició la Entrega 5A con un proyecto Android Compose en `android/`: AGP 9.4.0, Gradle 9.6, Kotlin 2.2.20, JDK 17, compile/target SDK 36 y min SDK 31. Se añadieron CameraX 1.4.2, ML Kit Barcode Scanning bundled 17.3.0 y OkHttp 4.12.0. La app solo acepta QR `glasspay:<token>`, resuelve el pagador mediante `POST /api/payers/resolve`, conserva la resolución en memoria y no incluye todavía Meta DAT. La terminal tiene Java pero no `adb` ni `sdkmanager` en PATH; falta compilar en Android Studio o configurar esas herramientas.
 - 2026-10-24: Se registraron las correcciones del primer Sync de Android, el wrapper completo, JDK/daemon real y el estado 5A: compila; pendiente de prueba en dispositivo. No se actualizaron versiones de Gradle, plugins ni dependencias.
 - 2026-10-24: Con `JAVA_HOME=C:\Program Files\Android\Android Studio\jbr`, `android\gradlew.bat testDebugUnitTest` terminó `BUILD SUCCESSFUL` y `android\gradlew.bat assembleDebug` terminó `BUILD SUCCESSFUL` (38 tareas up-to-date). 5A sigue pendiente de instalación y prueba en el Samsung.
 - 2026-10-24: Se corrigió el estado QR de 5A con máquina pura, callback Compose actualizado, cancelación de OkHttp, health check de arranque en frío, clasificación segura de red/timeout/404/429/servidor y expiración de resolución en memoria. Se añadieron pruebas de reintento, 404, resultado atrasado y deduplicación; `testDebugUnitTest` y `assembleDebug` terminaron `BUILD SUCCESSFUL`. Sin commit ni push.
 - 2026-10-24: Se cerró 5A en servidor: `/api/payers/resolve` exige `glasspay:<token>`, se eliminaron tokens sin prefijo, se añadieron 3 tests independientes y se actualizaron README e instrucciones. Suite de servidor: 37/37 antes y 40/40 después. Sin cambios en Android, payer-web, versiones ni Gradle.
+- 2026-10-24: Se implementó 5B sin dependencias nuevas: `SpeechRecognizer`/`TextToSpeech`, anti-eco por callback de fin, interpretación y confirmación, máquina de estados, expiraciones, modo texto y pruebas unitarias. `testDebugUnitTest` y `assembleDebug` terminaron `BUILD SUCCESSFUL`; 5B queda pendiente de prueba manual. 5C no iniciada.
