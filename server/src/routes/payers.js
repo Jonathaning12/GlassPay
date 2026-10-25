@@ -29,10 +29,10 @@ function sanitizeDisplayName(value) {
 }
 
 function normalizeQrToken(value) {
-  if (typeof value !== "string") {
+  if (typeof value !== "string" || !value.startsWith("glasspay:")) {
     return null;
   }
-  const token = value.startsWith("glasspay:") ? value.slice("glasspay:".length) : value;
+  const token = value.slice("glasspay:".length);
   return token.length >= 20 ? token : null;
 }
 

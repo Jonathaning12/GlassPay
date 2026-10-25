@@ -91,10 +91,11 @@ Endpoints de identidad:
   `PAYMENT_STATUS_TOKEN_FINAL_MARGIN_SECONDS`, aunque la resolución original ya
   haya vencido.
 
-Los QR nuevos contienen `glasspay:<token>`. El servidor todavía acepta el token
-sin prefijo durante la transición a Android; esa compatibilidad se eliminará al
-terminar la Entrega 5A. Si la sesión del pagador responde 401, `payer-web`
-borra la sesión local y vuelve a mostrar la pantalla para crear un perfil.
+Los QR contienen siempre `glasspay:<token>`. El endpoint
+`POST /api/payers/resolve` exige ese prefijo; un token sin prefijo, inexistente
+o vencido devuelve el mismo error genérico. Si la sesión del pagador responde
+401, `payer-web` borra la sesión local y vuelve a mostrar la pantalla para
+crear un perfil.
 
 ## Agente de IA
 

@@ -12,10 +12,10 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Monorepo: `android/`, `server/`, `payer-web/`, `docs/`.
 - `server/`: Node.js LTS + Express; único componente que habla con PayPal y la IA.
 - `payer-web/`: React + Vite para generar QR y aprobar pagos.
-- `android/`: Kotlin + Jetpack Compose; app de teléfono para 5A compilable, con integración Meta Wearables DAT pospuesta.
+- `android/`: Kotlin + Jetpack Compose; app de teléfono con 5A terminada y la integración Meta Wearables DAT pospuesta.
 - Despliegue: Render; el servidor puede servir la build de `payer-web/`.
 - URL pública: `https://glasspay-1qdu.onrender.com`.
-- Estado: Entrega 5.0 implementada localmente; el estado privado usa `statusToken` independiente de la resolución; falta validar el despliegue y la prueba manual antes de pasar a 5A.
+- Estado: Entrega 5.0 y 5A implementadas localmente; el estado privado usa `statusToken` independiente de la resolución; 5B queda pendiente de aprobación.
 
 ## 3. Estado por fases
 
@@ -23,7 +23,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Fase 2 - PayPal: en curso (2026-10-21); el pago Sandbox y la idempotencia del webhook fueron validados; falta confirmar saldo Business y revisar logs manualmente.
 - Fase 3 - QR y página del pagador: en curso (2026-10-21); backend, seguridad, pruebas y frontend local terminados; falta prueba con celular y despliegue.
 - Fase 4 - Agente de IA: en curso (2026-10-21); Gemini, fallback determinista, propuestas de un solo uso y evaluación local implementados.
-- Fase 5 - App Android: en curso; 5.0 terminada (2026-10-21), 5A compila y está pendiente de prueba en el Samsung SM-A146U.
+- Fase 5 - App Android: en curso; 5.0 y 5A terminadas (2026-10-24), 5B pendiente de aprobación e implementación.
 - Fase 6 - Tiempo real y pulido: pendiente.
 - Fase 7 - Extras: pendiente.
 
@@ -66,7 +66,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - Fase 3: `POST /api/payers`, `POST /api/payers/:id/qr`, `POST /api/payers/resolve`, `POST /api/payers/payment-requests`, `GET /api/payers/me/payment-requests` y `POST /api/payers/payment-requests/:requestId/reject`.
 - Entrega 5.0: `POST /api/agent/confirm` devuelve `requestId`, `state` y un `statusToken` aleatorio de 256 bits; solo se persiste su hash.
 - Entrega 5.0: `GET /api/payers/payment-requests/:requestId/status` exige `X-Status-Token` y devuelve únicamente `state`, `amount`, `currency` y `concept`. El token dura hasta la expiración de la solicitud más `PAYMENT_STATUS_TOKEN_FINAL_MARGIN_SECONDS` (300 s por defecto), aunque la resolución de 5 minutos haya vencido.
-- Los nuevos QR codifican `glasspay:<token>`; el servidor acepta temporalmente tokens sin prefijo para compatibilidad. Esta aceptación se eliminará al terminar 5A.
+- Los QR codifican siempre `glasspay:<token>` y `POST /api/payers/resolve` exige el prefijo; tokens sin prefijo, inexistentes o vencidos devuelven el mismo error genérico.
 - Las respuestas del cobrador nunca incluyen `approveUrl`; solo el listado autenticado del pagador lo entrega.
 - Fase 4: `POST /api/agent/interpret` recibe `resolutionId` y texto transcrito; `POST /api/agent/confirm` recibe solo `proposalId` y crea la solicitud de pago.
 - Las propuestas se almacenan en `charge_proposals` con ID aleatorio de 256 bits, expiración y consumo atómico de un solo uso.
@@ -140,6 +140,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - 5A corregida: el éxito limpia el error anterior; un fallo atrasado no pisa un pagador identificado; HTTP 404 vuelve a `Scanning`; red/timeout conserva el QR y ofrece `Reintentar`; HTTP 429 muestra `Demasiados intentos. Espera unos segundos.`; otros errores muestran mensaje genérico no reintentable.
 - 5A corregida: cada cancelación de flujo cancela el `Job` y el `OkHttp Call`; los logs solo incluyen contador de intento, tipo de fallo y código HTTP, nunca token, `resolutionId` ni cuerpo.
 - 5A: después de un 404 el token rechazado se ignora mientras siga frente a la cámara; al detectar un QR distinto vuelve a intentarse. El botón `Reintentar` es la vía explícita para red/timeout.
+- 5A está cerrada: el Samsung validó lectura de QR, resolución sin errores obsoletos, reintento y arranque en frío. No fue necesario modificar Android ni payer-web al retirar la compatibilidad del servidor con tokens sin prefijo.
 
 ## 10. Registro de cambios
 
@@ -169,3 +170,4 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - 2026-10-24: Se registraron las correcciones del primer Sync de Android, el wrapper completo, JDK/daemon real y el estado 5A: compila; pendiente de prueba en dispositivo. No se actualizaron versiones de Gradle, plugins ni dependencias.
 - 2026-10-24: Con `JAVA_HOME=C:\Program Files\Android\Android Studio\jbr`, `android\gradlew.bat testDebugUnitTest` terminó `BUILD SUCCESSFUL` y `android\gradlew.bat assembleDebug` terminó `BUILD SUCCESSFUL` (38 tareas up-to-date). 5A sigue pendiente de instalación y prueba en el Samsung.
 - 2026-10-24: Se corrigió el estado QR de 5A con máquina pura, callback Compose actualizado, cancelación de OkHttp, health check de arranque en frío, clasificación segura de red/timeout/404/429/servidor y expiración de resolución en memoria. Se añadieron pruebas de reintento, 404, resultado atrasado y deduplicación; `testDebugUnitTest` y `assembleDebug` terminaron `BUILD SUCCESSFUL`. Sin commit ni push.
+- 2026-10-24: Se cerró 5A en servidor: `/api/payers/resolve` exige `glasspay:<token>`, se eliminaron tokens sin prefijo, se añadieron 3 tests independientes y se actualizaron README e instrucciones. Suite de servidor: 37/37 antes y 40/40 después. Sin cambios en Android, payer-web, versiones ni Gradle.

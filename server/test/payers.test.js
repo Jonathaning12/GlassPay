@@ -391,6 +391,82 @@ test("expired or unknown QR tokens return the same generic error", async () => {
   }
 });
 
+test("legacy QR token without the glasspay prefix is rejected generically", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const payer = await createPayer(environment.baseUrl, "Marta");
+    const qrResponse = await fetch(`${environment.baseUrl}/api/payers/${payer.payerId}/qr`, {
+      method: "POST",
+      headers: {
+        "X-Payer-Id": payer.payerId,
+        "X-Payer-Session": payer.sessionSecret,
+      },
+    });
+    const qr = await qrResponse.json();
+    const response = await fetch(`${environment.baseUrl}/api/payers/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: qr.token.slice("glasspay:".length) }),
+    });
+    assert.equal(response.status, 404);
+    assert.deepEqual(await response.json(), { error: "payer token not found" });
+  } finally {
+    await environment.close();
+  }
+});
+
+test("QR token with the glasspay prefix is accepted", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const payer = await createPayer(environment.baseUrl, "Sofía");
+    const qrResponse = await fetch(`${environment.baseUrl}/api/payers/${payer.payerId}/qr`, {
+      method: "POST",
+      headers: {
+        "X-Payer-Id": payer.payerId,
+        "X-Payer-Session": payer.sessionSecret,
+      },
+    });
+    const qr = await qrResponse.json();
+    const response = await fetch(`${environment.baseUrl}/api/payers/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: qr.token }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).displayName, "Sofía");
+  } finally {
+    await environment.close();
+  }
+});
+
+test("legacy, unknown, and expired QR tokens share the same generic error", async () => {
+  const environment = await createTestEnvironment({ qrTokenTtlSeconds: 0 });
+  try {
+    const payer = await createPayer(environment.baseUrl, "Nora");
+    const qrResponse = await fetch(`${environment.baseUrl}/api/payers/${payer.payerId}/qr`, {
+      method: "POST",
+      headers: {
+        "X-Payer-Id": payer.payerId,
+        "X-Payer-Session": payer.sessionSecret,
+      },
+    });
+    const qr = await qrResponse.json();
+    const requests = [qr.token.slice("glasspay:".length), "unknown-token-value-1234567890", qr.token]
+      .map((token) => fetch(`${environment.baseUrl}/api/payers/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      }));
+    const responses = await Promise.all(requests);
+    const payloads = await Promise.all(responses.map((response) => response.json()));
+    assert.deepEqual(payloads[0], payloads[1]);
+    assert.deepEqual(payloads[1], payloads[2]);
+    assert.deepEqual(payloads[0], { error: "payer token not found" });
+  } finally {
+    await environment.close();
+  }
+});
+
 test("profile creation is rate limited", async () => {
   const environment = await createTestEnvironment();
   try {

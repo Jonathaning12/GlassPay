@@ -107,8 +107,8 @@ IDE files remain local.
   only the proposal ID and loads amount/concept from the database.
 - QR values and session/status secrets are opaque random tokens. Store only
   hashes server-side, use constant-time secret checks, and keep tokens out of
-  URLs and logs. New QR values use the `glasspay:<token>` prefix; temporary
-  unprefixed compatibility is intentional until Android delivery 5A.
+  URLs and logs. QR values and `POST /api/payers/resolve` always require the
+  `glasspay:<token>` prefix; unprefixed values are rejected generically.
 - Use generic client errors for invalid, missing, expired, or unauthorized
   tokens. Do not expose approval URLs, PayPal IDs, secrets, hashes, raw
   transcribed text, or model responses to the cobrador or in logs.
