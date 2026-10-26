@@ -3,6 +3,8 @@ package com.glasspay.android
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
@@ -27,13 +29,13 @@ fun EyeToggle(visible: Boolean, onToggle: () -> Unit, modifier: Modifier = Modif
     )
     IconButton(
         onClick = onToggle,
-        modifier = modifier.semantics {
+        modifier = modifier.size(48.dp).background(GlassPayColors.Raised, CircleShape).semantics {
             contentDescription = if (visible) "Ocultar montos" else "Mostrar montos"
         },
     ) {
-        Canvas(modifier = Modifier.size(28.dp)) {
-            val color = Color.White
-            val stroke = 2.dp.toPx()
+        Canvas(modifier = Modifier.size(24.dp)) {
+            val color = GlassPayColors.Text
+            val stroke = 1.8.dp.toPx()
             val cx = size.width / 2f
             val cy = size.height / 2f
             val halfWidth = size.width * 0.45f

@@ -5,6 +5,14 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.res.painterResource
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Icon
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.BorderStroke
+import androidx.annotation.DrawableRes
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.rememberCoroutineScope
@@ -34,12 +42,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -66,7 +69,7 @@ fun SkeletonBox(modifier: Modifier = Modifier) {
     } else {
         0.4f
     }
-    Box(modifier = modifier.background(Color(0xFF3A4260).copy(alpha = alpha), RoundedCornerShape(12.dp)))
+    Box(modifier = modifier.background(GlassPayColors.Raised.copy(alpha = (alpha + 0.4f).coerceAtMost(1f)), RoundedCornerShape(12.dp)))
 }
 
 sealed interface LoadState<out T> {
@@ -205,128 +208,234 @@ fun HomeScreen(
 
     PullToRefreshBox(isRefreshing = refreshing, onRefresh = { reload += 1 }) {
     Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        Text("Hola, ${session.displayName}", style = MaterialTheme.typography.headlineMedium)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Hola, ${session.displayName}", style = MaterialTheme.typography.headlineMedium, color = GlassPayColors.Text)
+                Text("Actividad en GlassPay (Sandbox)", style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
+            }
+            Avatar(session.displayName, highlighted = true)
+        }
         if (showLockHint) {
-            Text(
+            InlineNotice(
                 "Configura un bloqueo de pantalla en tu teléfono para proteger GlassPay.",
-                color = GlassPayColors.Warning,
+                kind = StatusKind.PENDING,
+                icon = R.drawable.ic_lock,
             )
         }
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        ) {
-            Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "Actividad en GlassPay (Sandbox)",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.weight(1f),
-                    )
-                    EyeToggle(visible = amountsVisible, onToggle = onToggleAmounts)
-                }
-                when (val current = state) {
-                    LoadState.Loading -> {
-                        SkeletonBox(Modifier.fillMaxWidth(0.6f).height(40.dp))
-                        SkeletonBox(Modifier.fillMaxWidth(0.4f).height(18.dp))
-                        SkeletonBox(Modifier.fillMaxWidth(0.3f).height(18.dp))
-                    }
-                    LoadState.Failed -> {
-                        Text("No pudimos cargar tu actividad.", color = GlassPayColors.Error)
-                        Button(onClick = { reload += 1 }) { Text("Reintentar") }
-                    }
-                    is LoadState.Loaded -> {
-                        if (current.value.activity.isEmpty()) {
-                            Text("Aún no has cobrado. Empieza con Cobrar.", color = GlassPayColors.MutedText)
-                        }
-                        current.value.activity.forEach { item ->
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text("Saldo disponible", color = GlassPayColors.MutedText)
-                                Text(
+        GpCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(24.dp), spacing = 20.dp) {
+            Row(verticalAlignment = Alignment.Top) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Overline("Saldo disponible")
+                    when (val current = state) {
+                        LoadState.Loading -> SkeletonBox(Modifier.fillMaxWidth(0.7f).height(48.dp))
+                        LoadState.Failed -> Text("No pudimos cargar tu actividad.", color = GlassPayColors.Error)
+                        is LoadState.Loaded -> {
+                            if (current.value.activity.isEmpty()) {
+                                Text("Aún no has cobrado. Empieza con Cobrar.", color = GlassPayColors.MutedText)
+                            }
+                            current.value.activity.forEach { item ->
+                                MoneyText(
                                     maskAmount(formatMoney(item.availableTotal, item.currency), amountsVisible),
-                                    style = MaterialTheme.typography.headlineLarge,
-                                    color = GlassPayColors.Success,
-                                )
-                                Text(
-                                    "Cobrado: " + maskAmount(formatMoney(item.paidTotal, item.currency), amountsVisible),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                )
-                                Text(
-                                    "Enviado: " + maskAmount(formatMoney(item.sentTotal, item.currency), amountsVisible),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                )
-                                Text("${item.paidCount} pagos recibidos", style = MaterialTheme.typography.bodyLarge)
-                                Text(
-                                    "${item.inProgressCount} en proceso",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = GlassPayColors.Warning,
+                                    style = MaterialTheme.typography.displaySmall,
                                 )
                             }
                         }
-                        HorizontalDivider(color = Color(0xFF3A4260))
-                        Text("Recibir envíos", style = MaterialTheme.typography.titleMedium)
-                        val email = current.value.payoutEmail
-                        if (email == null) {
-                            Text(
-                                "Registra tu correo de PayPal Sandbox para recibir envíos.",
-                                color = GlassPayColors.MutedText,
-                            )
-                            Button(onClick = onPayoutEmail) { Text("Registrar correo") }
-                        } else {
-                            Text("Recibes en $email", color = GlassPayColors.MutedText)
-                            OutlinedButton(onClick = onPayoutEmail) { Text("Cambiar") }
+                    }
+                }
+                EyeToggle(visible = amountsVisible, onToggle = onToggleAmounts)
+            }
+            when (val current = state) {
+                LoadState.Loading -> {
+                    HorizontalDivider(color = GlassPayColors.Line)
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        SkeletonBox(Modifier.weight(1f).height(40.dp))
+                        SkeletonBox(Modifier.weight(1f).height(40.dp))
+                    }
+                }
+                LoadState.Failed -> GpButton(
+                    "Reintentar",
+                    onClick = { reload += 1 },
+                    kind = GpButtonKind.SECONDARY,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                is LoadState.Loaded -> current.value.activity.forEach { item ->
+                    HorizontalDivider(color = GlassPayColors.Line)
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        TotalItem(
+                            label = "Cobrado",
+                            value = maskAmount(formatMoney(item.paidTotal, item.currency), amountsVisible),
+                            icon = R.drawable.ic_receive,
+                            tint = GlassPayColors.Success,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TotalItem(
+                            label = "Enviado",
+                            value = maskAmount(formatMoney(item.sentTotal, item.currency), amountsVisible),
+                            icon = R.drawable.ic_send,
+                            tint = GlassPayColors.Text,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "${item.paidCount} pagos recibidos",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = GlassPayColors.MutedText,
+                        )
+                        if (item.inProgressCount > 0) {
+                            StatusPill("${item.inProgressCount} en proceso", StatusKind.PENDING)
                         }
-                        OutlinedButton(onClick = { reload += 1 }) { Text("Actualizar") }
                     }
                 }
             }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            QuickAction("Cobrar", R.drawable.ic_charge, onCharge, primary = true, modifier = Modifier.weight(1f))
+            QuickAction("Enviar", R.drawable.ic_send, onSend, modifier = Modifier.weight(1f))
+            QuickAction("Mi QR", R.drawable.ic_qr, onOpenMyQr, modifier = Modifier.weight(1f))
         }
         val visibleIncoming = incoming.filter {
             it.state == "pendiente_de_pagador" || it.state == "aprobada"
         }
         if (visibleIncoming.isNotEmpty()) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            ) {
-                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Por pagar", style = MaterialTheme.typography.titleMedium)
-                    visibleIncoming.forEach { request ->
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(
-                                formatMoney(request.amount, request.currency),
-                                style = MaterialTheme.typography.headlineSmall,
-                            )
-                            Text(request.concept, style = MaterialTheme.typography.bodyLarge)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Por pagar", style = MaterialTheme.typography.headlineSmall, color = GlassPayColors.Text, modifier = Modifier.weight(1f))
+                Text(
+                    if (visibleIncoming.size == 1) "1 solicitud" else "${visibleIncoming.size} solicitudes",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = GlassPayColors.MutedText,
+                )
+            }
+            visibleIncoming.forEach { request ->
+                GpCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Avatar(request.fromName ?: "?")
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(
                                 "Te cobra ${request.fromName ?: "un contacto"}",
-                                color = GlassPayColors.MutedText,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = GlassPayColors.Text,
                             )
-                            if (request.state == "aprobada") {
-                                Text("Procesando", color = GlassPayColors.Warning)
-                            } else {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(onClick = { approve(request) }) { Text("Aprobar con PayPal") }
-                                    OutlinedButton(
-                                        onClick = { pendingReject = request },
-                                        enabled = !rejecting,
-                                    ) { Text("Rechazar") }
-                                }
-                            }
+                            Text(request.concept, style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
                         }
+                        Text(
+                            formatMoney(request.amount, request.currency).substringBeforeLast(" "),
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = GlassPayColors.Text,
+                        )
                     }
-                    incomingMessage?.let { Text(it, color = GlassPayColors.Warning) }
+                    if (request.state == "aprobada") {
+                        StatusPill("Procesando", StatusKind.PENDING)
+                    } else {
+                        GpButton(
+                            "Aprobar con PayPal",
+                            onClick = { approve(request) },
+                            icon = R.drawable.ic_check,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        GpButton(
+                            "Rechazar",
+                            onClick = { pendingReject = request },
+                            kind = GpButtonKind.SECONDARY,
+                            enabled = !rejecting,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
             }
+            incomingMessage?.let { InlineNotice(it, kind = StatusKind.PENDING) }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = onCharge) { Text("Cobrar") }
-            OutlinedButton(onClick = onOpenMyQr) { Text("Mi QR") }
-            Button(onClick = onSend) { Text("Enviar") }
+        (state as? LoadState.Loaded)?.let { loaded ->
+            val email = loaded.value.payoutEmail
+            GpCard(modifier = Modifier.fillMaxWidth(), spacing = 14.dp) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconBadge(R.drawable.ic_mail, tint = GlassPayColors.Accent, size = 40.dp)
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Recibir envíos", style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
+                        Text(
+                            if (email == null) "Registra tu correo de PayPal Sandbox para recibir envíos." else "Recibes en $email",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = GlassPayColors.MutedText,
+                        )
+                    }
+                }
+                GpButton(
+                    if (email == null) "Registrar correo" else "Cambiar",
+                    onClick = onPayoutEmail,
+                    kind = if (email == null) GpButtonKind.PRIMARY else GpButtonKind.SECONDARY,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            GpButton(
+                "Actualizar",
+                onClick = { reload += 1 },
+                kind = GpButtonKind.GHOST,
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            )
         }
     }
+    }
+}
+
+/** Monto grande con la moneda en pequeño al lado ("$350.00" + "MXN"). */
+@Composable
+fun MoneyText(formatted: String, style: TextStyle, modifier: Modifier = Modifier, color: Color = GlassPayColors.Text) {
+    val currency = formatted.substringAfterLast(" ", "")
+    val amount = if (currency.isEmpty()) formatted else formatted.substringBeforeLast(" ")
+    Row(modifier = modifier, verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(amount, style = style, color = color, maxLines = 1)
+        if (currency.isNotEmpty()) {
+            Text(
+                currency,
+                style = MaterialTheme.typography.titleMedium,
+                color = GlassPayColors.MutedText,
+                modifier = Modifier.padding(bottom = 6.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun TotalItem(label: String, value: String, @DrawableRes icon: Int, tint: Color, modifier: Modifier = Modifier) {
+    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(painterResource(icon), contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+        Column {
+            Text(label, style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
+            Text(value, style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text, maxLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun QuickAction(
+    label: String,
+    @DrawableRes icon: Int,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    primary: Boolean = false,
+) {
+    Surface(
+        onClick = onClick,
+        shape = MaterialTheme.shapes.medium,
+        color = if (primary) GlassPayColors.Accent else GlassPayColors.Card,
+        contentColor = if (primary) GlassPayColors.OnAccent else GlassPayColors.Text,
+        border = if (primary) null else BorderStroke(1.dp, GlassPayColors.Line),
+        modifier = modifier,
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Icon(
+                painterResource(icon),
+                contentDescription = null,
+                tint = if (primary) GlassPayColors.OnAccent else GlassPayColors.Accent,
+                modifier = Modifier.size(28.dp),
+            )
+            Text(label, style = MaterialTheme.typography.titleMedium)
+        }
     }
 }

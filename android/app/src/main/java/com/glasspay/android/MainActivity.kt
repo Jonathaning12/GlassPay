@@ -30,6 +30,11 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.Row
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -214,14 +219,22 @@ fun GlassPayRoot() {
             ),
     ) {
         if (!online) {
-            Text(
-                "Sin conexión. Revisa tu red.",
-                color = Color(0xFF0B1020),
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(GlassPayColors.Warning)
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-            )
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    painterResource(R.drawable.ic_wifi_off),
+                    contentDescription = null,
+                    tint = GlassPayColors.Background,
+                    modifier = Modifier.size(20.dp),
+                )
+                Text("Sin conexión. Revisa tu red.", color = GlassPayColors.Background, style = MaterialTheme.typography.labelLarge)
+            }
         }
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
         when {
@@ -249,14 +262,25 @@ fun GlassPayRoot() {
                     containerColor = GlassPayColors.Background,
                     bottomBar = {
                         if (showBar) {
-                            NavigationBar {
-                                tabItems.forEach { item ->
-                                    NavigationBarItem(
-                                        selected = tab == item.tab,
-                                        onClick = { selectTab(item.tab) },
-                                        icon = { Icon(painterResource(item.icon), contentDescription = null) },
-                                        label = { Text(item.label) },
-                                    )
+                            Column {
+                                HorizontalDivider(color = GlassPayColors.Line)
+                                // Cambiar de pestaña es frecuente: sin animaciones extra más allá del indicador.
+                                NavigationBar(containerColor = GlassPayColors.Card, tonalElevation = 0.dp) {
+                                    tabItems.forEach { item ->
+                                        NavigationBarItem(
+                                            selected = tab == item.tab,
+                                            onClick = { selectTab(item.tab) },
+                                            icon = { Icon(painterResource(item.icon), contentDescription = null) },
+                                            label = { Text(item.label, style = MaterialTheme.typography.bodySmall) },
+                                            colors = NavigationBarItemDefaults.colors(
+                                                selectedIconColor = GlassPayColors.Accent,
+                                                selectedTextColor = GlassPayColors.Text,
+                                                indicatorColor = GlassPayColors.AccentSoft,
+                                                unselectedIconColor = GlassPayColors.MutedText,
+                                                unselectedTextColor = GlassPayColors.MutedText,
+                                            ),
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -317,6 +341,7 @@ fun GlassPayRoot() {
                                 api = api,
                                 onSessionInvalid = ::invalidateSession,
                                 amountsVisible = amountsVisible,
+                                onToggleAmounts = { amountsVisible = !amountsVisible },
                             )
                             AppTab.CHARGE -> ChargeScreen(
                                 session = current,
@@ -397,9 +422,15 @@ private fun LockScreen(onUnlock: () -> Unit) {
         verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("GlassPay", style = MaterialTheme.typography.displaySmall, color = Color.White)
-        Text("GlassPay está bloqueada", style = MaterialTheme.typography.titleMedium, color = GlassPayColors.MutedText)
-        Button(onClick = onUnlock) { Text("Desbloquear") }
+        IconBadge(R.drawable.ic_lock, tint = GlassPayColors.Accent, size = 88.dp, background = GlassPayColors.AccentSoft)
+        Text("GlassPay", style = MaterialTheme.typography.headlineLarge, color = GlassPayColors.Text)
+        Text(
+            "Está bloqueada. Usa la huella o el bloqueo de tu teléfono.",
+            style = MaterialTheme.typography.bodyLarge,
+            color = GlassPayColors.MutedText,
+            textAlign = TextAlign.Center,
+        )
+        GpButton("Desbloquear", onClick = onUnlock, icon = R.drawable.ic_lock, modifier = Modifier.fillMaxWidth())
     }
 }
 

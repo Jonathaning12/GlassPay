@@ -1,6 +1,9 @@
 package com.glasspay.android
 
 import android.util.Log
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.border
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -14,10 +17,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -108,43 +109,81 @@ fun MyQrScreen(
         }
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        OutlinedButton(onClick = onBack, modifier = Modifier.align(Alignment.Start)) { Text("Volver") }
-        Text(session.displayName, style = MaterialTheme.typography.headlineMedium)
-        val current = qr
-        if (current != null && error == null) {
-            val bitmap = remember(current.token) { qrMatrix(current.token, 560).toImageBitmap() }
-            Box(
-                modifier = Modifier
-                    .background(Color.White, RoundedCornerShape(20.dp))
-                    .padding(16.dp),
-            ) {
-                Image(
-                    bitmap = bitmap,
-                    contentDescription = "Tu código QR de GlassPay",
-                    filterQuality = FilterQuality.None,
-                    modifier = Modifier.size(280.dp),
-                )
-            }
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        ScreenHeader("Mi QR", onBack = onBack)
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
             Text(
                 "Muéstralo para que te agreguen o te cobren.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = GlassPayColors.MutedText,
+                textAlign = TextAlign.Center,
             )
-            Text("Se renueva en ${secondsLeft}s", color = GlassPayColors.Warning)
-        } else if (error != null) {
-            Text(error ?: "", color = GlassPayColors.Error, style = MaterialTheme.typography.bodyLarge)
-            Button(onClick = {
-                error = null
-                qr = null
-                reload += 1
-            }) { Text("Reintentar") }
-        } else {
-            CircularProgressIndicator(modifier = Modifier.semantics { contentDescription = "Generando tu QR" })
+            val current = qr
+            if (current != null && error == null) {
+                val bitmap = remember(current.token) { qrMatrix(current.token, 560).toImageBitmap() }
+                Column(
+                    modifier = Modifier
+                        .background(GlassPayColors.QrPaper, MaterialTheme.shapes.large)
+                        .padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Image(
+                        bitmap = bitmap,
+                        contentDescription = "Tu código QR de GlassPay",
+                        filterQuality = FilterQuality.None,
+                        modifier = Modifier.size(260.dp),
+                    )
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(session.displayName, style = MaterialTheme.typography.headlineSmall, color = QrInk)
+                        Text("Sin datos personales en el código", style = MaterialTheme.typography.bodySmall, color = QrInkMuted)
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .background(GlassPayColors.Card, RoundedCornerShape(50))
+                        .border(1.dp, GlassPayColors.Line, RoundedCornerShape(50))
+                        .padding(start = 14.dp, end = 18.dp, top = 10.dp, bottom = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CircularProgressIndicator(
+                        progress = { (secondsLeft / QR_REFERENCE_SECONDS).coerceIn(0f, 1f) },
+                        color = GlassPayColors.Accent,
+                        trackColor = GlassPayColors.Raised,
+                        strokeWidth = 3.dp,
+                        gapSize = 0.dp,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Text("Se renueva en ${secondsLeft} s", color = GlassPayColors.Text, style = MaterialTheme.typography.labelLarge)
+                }
+            } else if (error != null) {
+                InlineNotice(error ?: "", kind = StatusKind.FAILURE)
+                GpButton(
+                    "Reintentar",
+                    onClick = {
+                        error = null
+                        qr = null
+                        reload += 1
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else {
+                CircularProgressIndicator(
+                    color = GlassPayColors.Accent,
+                    modifier = Modifier.padding(top = 48.dp).semantics { contentDescription = "Generando tu QR" },
+                )
+            }
         }
     }
 }
+
+private val QrInk = Color(0xFF0A0D14)
+private val QrInkMuted = Color(0xFF5B6578)
+
+// Vida aproximada de un QR; solo dimensiona el anillo, la renovación la decide el servidor.
+private const val QR_REFERENCE_SECONDS = 300f

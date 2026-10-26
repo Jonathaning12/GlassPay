@@ -1,13 +1,13 @@
 package com.glasspay.android
 
 import android.util.Log
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -69,33 +69,39 @@ fun WelcomeScreen(
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
-        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("GlassPay", style = MaterialTheme.typography.displaySmall)
+        IconBadge(R.drawable.ic_charge, tint = GlassPayColors.OnAccent, size = 72.dp, background = GlassPayColors.Accent)
+        Text("GlassPay", style = MaterialTheme.typography.headlineLarge, color = GlassPayColors.Text)
         Text(
             "Cobra a tus amigos con la voz y un QR.",
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.bodyLarge,
             color = GlassPayColors.MutedText,
         )
-        (error ?: message)?.let {
-            Text(it, color = GlassPayColors.Error, style = MaterialTheme.typography.bodyLarge)
-        }
+        (error ?: message)?.let { InlineNotice(it, kind = StatusKind.FAILURE) }
         OutlinedTextField(
             value = name,
             onValueChange = { name = it.take(60) },
             label = { Text("Tu nombre") },
+            supportingText = { Text("Es lo que verán tus amigos al cobrarles.") },
             singleLine = true,
             enabled = !creating,
+            shape = MaterialTheme.shapes.medium,
+            colors = gpTextFieldColors(),
             modifier = Modifier.fillMaxWidth(),
         )
-        Button(
+        GpButton(
+            if (creating) "Creando tu cuenta…" else "Crear mi cuenta",
             onClick = { createAccount() },
             enabled = name.isNotBlank() && !creating,
             modifier = Modifier.fillMaxWidth(),
-        ) { Text("Crear mi cuenta") }
-        if (creating) CircularProgressIndicator()
-        if (waking) Text("Despertando el servidor…", color = GlassPayColors.Warning)
+        )
+        if (waking) InlineNotice("Despertando el servidor… la primera vez tarda unos segundos.", kind = StatusKind.PENDING)
+        Text(
+            "Actividad en GlassPay (Sandbox): no se mueve dinero real.",
+            style = MaterialTheme.typography.bodySmall,
+            color = GlassPayColors.MutedText,
+        )
     }
 }

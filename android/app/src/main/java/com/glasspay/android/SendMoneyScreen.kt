@@ -1,12 +1,18 @@
 package com.glasspay.android
 
 import android.util.Log
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.res.painterResource
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Icon
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.BorderStroke
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,13 +25,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -238,42 +240,41 @@ fun SendMoneyScreen(
         )
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        if (step != SendStep.RESULT) {
-            OutlinedButton(onClick = onBack, modifier = Modifier.align(Alignment.Start)) { Text("Volver") }
-        }
-        Text("Enviar dinero", style = MaterialTheme.typography.headlineMedium)
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        ScreenHeader("Enviar dinero", onBack = if (step != SendStep.RESULT) onBack else null)
+        Column(
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
         when (step) {
             SendStep.PICK -> {
-                Text("¿A quién le envías?", color = GlassPayColors.MutedText)
+                Overline("¿A quién le envías?")
                 when (val current = contacts) {
-                    LoadState.Loading -> CircularProgressIndicator()
-                    LoadState.Failed -> Text("No pudimos cargar tus contactos.", color = GlassPayColors.Error)
+                    LoadState.Loading -> repeat(3) { SkeletonBox(Modifier.fillMaxWidth().height(72.dp)) }
+                    LoadState.Failed -> InlineNotice("No pudimos cargar tus contactos.", kind = StatusKind.FAILURE)
                     is LoadState.Loaded -> {
                         if (current.value.isEmpty()) {
-                            Text("Aún no tienes contactos. Agrégalos desde Contactos.", color = GlassPayColors.MutedText)
+                            InlineNotice("Aún no tienes contactos. Agrégalos desde Contactos.", icon = R.drawable.ic_contacts)
                         }
                         current.value.forEach { item ->
-                            Card(
-                                modifier = Modifier.fillMaxWidth().clickable {
+                            Surface(
+                                onClick = {
                                     contact = item
                                     step = SendStep.AMOUNT
                                 },
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                shape = MaterialTheme.shapes.medium,
+                                color = GlassPayColors.Card,
+                                border = BorderStroke(1.dp, GlassPayColors.Line),
+                                modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Row(
                                     modifier = Modifier.padding(16.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 ) {
-                                    Box(
-                                        modifier = Modifier.size(44.dp).background(MaterialTheme.colorScheme.primary, CircleShape),
-                                        contentAlignment = Alignment.Center,
-                                    ) { Text(item.displayName.trim().take(1).uppercase()) }
-                                    Text(item.displayName, style = MaterialTheme.typography.titleMedium)
+                                    Avatar(item.displayName)
+                                    Text(item.displayName, style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text, modifier = Modifier.weight(1f))
+                                    Icon(painterResource(R.drawable.ic_chevron_right), contentDescription = null, tint = GlassPayColors.MutedText)
                                 }
                             }
                         }
@@ -281,14 +282,24 @@ fun SendMoneyScreen(
                 }
             }
             SendStep.AMOUNT -> {
-                Text("Para ${contact?.displayName.orEmpty()}", style = MaterialTheme.typography.titleMedium)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Avatar(contact?.displayName.orEmpty(), size = 48.dp)
+                    Column {
+                        Overline("Enviar a")
+                        Text(contact?.displayName.orEmpty(), style = MaterialTheme.typography.headlineSmall, color = GlassPayColors.Text)
+                    }
+                }
                 OutlinedTextField(
                     value = amountText,
                     onValueChange = { amountText = it.take(12) },
                     label = { Text("Monto (MXN)") },
+                    prefix = { Text("$") },
                     singleLine = true,
                     enabled = !busy,
+                    textStyle = MaterialTheme.typography.headlineMedium,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    shape = MaterialTheme.shapes.medium,
+                    colors = gpTextFieldColors(),
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
@@ -296,61 +307,74 @@ fun SendMoneyScreen(
                     onValueChange = { note = it.take(MAX_TRANSFER_NOTE_LENGTH) },
                     label = { Text("Nota (opcional)") },
                     enabled = !busy,
+                    shape = MaterialTheme.shapes.medium,
+                    colors = gpTextFieldColors(),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                message?.let { Text(it, color = GlassPayColors.Error) }
-                Button(
+                message?.let { InlineNotice(it, kind = StatusKind.FAILURE) }
+                GpButton(
+                    if (busy) "Revisando…" else "Revisar",
                     onClick = { requestPreview() },
                     enabled = amountText.isNotBlank() && !busy,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Revisar") }
-                if (busy) CircularProgressIndicator()
+                )
             }
             SendStep.PREVIEW -> {
                 val proposal = preview
                 if (proposal != null) {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    ) {
-                        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Vista previa", color = GlassPayColors.MutedText, style = MaterialTheme.typography.labelLarge)
-                            Text(
-                                formatMoney(proposal.amount, proposal.currency),
-                                style = MaterialTheme.typography.displaySmall,
-                            )
-                            HorizontalDivider(color = Color(0xFF3A4260))
-                            Text("Destinatario", color = GlassPayColors.MutedText, style = MaterialTheme.typography.labelLarge)
-                            Text(proposal.recipientName, style = MaterialTheme.typography.titleMedium)
-                            proposal.note?.let {
-                                Text("Nota", color = GlassPayColors.MutedText, style = MaterialTheme.typography.labelLarge)
-                                Text(it, style = MaterialTheme.typography.bodyLarge)
+                    val expired = remaining <= 0
+                    GpCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(24.dp), spacing = 16.dp) {
+                        Overline("Revisa el envío")
+                        MoneyText(formatMoney(proposal.amount, proposal.currency), style = MaterialTheme.typography.displaySmall)
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("Destinatario", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
+                            Text(proposal.recipientName, style = MaterialTheme.typography.bodyLarge, color = GlassPayColors.Text)
+                        }
+                        proposal.note?.let {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text("Nota", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
+                                Text(it, style = MaterialTheme.typography.bodyLarge, color = GlassPayColors.Text)
                             }
+                        }
+                        HorizontalDivider(color = GlassPayColors.Line)
+                        val timeColor = if (expired) GlassPayColors.Error else GlassPayColors.Warning
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(painterResource(R.drawable.ic_clock), contentDescription = null, tint = timeColor, modifier = Modifier.size(20.dp))
                             Text(
-                                if (remaining > 0) "Vence en ${remaining}s" else "La vista previa venció. Revísala de nuevo.",
-                                color = GlassPayColors.Warning,
+                                if (!expired) "Vence en ${remaining} s" else "La vista previa venció. Revísala de nuevo.",
+                                color = timeColor,
+                                style = MaterialTheme.typography.labelLarge,
                             )
                         }
                     }
-                    message?.let { Text(it, color = GlassPayColors.Error) }
-                    Button(
+                    InlineNotice("Para enviar te pediremos tu huella o el bloqueo del teléfono.", icon = R.drawable.ic_lock)
+                    message?.let { InlineNotice(it, kind = StatusKind.FAILURE) }
+                    GpButton(
+                        "Confirmar envío",
                         onClick = { confirmWithAuth() },
-                        enabled = remaining > 0 && !busy && !confirmBlocked && !locked,
+                        enabled = !expired && !busy && !confirmBlocked && !locked,
+                        icon = R.drawable.ic_lock,
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Confirmar envío") }
-                    if (remaining <= 0) {
-                        OutlinedButton(onClick = {
-                            preview = null
-                            message = null
-                            step = SendStep.AMOUNT
-                        }) { Text("Revisar de nuevo") }
+                    )
+                    if (expired) {
+                        GpButton(
+                            "Revisar de nuevo",
+                            onClick = {
+                                preview = null
+                                message = null
+                                step = SendStep.AMOUNT
+                            },
+                            kind = GpButtonKind.SECONDARY,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                     if (confirmBlocked) {
-                        OutlinedButton(onClick = onOpenMovements) { Text("Ver en Movimientos") }
+                        GpButton("Ver en Movimientos", onClick = onOpenMovements, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
                     }
                 }
             }
             SendStep.RESULT -> ResultView(result, pollGaveUp, onBack, onOpenMovements)
+        }
         }
     }
 }
@@ -365,7 +389,7 @@ private fun ResultView(
     val outcome = result ?: return
     val animate = animationsEnabled()
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -374,41 +398,55 @@ private fun ResultView(
                 var entered by remember { mutableStateOf(!animate) }
                 LaunchedEffect(Unit) { entered = true }
                 val scale by animateFloatAsState(
-                    targetValue = if (entered) 1f else 0f,
-                    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+                    targetValue = if (entered) 1f else 0.6f,
+                    animationSpec = spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessLow),
                     label = "sentScale",
                 )
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(96.dp)
+                        .size(156.dp)
                         .graphicsLayer {
                             scaleX = scale
                             scaleY = scale
                         }
-                        .background(GlassPayColors.Success, CircleShape)
+                        .background(GlassPayColors.SuccessSoft, CircleShape)
                         .semantics { contentDescription = "Envío completado" },
-                ) { Text("✓", color = Color(0xFF0B1020), style = MaterialTheme.typography.displayMedium) }
-                Text("¡Enviado!", style = MaterialTheme.typography.headlineLarge, color = GlassPayColors.Success)
-                Text(formatMoney(outcome.amount, outcome.currency), style = MaterialTheme.typography.displaySmall)
-                Text("a ${outcome.recipientName}", color = GlassPayColors.MutedText)
+                ) {
+                    Box(Modifier.size(104.dp).background(GlassPayColors.Success, CircleShape), contentAlignment = Alignment.Center) {
+                        Icon(painterResource(R.drawable.ic_check), contentDescription = null, tint = GlassPayColors.Background, modifier = Modifier.size(56.dp))
+                    }
+                }
+                Text("¡Enviado!", style = MaterialTheme.typography.headlineMedium, color = GlassPayColors.Success)
+                MoneyText(formatMoney(outcome.amount, outcome.currency), style = MaterialTheme.typography.displaySmall)
+                Text("a ${outcome.recipientName}", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodyLarge)
             }
             "fallida" -> {
-                Text("El envío no se pudo completar. Tu saldo no se descontó.", color = GlassPayColors.Error,
-                    style = MaterialTheme.typography.titleMedium)
+                IconBadge(R.drawable.ic_close, tint = GlassPayColors.Error, size = 88.dp, background = GlassPayColors.ErrorSoft)
+                Text(
+                    "El envío no se pudo completar. Tu saldo no se descontó.",
+                    color = GlassPayColors.Error,
+                    style = MaterialTheme.typography.titleMedium,
+                    textAlign = TextAlign.Center,
+                )
             }
             else -> {
                 if (animate && !gaveUp) {
-                    CircularProgressIndicator(modifier = Modifier.semantics { contentDescription = "Enviando" })
+                    CircularProgressIndicator(
+                        color = GlassPayColors.Accent,
+                        modifier = Modifier.size(56.dp).semantics { contentDescription = "Enviando" },
+                    )
+                } else {
+                    IconBadge(R.drawable.ic_clock, tint = GlassPayColors.Warning, size = 88.dp, background = GlassPayColors.WarningSoft)
                 }
-                Text("Enviando a ${outcome.recipientName}…", style = MaterialTheme.typography.titleLarge)
-                Text(formatMoney(outcome.amount, outcome.currency), style = MaterialTheme.typography.headlineMedium)
+                Text("Enviando a ${outcome.recipientName}…", style = MaterialTheme.typography.headlineSmall, color = GlassPayColors.Text)
+                MoneyText(formatMoney(outcome.amount, outcome.currency), style = MaterialTheme.typography.headlineLarge)
                 if (gaveUp) {
-                    Text("Tu envío sigue en proceso. Revísalo en Movimientos.", color = GlassPayColors.Warning)
+                    InlineNotice("Tu envío sigue en proceso. Revísalo en Movimientos.", kind = StatusKind.PENDING)
                 }
             }
         }
-        Button(onClick = onDone) { Text("Listo") }
-        OutlinedButton(onClick = onOpenMovements) { Text("Ver en Movimientos") }
+        GpButton("Listo", onClick = onDone, modifier = Modifier.fillMaxWidth().padding(top = 16.dp))
+        GpButton("Ver en Movimientos", onClick = onOpenMovements, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
     }
 }

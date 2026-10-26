@@ -25,12 +25,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
-import androidx.compose.material3.TextButton
+import androidx.compose.ui.res.painterResource
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Path
@@ -49,7 +51,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -661,32 +662,66 @@ fun ChargeScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF0B1020))) {
-        if (cameraGranted && uiState !is ResolveState.Identified) {
+    Box(modifier = Modifier.fillMaxSize().background(GlassPayColors.Background)) {
+        val scanning = uiState !is ResolveState.Identified
+        if (cameraGranted && scanning) {
             CameraScanner(lifecycleOwner = lifecycleOwner, onTokenDetected = ::resolveToken)
+            Box(Modifier.fillMaxSize().background(GlassPayColors.Background.copy(alpha = 0.35f)))
             ScanFrame(modifier = Modifier.align(Alignment.Center))
             if (uiState is ResolveState.Scanning) {
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = Color(0xCC161D36),
-                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp),
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 24.dp)
+                        .background(GlassPayColors.Background.copy(alpha = 0.72f), RoundedCornerShape(50))
+                        .padding(start = 16.dp, end = 20.dp, top = 12.dp, bottom = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        "Apunta al QR de tu amigo",
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
-                    )
+                    Icon(painterResource(R.drawable.ic_qr), contentDescription = null, tint = GlassPayColors.Accent, modifier = Modifier.size(22.dp))
+                    Text("Apunta al QR de tu amigo", color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
                 }
             }
         }
-        Column(
-            modifier = Modifier.align(Alignment.TopCenter).verticalScroll(rememberScrollState()).padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            when (val state = uiState) {
-                is ResolveState.Identified -> IdentifiedContent(
+        if (scanning) {
+            // Hoja inferior con el estado del escaneo; sobre la cámara o sola si no hay permiso.
+            Column(
+                modifier = Modifier
+                    .align(if (cameraGranted) Alignment.BottomCenter else Alignment.Center)
+                    .padding(20.dp)
+                    .fillMaxWidth()
+                    .background(GlassPayColors.Card.copy(alpha = 0.94f), MaterialTheme.shapes.large)
+                    .border(1.dp, GlassPayColors.Line, MaterialTheme.shapes.large)
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                when (val state = uiState) {
+                    is ResolveState.Resolving -> Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp, color = GlassPayColors.Accent)
+                        Text(
+                            if (state.waking) "Despertando el servidor…" else "Resolviendo QR…",
+                            color = GlassPayColors.Text,
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    }
+                    else -> ResolveContent(
+                        state = uiState,
+                        onRetry = { (uiState as? ResolveState.RetryableError)?.let { resolveToken(it.token) } },
+                        onScanAnother = { dispatch(ResolveEvent.Reset) },
+                        cameraError = cameraError,
+                    )
+                }
+            }
+        } else {
+            Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                val state = uiState as ResolveState.Identified
+                IdentifiedContent(
                     state = state,
                     chargeState = chargeState,
                     textInput = textInput,
@@ -725,20 +760,6 @@ fun ChargeScreen(
                     lastRecognizedText = lastRecognizedText,
                     accumulatedText = inputSession?.text,
                 )
-                is ResolveState.Resolving -> {
-                    Text(
-                        if (state.waking) "Despertando el servidor…" else "Resolviendo QR…",
-                        color = Color.White,
-                        style = MaterialTheme.typography.headlineSmall,
-                    )
-                    if (state.waking) CircularProgressIndicator()
-                }
-                else -> ResolveContent(
-                    state = uiState,
-                    onRetry = { (uiState as? ResolveState.RetryableError)?.let { resolveToken(it.token) } },
-                    onScanAnother = { dispatch(ResolveEvent.Reset) },
-                    cameraError = cameraError,
-                )
             }
         }
     }
@@ -768,84 +789,49 @@ private fun IdentifiedContent(
     lastRecognizedText: String?,
     accumulatedText: String?,
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Box(
-                modifier = Modifier.size(44.dp).background(MaterialTheme.colorScheme.primary, CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(state.displayName.trim().take(1).uppercase(), style = MaterialTheme.typography.titleMedium)
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text("Pagador", color = GlassPayColors.MutedText, style = MaterialTheme.typography.labelLarge)
-                Text(state.displayName, color = Color.White, style = MaterialTheme.typography.headlineSmall)
-                if (state.contactId != null) {
-                    Text("En tus contactos", color = Color(0xFFB7F7C0))
-                } else if (savingContact) {
-                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                } else if (chargeState is ChargeState.Ready ||
-                    chargeState is ChargeState.Error ||
-                    (chargeState is ChargeState.Created && isTerminal(chargeState.payment))
-                ) {
-                    OutlinedButton(onClick = onSaveContact) { Text("Guardar contacto") }
+    val actions = availableActions(chargeState)
+    // Mientras se espera el pago, la línea de tiempo ocupa la pantalla; la tarjeta del pagador sobraría ahí.
+    if (chargeState !is ChargeState.Created || isTerminal(chargeState.payment)) {
+        GpCard(modifier = Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Avatar(state.displayName, size = 48.dp)
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Overline("Cobrar a")
+                    Text(state.displayName, color = GlassPayColors.Text, style = MaterialTheme.typography.headlineSmall)
                 }
+            }
+            if (state.contactId != null) {
+                StatusPill("En tus contactos", StatusKind.SUCCESS)
+            } else if (savingContact) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp, color = GlassPayColors.Accent)
+            } else if (chargeState is ChargeState.Ready ||
+                chargeState is ChargeState.Error ||
+                (chargeState is ChargeState.Created && isTerminal(chargeState.payment))
+            ) {
+                GpButton("Guardar contacto", onClick = onSaveContact, kind = GpButtonKind.SECONDARY, icon = R.drawable.ic_plus, modifier = Modifier.fillMaxWidth())
             }
         }
     }
-    contactMessage?.let { Text(it, color = Color(0xFFFFDDB3)) }
-    val actions = availableActions(chargeState)
+    contactMessage?.let { InlineNotice(it, kind = StatusKind.PENDING) }
     when (val charge = chargeState) {
         is ChargeState.Ready -> {
-            charge.message?.let { Text(it, color = Color(0xFFFFB4AB)) }
+            charge.message?.let { InlineNotice(it, kind = StatusKind.FAILURE) }
         }
         ChargeState.Listening -> Row(
+            modifier = Modifier.fillMaxWidth().background(GlassPayColors.AccentSoft, MaterialTheme.shapes.medium).padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             MicIndicator()
-            Text(voiceStatus ?: "Preparando micrófono…", color = Color.White, style = MaterialTheme.typography.titleMedium)
+            Text(voiceStatus ?: "Preparando micrófono…", color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
         }
-        ChargeState.Interpreting -> {
-            Text("Interpretando…", color = Color.White)
-            CircularProgressIndicator()
+        ChargeState.Interpreting -> WorkingRow("Interpretando…")
+        is ChargeState.Clarification -> GpCard(modifier = Modifier.fillMaxWidth(), spacing = 8.dp) {
+            Overline("Necesito un dato más", color = GlassPayColors.Warning)
+            Text(charge.question, color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
         }
-        is ChargeState.Clarification -> {
-            Text(charge.question, color = Color(0xFFFFDDB3))
-        }
-        is ChargeState.Preview -> {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            ) {
-                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Vista previa", color = GlassPayColors.MutedText, style = MaterialTheme.typography.labelLarge)
-                    Text(
-                        formatMoney(charge.proposal.amount, charge.proposal.currency),
-                        color = Color.White,
-                        style = MaterialTheme.typography.displaySmall,
-                    )
-                    HorizontalDivider(color = Color(0xFF3A4260))
-                    Text("Concepto", color = GlassPayColors.MutedText, style = MaterialTheme.typography.labelLarge)
-                    Text(charge.proposal.concept, color = Color.White, style = MaterialTheme.typography.titleMedium)
-                    Text("Pagador", color = GlassPayColors.MutedText, style = MaterialTheme.typography.labelLarge)
-                    Text(state.displayName, color = Color.White, style = MaterialTheme.typography.titleMedium)
-                    Text("Vence en ${charge.remainingSeconds}s", color = Color(0xFFFFDDB3))
-                    charge.message?.let { Text(it, color = Color(0xFFFFB4AB)) }
-                }
-            }
-        }
-        ChargeState.Confirming -> {
-            Text("Confirmando…", color = Color.White)
-            CircularProgressIndicator()
-        }
+        is ChargeState.Preview -> ReceiptCard(charge, state.displayName)
+        ChargeState.Confirming -> WorkingRow("Confirmando…")
         is ChargeState.Created -> {
             PaymentProgress(
                 payment = charge.payment,
@@ -854,54 +840,141 @@ private fun IdentifiedContent(
                 onOpenMovements = onOpenMovements,
             )
         }
-        is ChargeState.Error -> {
-            Text(charge.message, color = Color(0xFFFFB4AB))
-        }
+        is ChargeState.Error -> InlineNotice(charge.message, kind = StatusKind.FAILURE)
     }
-    if (ChargeAction.CONFIRM in actions) {
-        Button(onClick = onConfirm, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-            Text("Confirmar", style = MaterialTheme.typography.titleMedium)
-        }
-    }
-    if (ChargeAction.DICTATE in actions) Button(onClick = onStartCharge) { Text("Dictar cobro") }
-    if (ChargeAction.ANSWER in actions) Button(onClick = onStartCharge) { Text("Responder") }
-    if (ChargeAction.RETRY in actions) Button(onClick = onRetry) { Text("Intentar de nuevo") }
-    if (ChargeAction.CANCEL in actions) OutlinedButton(onClick = onCancel) { Text("Cancelar") }
-    if (ChargeAction.START_OVER in actions) TextButton(onClick = onStartOver) { Text("Empezar de nuevo") }
-    if (ChargeAction.BACK in actions) TextButton(onClick = onBack) { Text("Volver") }
-    if (ChargeAction.STOP_WAITING in actions) Button(onClick = onStopWaiting) { Text("Dejar de esperar") }
-    if (ChargeAction.SCAN_ANOTHER in actions && chargeState !is ChargeState.Created) Button(onClick = onReset) { Text("Escanear otro QR") }
     lastRecognizedText?.takeIf { showsRecognizedText(chargeState) }?.let {
-        Text("Entendí: ${displayText(it, 120)}", color = Color(0xFFB7D8FF))
+        EchoText("Entendí", displayText(it, 120))
     }
     if (showsAccumulatedText(chargeState)) {
-        accumulatedText?.let {
-            Text("Frase acumulada: ${displayText(it, 240)}", color = Color(0xFFB7D8FF))
+        accumulatedText?.let { EchoText("Frase acumulada", displayText(it, 240)) }
+    }
+    if (ChargeAction.CONFIRM in actions) {
+        GpButton("Confirmar cobro", onClick = onConfirm, icon = R.drawable.ic_check, modifier = Modifier.fillMaxWidth())
+    }
+    if (ChargeAction.DICTATE in actions) {
+        GpButton("Dictar cobro", onClick = onStartCharge, icon = R.drawable.ic_mic, modifier = Modifier.fillMaxWidth())
+    }
+    if (ChargeAction.ANSWER in actions) {
+        GpButton("Responder", onClick = onStartCharge, icon = R.drawable.ic_mic, modifier = Modifier.fillMaxWidth())
+    }
+    if (ChargeAction.RETRY in actions) GpButton("Intentar de nuevo", onClick = onRetry, modifier = Modifier.fillMaxWidth())
+    if (ChargeAction.CANCEL in actions) {
+        GpButton("Cancelar", onClick = onCancel, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
+    }
+    if (ChargeAction.STOP_WAITING in actions) {
+        GpButton("Dejar de esperar", onClick = onStopWaiting, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
+    }
+    if (ChargeAction.SCAN_ANOTHER in actions && chargeState !is ChargeState.Created) {
+        GpButton("Escanear otro QR", onClick = onReset, kind = GpButtonKind.SECONDARY, icon = R.drawable.ic_charge, modifier = Modifier.fillMaxWidth())
+    }
+    if (ChargeAction.BACK in actions || ChargeAction.START_OVER in actions) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            if (ChargeAction.BACK in actions) {
+                GpButton("Volver", onClick = onBack, kind = GpButtonKind.GHOST, icon = R.drawable.ic_back)
+            } else {
+                Box(Modifier)
+            }
+            if (ChargeAction.START_OVER in actions) GpButton("Empezar de nuevo", onClick = onStartOver, kind = GpButtonKind.GHOST)
         }
     }
     if (showsTextInput(chargeState)) {
+        HorizontalDivider(color = GlassPayColors.Line)
         OutlinedTextField(
             value = textInput,
             onValueChange = onTextInput,
-            label = { Text("Frase del cobro (opcional)") },
+            label = { Text("O escribe la frase del cobro") },
+            placeholder = { Text("Cóbrale 350 pesos por la cena") },
+            shape = MaterialTheme.shapes.medium,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = GlassPayColors.Accent,
+                unfocusedBorderColor = GlassPayColors.Line,
+                focusedLabelColor = GlassPayColors.Accent,
+                cursorColor = GlassPayColors.Accent,
+            ),
             modifier = Modifier.fillMaxWidth(),
         )
-        Button(
+        GpButton(
+            "Interpretar texto",
             onClick = onInterpretText,
             enabled = textInput.isNotBlank(),
-        ) {
-            Text("Interpretar texto")
+            kind = GpButtonKind.SECONDARY,
+            icon = R.drawable.ic_keyboard,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/** Recibo de la vista previa: monto, concepto, pagador y cuenta regresiva de la propuesta. */
+@Composable
+private fun ReceiptCard(charge: ChargeState.Preview, payerName: String) {
+    val expired = charge.remainingSeconds <= 0
+    GpCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(24.dp), spacing = 18.dp) {
+        Overline("Revisa el cobro")
+        MoneyText(formatMoney(charge.proposal.amount, charge.proposal.currency), style = MaterialTheme.typography.displaySmall)
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("Concepto", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
+            Text(charge.proposal.concept, color = GlassPayColors.Text, style = MaterialTheme.typography.bodyLarge)
         }
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text("Pagador", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
+            Text(payerName, color = GlassPayColors.Text, style = MaterialTheme.typography.bodyLarge)
+        }
+        HorizontalDivider(color = GlassPayColors.Line)
+        val timeColor = if (expired) GlassPayColors.Error else GlassPayColors.Warning
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(painterResource(R.drawable.ic_clock), contentDescription = null, tint = timeColor, modifier = Modifier.size(20.dp))
+            Text(
+                if (expired) "La propuesta venció" else "Vence en ${formatCountdown(charge.remainingSeconds)}",
+                color = timeColor,
+                style = MaterialTheme.typography.labelLarge,
+            )
+        }
+        LinearProgressIndicator(
+            progress = { (charge.remainingSeconds / PROPOSAL_REFERENCE_SECONDS).coerceIn(0f, 1f) },
+            color = timeColor,
+            trackColor = GlassPayColors.Raised,
+            drawStopIndicator = {},
+            gapSize = 0.dp,
+            modifier = Modifier.fillMaxWidth().height(6.dp),
+        )
+        charge.message?.let { Text(it, color = GlassPayColors.Error, style = MaterialTheme.typography.bodyMedium) }
+    }
+    if (!expired) {
+        InlineNotice("Di «confirmar» o toca el botón. «Cancelar» lo descarta.", icon = R.drawable.ic_mic)
+    }
+}
+
+// Vida de referencia de una propuesta (2 min); solo dimensiona la barra, el servidor manda.
+private const val PROPOSAL_REFERENCE_SECONDS = 120f
+
+private fun formatCountdown(seconds: Long): String = "%d:%02d".format(seconds / 60, seconds % 60)
+
+@Composable
+private fun WorkingRow(text: String) {
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp, color = GlassPayColors.Accent)
+        Text(text, color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
     }
 }
 
 @Composable
-private fun ScanFrame(modifier: Modifier = Modifier) {
-    val color = Color.White
-    Canvas(modifier = modifier.size(240.dp)) {
-        val stroke = 6.dp.toPx()
-        val arm = 44.dp.toPx()
-        val radius = 18.dp.toPx()
+private fun EchoText(label: String, text: String) {
+    Column(
+        modifier = Modifier.fillMaxWidth().background(GlassPayColors.Raised, MaterialTheme.shapes.medium).padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(label, color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
+        Text("«$text»", color = GlassPayColors.Text, style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+@Composable
+internal fun ScanFrame(modifier: Modifier = Modifier) {
+    val color = GlassPayColors.Accent
+    Canvas(modifier = modifier.size(264.dp)) {
+        val stroke = 5.dp.toPx()
+        val arm = 50.dp.toPx()
+        val radius = 24.dp.toPx()
         val w = size.width
         val h = size.height
         val style = Stroke(width = stroke, cap = StrokeCap.Round)
@@ -935,21 +1008,24 @@ private fun MicIndicator() {
             )
             Box(
                 modifier = Modifier
-                    .size(32.dp)
+                    .size(40.dp)
                     .graphicsLayer {
                         scaleX = scale
                         scaleY = scale
                         alpha = (1.5f - scale) / 0.5f * 0.5f
                     }
-                    .background(MaterialTheme.colorScheme.primary, CircleShape),
+                    .background(GlassPayColors.Accent, CircleShape),
             )
         }
         Box(
             modifier = Modifier
-                .size(32.dp)
-                .background(MaterialTheme.colorScheme.primary, CircleShape)
+                .size(40.dp)
+                .background(GlassPayColors.Accent, CircleShape)
                 .semantics { contentDescription = "Micrófono escuchando" },
-        )
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(painterResource(R.drawable.ic_mic), contentDescription = null, tint = GlassPayColors.OnAccent, modifier = Modifier.size(22.dp))
+        }
     }
 }
 
@@ -960,18 +1036,31 @@ private fun ResolveContent(
     onScanAnother: () -> Unit,
     cameraError: String?,
 ) {
-    Text(
-        when (state) {
-            is ResolveState.Failed -> state.message
-            is ResolveState.RetryableError -> state.message
-            else -> "Busca un QR de GlassPay"
-        },
-        color = if (state is ResolveState.Failed || state is ResolveState.RetryableError) Color(0xFFFFB4AB) else Color.White,
-        style = MaterialTheme.typography.headlineSmall,
-    )
-    if (state is ResolveState.RetryableError) Button(onClick = onRetry) { Text("Reintentar") }
-    if (state is ResolveState.Failed) Button(onClick = onScanAnother) { Text("Escanear otro QR") }
-    cameraError?.let { Text(it, color = Color(0xFFFFB4AB)) }
+    val failed = state is ResolveState.Failed || state is ResolveState.RetryableError
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(10.dp).background(if (failed) GlassPayColors.Error else GlassPayColors.Accent, CircleShape))
+        Text(
+            when (state) {
+                is ResolveState.Failed -> state.message
+                is ResolveState.RetryableError -> state.message
+                else -> "Buscando un QR de GlassPay…"
+            },
+            color = if (failed) GlassPayColors.Error else GlassPayColors.Text,
+            style = MaterialTheme.typography.titleMedium,
+        )
+    }
+    if (!failed) {
+        Text(
+            "Solo se leen códigos de GlassPay. Los demás se ignoran sin enviar nada.",
+            color = GlassPayColors.MutedText,
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+    if (state is ResolveState.RetryableError) GpButton("Reintentar", onClick = onRetry, modifier = Modifier.fillMaxWidth())
+    if (state is ResolveState.Failed) {
+        GpButton("Escanear otro QR", onClick = onScanAnother, kind = GpButtonKind.SECONDARY, icon = R.drawable.ic_charge, modifier = Modifier.fillMaxWidth())
+    }
+    cameraError?.let { Text(it, color = GlassPayColors.Error, style = MaterialTheme.typography.bodyMedium) }
 }
 
 internal fun remainingSeconds(expiresAt: String): Long {

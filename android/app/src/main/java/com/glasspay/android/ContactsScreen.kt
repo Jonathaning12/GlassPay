@@ -1,6 +1,9 @@
 package com.glasspay.android
 
 import android.util.Log
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,12 +17,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -142,28 +141,43 @@ fun ContactsScreen(
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Contactos", style = MaterialTheme.typography.headlineMedium)
-        Button(onClick = onAddWithQr) { Text("Agregar con QR") }
-        message?.let { Text(it, color = GlassPayColors.Warning) }
+        Row(
+            modifier = Modifier.padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Contactos", style = MaterialTheme.typography.headlineMedium, color = GlassPayColors.Text, modifier = Modifier.weight(1f))
+            CircleIconButton(R.drawable.ic_plus, "Agregar con QR", onAddWithQr, tint = GlassPayColors.Accent)
+        }
+        message?.let { InlineNotice(it, kind = StatusKind.PENDING) }
         when (val current = state) {
-            LoadState.Loading -> CircularProgressIndicator()
+            LoadState.Loading -> repeat(3) { SkeletonBox(Modifier.fillMaxWidth().height(124.dp)) }
             LoadState.Failed -> {
-                Text("No pudimos cargar tus contactos.", color = GlassPayColors.Error)
-                Button(onClick = { reload += 1 }) { Text("Reintentar") }
+                InlineNotice("No pudimos cargar tus contactos.", kind = StatusKind.FAILURE)
+                GpButton("Reintentar", onClick = { reload += 1 }, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
             }
             is LoadState.Loaded -> {
-                OutlinedButton(onClick = { reload += 1 }) { Text("Actualizar") }
                 if (current.value.isEmpty()) {
-                    Text(
-                        "Escanea el QR de un amigo y guárdalo para cobrarle más rápido.",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = GlassPayColors.MutedText,
-                    )
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        IconBadge(R.drawable.ic_contacts, tint = GlassPayColors.Accent, size = 72.dp, background = GlassPayColors.AccentSoft)
+                        Text("Aún no tienes contactos", style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
+                        Text(
+                            "Escanea el QR de un amigo y guárdalo para cobrarle más rápido.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = GlassPayColors.MutedText,
+                            textAlign = TextAlign.Center,
+                        )
+                        GpButton("Agregar con QR", onClick = onAddWithQr, icon = R.drawable.ic_qr, modifier = Modifier.fillMaxWidth())
+                    }
                 }
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.weight(1f)) {
                     items(current.value, key = { it.contactId }) { contact ->
                         ContactRow(
                             contact = contact,
@@ -173,6 +187,9 @@ fun ContactsScreen(
                             onSend = { onSend(contact) },
                             onDelete = { pendingDelete = contact },
                         )
+                    }
+                    item {
+                        GpButton("Actualizar", onClick = { reload += 1 }, kind = GpButtonKind.GHOST, modifier = Modifier.fillMaxWidth())
                     }
                 }
             }
@@ -189,34 +206,28 @@ private fun ContactRow(
     onSend: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Box(
-                    modifier = Modifier.size(44.dp).background(MaterialTheme.colorScheme.primary, CircleShape),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(contact.displayName.trim().take(1).uppercase(), style = MaterialTheme.typography.titleMedium)
-                }
-                Text(
-                    contact.displayName,
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.weight(1f),
-                )
-                if (busy) CircularProgressIndicator(modifier = Modifier.size(28.dp))
+    GpCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(16.dp), spacing = 14.dp) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Avatar(contact.displayName)
+            Text(
+                contact.displayName,
+                style = MaterialTheme.typography.titleMedium,
+                color = GlassPayColors.Text,
+                modifier = Modifier.weight(1f),
+            )
+            if (busy) {
+                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp, color = GlassPayColors.Accent)
+            } else {
+                CircleIconButton(R.drawable.ic_trash, "Eliminar a ${contact.displayName}", onDelete, tint = GlassPayColors.Error)
             }
-            if (!busy) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = onCharge, enabled = enabled) { Text("Cobrar") }
-                    OutlinedButton(onClick = onSend, enabled = enabled) { Text("Enviar") }
-                    TextButton(onClick = onDelete, enabled = enabled) { Text("Eliminar") }
-                }
+        }
+        if (!busy) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                GpButton("Cobrar", onClick = onCharge, enabled = enabled, icon = R.drawable.ic_receive, modifier = Modifier.weight(1f))
+                GpButton("Enviar", onClick = onSend, enabled = enabled, kind = GpButtonKind.SECONDARY, icon = R.drawable.ic_send, modifier = Modifier.weight(1f))
             }
         }
     }

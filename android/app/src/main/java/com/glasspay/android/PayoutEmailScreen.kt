@@ -10,10 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -77,29 +74,42 @@ fun PayoutEmailScreen(
         }
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        OutlinedButton(onClick = onBack, modifier = Modifier.align(Alignment.Start)) { Text("Volver") }
-        Text("Recibir envíos", style = MaterialTheme.typography.headlineMedium)
-        Text(
-            "Escribe el correo de tu cuenta de PayPal Sandbox. Tu correo se guarda solo en el servidor de GlassPay y nadie más lo ve.",
-            color = GlassPayColors.MutedText,
-        )
-        OutlinedTextField(
-            value = email,
-            onValueChange = { email = it.take(254) },
-            label = { Text("Correo de PayPal Sandbox") },
-            singleLine = true,
-            enabled = !saving,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        message?.let { Text(it, color = GlassPayColors.Error) }
-        Button(onClick = { save() }, enabled = email.isNotBlank() && !saving, modifier = Modifier.fillMaxWidth()) {
-            Text("Guardar")
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        ScreenHeader("Recibir envíos", onBack = onBack)
+        Column(
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            IconBadge(R.drawable.ic_mail, tint = GlassPayColors.Accent, size = 56.dp, background = GlassPayColors.AccentSoft)
+            Text(
+                "Escribe el correo de tu cuenta de PayPal Sandbox.",
+                style = MaterialTheme.typography.titleMedium,
+                color = GlassPayColors.Text,
+            )
+            InlineNotice(
+                "Tu correo se guarda solo en el servidor de GlassPay y nadie más lo ve.",
+                icon = R.drawable.ic_lock,
+            )
+            OutlinedTextField(
+                value = email,
+                onValueChange = { email = it.take(254) },
+                label = { Text("Correo de PayPal Sandbox") },
+                singleLine = true,
+                enabled = !saving,
+                isError = message != null,
+                supportingText = message?.let { { Text(it) } },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                shape = MaterialTheme.shapes.medium,
+                colors = gpTextFieldColors(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            GpButton(
+                if (saving) "Guardando…" else "Guardar",
+                onClick = { save() },
+                enabled = email.isNotBlank() && !saving,
+                icon = R.drawable.ic_check,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
-        if (saving) CircularProgressIndicator()
     }
 }

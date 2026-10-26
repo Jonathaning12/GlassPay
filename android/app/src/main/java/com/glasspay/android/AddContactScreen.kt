@@ -1,6 +1,10 @@
 package com.glasspay.android
 
 import android.Manifest
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.border
+import androidx.compose.foundation.background
 import android.content.pm.PackageManager
 import android.util.Log
 import androidx.activity.compose.BackHandler
@@ -11,10 +15,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -100,62 +102,89 @@ fun AddContactScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize().background(GlassPayColors.Background)) {
         when (val current = state) {
             AddContactState.Scanning -> {
                 if (cameraGranted) {
                     CameraScanner(lifecycleOwner = lifecycleOwner, onTokenDetected = ::handleToken)
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = Color(0xCC161D36),
-                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp),
+                    Box(Modifier.fillMaxSize().background(GlassPayColors.Background.copy(alpha = 0.35f)))
+                    ScanFrame(modifier = Modifier.align(Alignment.Center))
+                    Column(
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(20.dp)
+                            .fillMaxWidth()
+                            .background(GlassPayColors.Card.copy(alpha = 0.94f), MaterialTheme.shapes.large)
+                            .border(1.dp, GlassPayColors.Line, MaterialTheme.shapes.large)
+                            .padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
+                        Text("Agregar contacto", color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "Apunta al QR de tu amigo",
-                            color = Color.White,
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                            "Apunta al QR de tu amigo. Solo se guarda su nombre visible.",
+                            color = GlassPayColors.MutedText,
+                            style = MaterialTheme.typography.bodySmall,
                         )
                     }
                 } else {
                     Column(
                         modifier = Modifier.align(Alignment.Center).padding(24.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
-                        Text("Necesitamos la cámara para leer el QR.", style = MaterialTheme.typography.bodyLarge)
-                        Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) {
-                            Text("Permitir cámara")
-                        }
+                        IconBadge(R.drawable.ic_charge, tint = GlassPayColors.Accent, size = 72.dp, background = GlassPayColors.AccentSoft)
+                        Text(
+                            "Necesitamos la cámara para leer el QR.",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = GlassPayColors.Text,
+                            textAlign = TextAlign.Center,
+                        )
+                        GpButton("Permitir cámara", onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }, modifier = Modifier.fillMaxWidth())
                     }
                 }
-                OutlinedButton(
-                    onClick = onDone,
+                CircleIconButton(
+                    R.drawable.ic_back,
+                    "Volver",
+                    onDone,
                     modifier = Modifier.align(Alignment.TopStart).padding(16.dp),
-                ) { Text("Volver") }
+                )
             }
             AddContactState.Working -> Column(
                 modifier = Modifier.align(Alignment.Center),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                CircularProgressIndicator()
-                Text("Agregando contacto…")
+                CircularProgressIndicator(color = GlassPayColors.Accent)
+                Text("Agregando contacto…", color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
             }
             is AddContactState.Result -> Column(
                 modifier = Modifier.align(Alignment.Center).padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
+                val kind = if (current.isError) StatusKind.FAILURE else StatusKind.SUCCESS
+                IconBadge(
+                    if (current.isError) R.drawable.ic_close else R.drawable.ic_check,
+                    tint = statusColor(kind),
+                    size = 88.dp,
+                    background = statusSoftColor(kind),
+                )
                 Text(
                     current.message,
                     style = MaterialTheme.typography.headlineSmall,
-                    color = if (current.isError) GlassPayColors.Error else GlassPayColors.Success,
+                    color = statusColor(kind),
+                    textAlign = TextAlign.Center,
                 )
-                Button(onClick = {
-                    if (current.isError) lastToken = null
-                    state = AddContactState.Scanning
-                }) { Text("Agregar otro") }
-                OutlinedButton(onClick = onDone) { Text("Listo") }
+                GpButton(
+                    "Agregar otro",
+                    onClick = {
+                        if (current.isError) lastToken = null
+                        state = AddContactState.Scanning
+                    },
+                    icon = R.drawable.ic_qr,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                GpButton("Listo", onClick = onDone, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
             }
         }
     }

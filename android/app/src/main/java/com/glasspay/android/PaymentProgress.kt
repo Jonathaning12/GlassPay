@@ -1,6 +1,11 @@
 package com.glasspay.android
 
 import android.provider.Settings
+import androidx.compose.ui.res.painterResource
+import androidx.compose.material3.Icon
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.border
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
@@ -20,11 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -49,7 +50,7 @@ data class ConfirmedCharge(
     val payerName: String,
 )
 
-private val StepGray = Color(0xFF3A4260)
+private val StepGray = GlassPayColors.Line
 
 @Composable
 internal fun animationsEnabled(): Boolean {
@@ -78,13 +79,9 @@ fun PaymentProgress(
 @Composable
 private fun ChargeSummary(confirmed: ConfirmedCharge?) {
     if (confirmed == null) return
-    Text(
-        formatMoney(confirmed.amount, confirmed.currency),
-        style = MaterialTheme.typography.displaySmall,
-        color = Color.White,
-    )
-    Text("para ${confirmed.concept}", color = Color.White, style = MaterialTheme.typography.bodyLarge)
-    Text("a ${confirmed.payerName}", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodyLarge)
+    Text("Cobro a ${confirmed.payerName}", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
+    MoneyText(formatMoney(confirmed.amount, confirmed.currency), style = MaterialTheme.typography.headlineLarge)
+    Text(confirmed.concept, color = GlassPayColors.Text, style = MaterialTheme.typography.bodyLarge)
 }
 
 @Composable
@@ -92,26 +89,29 @@ private fun WaitingView(step: PaymentStep, payment: PaymentTracking, confirmed: 
     val activeIndex = if (step == PaymentStep.CONFIRMING) 2 else 1
     val awaitingDetail = (payment as? PaymentTracking.WaitingWithMessage)?.message ?: "Esperando al pagador."
     val titles = listOf("Solicitud enviada", "El pagador está aprobando", "Confirmando con PayPal")
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    val details = listOf(
+        "Ya la ve en su teléfono.",
+        if (activeIndex == 1) awaitingDetail else "Aprobó en PayPal.",
+        "Solo PayPal puede marcarlo como pagado.",
+    )
+    Text("Esperando el pago", style = MaterialTheme.typography.headlineSmall, color = GlassPayColors.Text)
+    if (confirmed != null) {
+        GpCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(24.dp), spacing = 6.dp) {
             ChargeSummary(confirmed)
-            Column(modifier = Modifier.padding(top = 12.dp)) {
-                titles.forEachIndexed { index, title ->
-                    TimelineStep(
-                        title = title,
-                        detail = if (index == 1 && activeIndex == 1) awaitingDetail else null,
-                        done = index < activeIndex,
-                        active = index == activeIndex,
-                        last = index == titles.lastIndex,
-                        nextDone = index + 1 < activeIndex,
-                    )
-                }
-            }
         }
     }
+    GpCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(24.dp), spacing = 0.dp) {
+        titles.forEachIndexed { index, title ->
+            TimelineStep(
+                title = title,
+                detail = details[index],
+                done = index < activeIndex,
+                active = index == activeIndex,
+                last = index == titles.lastIndex,
+            )
+        }
+    }
+    InlineNotice("Si dejas de esperar, el pagador todavía podrá aprobar desde su teléfono.", icon = R.drawable.ic_lock)
 }
 
 @Composable
@@ -121,12 +121,11 @@ private fun TimelineStep(
     done: Boolean,
     active: Boolean,
     last: Boolean,
-    nextDone: Boolean,
 ) {
     val animate = animationsEnabled()
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(32.dp)) {
+            Box(contentAlignment = Alignment.Center, modifier = Modifier.size(28.dp)) {
                 if (active && animate) {
                     val transition = rememberInfiniteTransition(label = "pulse")
                     val scale by transition.animateFloat(
@@ -137,23 +136,32 @@ private fun TimelineStep(
                     )
                     Box(
                         modifier = Modifier
-                            .size(32.dp)
+                            .size(28.dp)
                             .graphicsLayer {
                                 scaleX = scale
                                 scaleY = scale
                                 alpha = (1.6f - scale) / 0.6f * 0.5f
                             }
-                            .background(MaterialTheme.colorScheme.primary, CircleShape),
+                            .background(GlassPayColors.Accent, CircleShape),
                     )
                 }
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(28.dp)
                         .background(
                             when {
-                                done -> GlassPayColors.Success
-                                active -> MaterialTheme.colorScheme.primary
+                                done -> GlassPayColors.SuccessSoft
+                                active -> GlassPayColors.AccentSoft
+                                else -> GlassPayColors.Background
+                            },
+                            CircleShape,
+                        )
+                        .border(
+                            2.dp,
+                            when {
+                                done -> GlassPayColors.SuccessSoft
+                                active -> GlassPayColors.Accent.copy(alpha = 0.6f)
                                 else -> StepGray
                             },
                             CircleShape,
@@ -166,25 +174,33 @@ private fun TimelineStep(
                             }
                         },
                 ) {
-                    if (done) Text("✓", color = Color(0xFF0B1020), style = MaterialTheme.typography.titleMedium)
+                    when {
+                        done -> Icon(painterResource(R.drawable.ic_check), contentDescription = null, tint = GlassPayColors.Success, modifier = Modifier.size(18.dp))
+                        active -> Box(Modifier.size(10.dp).background(GlassPayColors.Accent, CircleShape))
+                    }
                 }
             }
             if (!last) {
                 Box(
                     modifier = Modifier
-                        .width(3.dp)
-                        .height(28.dp)
+                        .width(2.dp)
+                        .height(36.dp)
                         .background(if (done) GlassPayColors.Success else StepGray),
                 )
             }
         }
-        Column(modifier = Modifier.padding(top = 4.dp, bottom = if (last) 0.dp else 12.dp)) {
+        Column(
+            modifier = Modifier.padding(top = 3.dp, bottom = if (last) 0.dp else 12.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
             Text(
                 title,
                 style = MaterialTheme.typography.titleMedium,
-                color = if (done || active) Color.White else GlassPayColors.MutedText,
+                color = if (done || active) GlassPayColors.Text else GlassPayColors.MutedText,
             )
-            detail?.let { Text(it, color = GlassPayColors.Warning) }
+            detail?.let {
+                Text(it, color = if (active) GlassPayColors.Warning else GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
@@ -194,56 +210,74 @@ private fun PaidView(confirmed: ConfirmedCharge?, onNewCharge: () -> Unit, onOpe
     val animate = animationsEnabled()
     var entered by remember { mutableStateOf(!animate) }
     LaunchedEffect(Unit) { entered = true }
+    // Celebración poco frecuente: un rebote leve está bien, pero nunca desde escala 0.
     val scale by animateFloatAsState(
-        targetValue = if (entered) 1f else 0f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        targetValue = if (entered) 1f else 0.6f,
+        animationSpec = spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessLow),
         label = "checkScale",
     )
+    val alpha by animateFloatAsState(
+        targetValue = if (entered) 1f else 0f,
+        animationSpec = tween(if (animate) 200 else 0),
+        label = "checkAlpha",
+    )
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().padding(top = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier
-                .size(96.dp)
+                .size(156.dp)
                 .graphicsLayer {
                     scaleX = scale
                     scaleY = scale
+                    this.alpha = alpha
                 }
-                .background(GlassPayColors.Success, CircleShape)
+                .background(GlassPayColors.SuccessSoft, CircleShape)
                 .semantics { contentDescription = "Pago recibido" },
         ) {
-            Text("✓", color = Color(0xFF0B1020), style = MaterialTheme.typography.displayMedium)
+            Box(Modifier.size(104.dp).background(GlassPayColors.Success, CircleShape), contentAlignment = Alignment.Center) {
+                Icon(painterResource(R.drawable.ic_check), contentDescription = null, tint = GlassPayColors.Background, modifier = Modifier.size(56.dp))
+            }
         }
-        Text("¡Pago recibido!", style = MaterialTheme.typography.headlineLarge, color = GlassPayColors.Success)
+        Text("¡Pago recibido!", style = MaterialTheme.typography.headlineMedium, color = GlassPayColors.Success)
         confirmed?.let {
-            Text(formatMoney(it.amount, it.currency), style = MaterialTheme.typography.displaySmall, color = Color.White)
-            Text("de ${it.payerName}", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodyLarge)
+            MoneyText(formatMoney(it.amount, it.currency), style = MaterialTheme.typography.displaySmall)
+            Text("De ${it.payerName} · ${it.concept}", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodyLarge)
         }
-        Button(onClick = onNewCharge) { Text("Nuevo cobro") }
-        OutlinedButton(onClick = onOpenMovements) { Text("Ver en Movimientos") }
+        Row(
+            modifier = Modifier.background(GlassPayColors.Raised, RoundedCornerShape(50)).padding(horizontal = 14.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(painterResource(R.drawable.ic_lock), contentDescription = null, tint = GlassPayColors.MutedText, modifier = Modifier.size(16.dp))
+            Text("Confirmado por PayPal (Sandbox)", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
+        }
+        GpButton("Nuevo cobro", onClick = onNewCharge, icon = R.drawable.ic_charge, modifier = Modifier.fillMaxWidth().padding(top = 16.dp))
+        GpButton("Ver en Movimientos", onClick = onOpenMovements, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
     }
 }
 
 @Composable
 private fun StoppedView(payment: PaymentTracking, confirmed: ConfirmedCharge?, onNewCharge: () -> Unit) {
-    val (text, color) = when (payment) {
-        PaymentTracking.Rejected -> "El pagador rechazó la solicitud." to GlassPayColors.Error
-        PaymentTracking.Expired -> "La solicitud expiró." to GlassPayColors.Warning
-        PaymentTracking.Failed -> "El pago falló." to GlassPayColors.Error
-        is PaymentTracking.Error -> payment.message to GlassPayColors.Error
-        else -> "No pudimos consultar el estado del pago." to GlassPayColors.Error
+    val (text, kind) = when (payment) {
+        PaymentTracking.Rejected -> "El pagador rechazó la solicitud." to StatusKind.FAILURE
+        PaymentTracking.Expired -> "La solicitud expiró." to StatusKind.PENDING
+        PaymentTracking.Failed -> "El pago falló." to StatusKind.FAILURE
+        is PaymentTracking.Error -> payment.message to StatusKind.FAILURE
+        else -> "No pudimos consultar el estado del pago." to StatusKind.FAILURE
     }
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-    ) {
-        Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            ChargeSummary(confirmed)
-            Text(text, color = color, style = MaterialTheme.typography.titleMedium)
-        }
+    GpCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(24.dp), spacing = 12.dp) {
+        IconBadge(
+            if (payment == PaymentTracking.Expired) R.drawable.ic_clock else R.drawable.ic_close,
+            tint = statusColor(kind),
+            size = 56.dp,
+            background = statusSoftColor(kind),
+        )
+        Text(text, color = statusColor(kind), style = MaterialTheme.typography.headlineSmall)
+        ChargeSummary(confirmed)
     }
-    Button(onClick = onNewCharge) { Text("Escanear otro QR") }
+    GpButton("Escanear otro QR", onClick = onNewCharge, icon = R.drawable.ic_charge, modifier = Modifier.fillMaxWidth())
 }
