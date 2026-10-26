@@ -1,5 +1,7 @@
 const { randomBytes, randomUUID } = require("node:crypto");
 const { logRef, syncTransfer } = require("../services/transfers");
+const { computeStats, isPeriod } = require("../services/stats");
+const { SUGGESTIONS, buildAssistantReply } = require("../services/assistant-replies");
 const express = require("express");
 const {
   createOpaqueToken,
@@ -107,7 +109,17 @@ function toMovementFromTransfer(transfer) {
   };
 }
 
-function createCollectorsRouter({ database, config, paypal }) {
+const MAX_ASSISTANT_MESSAGE_LENGTH = 500;
+
+function sanitizeAssistantText(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const text = value.normalize("NFKC").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  return text.length > 0 && text.length <= MAX_ASSISTANT_MESSAGE_LENGTH ? text : null;
+}
+
+function createCollectorsRouter({ database, config, paypal, assistant }) {
   const router = express.Router();
   const profileLimiter = createRateLimiter({ maxRequests: 5, windowMs: 60_000 });
   const readLimiter = createRateLimiter({ maxRequests: 60, windowMs: 60_000 });
@@ -116,6 +128,12 @@ function createCollectorsRouter({ database, config, paypal }) {
   const qrLimiter = createRateLimiter({ maxRequests: 20, windowMs: 60_000 });
   const transferLimiter = createRateLimiter({ maxRequests: 10, windowMs: 60_000 });
   const settingsLimiter = createRateLimiter({ maxRequests: 10, windowMs: 60_000 });
+  // Por cobrador (y por IP si no hay id) para que un usuario no agote el cupo diario de IA de otros.
+  const assistantLimiter = createRateLimiter({
+    maxRequests: 15,
+    windowMs: 60_000,
+    key: (request) => request.get("X-Collector-Id") || request.ip || "unknown",
+  });
 
   // Refresca hasta 3 envíos abiertos por consulta para no abusar de PayPal.
   async function refreshOpenTransfers(collectorId) {
@@ -188,6 +206,52 @@ function createCollectorsRouter({ database, config, paypal }) {
       ...database.listCollectorTransfers(collector.id).map(toMovementFromTransfer),
     ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50);
     return response.status(200).json({ movements });
+  });
+
+  router.get("/me/stats", readLimiter, async (request, response) => {
+    const collector = authenticateCollector(request, database);
+    if (!collector) {
+      return response.status(401).json({ error: "collector authentication failed" });
+    }
+    const period = request.query.period ?? "week";
+    if (!isPeriod(period)) {
+      return response.status(400).json({ error: "invalid period" });
+    }
+
+    await database.expirePaymentRequests();
+    await refreshOpenTransfers(collector.id);
+    return response.status(200).json(
+      computeStats(database, collector.id, period, { currency: config.payments.defaultCurrency }),
+    );
+  });
+
+  // Chat del asistente: solo consulta datos propios; ningún mensaje crea cobros ni envíos.
+  router.post("/me/assistant/messages", assistantLimiter, async (request, response) => {
+    const collector = authenticateCollector(request, database);
+    if (!collector) {
+      return response.status(401).json({ error: "collector authentication failed" });
+    }
+    const text = sanitizeAssistantText(request.body?.text);
+    if (!text) {
+      return response.status(400).json({ error: "invalid message" });
+    }
+
+    const startedAt = Date.now();
+    const interpretation = await assistant.interpret(text);
+    await database.expirePaymentRequests();
+    const reply = buildAssistantReply({
+      database,
+      collectorId: collector.id,
+      interpretation,
+      currency: config.payments.defaultCurrency,
+    });
+    // Sin texto del usuario ni datos personales en el log.
+    console.info("assistant message", {
+      intent: interpretation.intent,
+      method: interpretation.method,
+      elapsedMs: Date.now() - startedAt,
+    });
+    return response.status(200).json({ reply, suggestions: SUGGESTIONS, method: interpretation.method });
   });
 
   router.put("/me/payout-email", settingsLimiter, async (request, response) => {

@@ -83,6 +83,7 @@ fun GlassPayRoot() {
     var showSend by remember { mutableStateOf(false) }
     var sendContact by remember { mutableStateOf<Contact?>(null) }
     var showPayoutEmail by remember { mutableStateOf(false) }
+    var showAssistant by remember { mutableStateOf(false) }
     var flowResolve by remember { mutableStateOf<ResolveState>(ResolveState.Scanning) }
     var flowCharge by remember { mutableStateOf<ChargeState>(ChargeState.Ready()) }
 
@@ -102,6 +103,7 @@ fun GlassPayRoot() {
         welcomeMessage = message
         session = null
         pendingContactResolution = null
+        showAssistant = false
         tab = AppTab.HOME
         flowResolve = ResolveState.Scanning
         flowCharge = ChargeState.Ready()
@@ -119,6 +121,7 @@ fun GlassPayRoot() {
         showSend = false
         sendContact = null
         showPayoutEmail = false
+        showAssistant = false
         tab = next
     }
 
@@ -300,6 +303,13 @@ fun GlassPayRoot() {
                                     onBack = { showMyQr = false },
                                     locked = lockActive,
                                 )
+                            } else if (showAssistant) {
+                                AssistantScreen(
+                                    session = current,
+                                    api = api,
+                                    onSessionInvalid = ::invalidateSession,
+                                    onBack = { showAssistant = false },
+                                )
                             } else if (showPayoutEmail) {
                                 PayoutEmailScreen(
                                     session = current,
@@ -331,6 +341,7 @@ fun GlassPayRoot() {
                                     showSend = true
                                 },
                                 onPayoutEmail = { showPayoutEmail = true },
+                                onOpenAssistant = { showAssistant = true },
                                 locked = lockActive,
                                 amountsVisible = amountsVisible,
                                 onToggleAmounts = { amountsVisible = !amountsVisible },

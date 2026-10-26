@@ -88,6 +88,7 @@ fun HomeScreen(
     onOpenMyQr: () -> Unit,
     onSend: () -> Unit,
     onPayoutEmail: () -> Unit,
+    onOpenAssistant: () -> Unit,
     locked: Boolean,
     amountsVisible: Boolean,
     onToggleAmounts: () -> Unit,
@@ -219,6 +220,7 @@ fun HomeScreen(
                 Text("Hola, ${session.displayName}", style = MaterialTheme.typography.headlineMedium, color = GlassPayColors.Text)
                 Text("Actividad en GlassPay (Sandbox)", style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
             }
+            CircleIconButton(R.drawable.ic_assistant, "Asistente de IA", onOpenAssistant, tint = GlassPayColors.Accent)
             Avatar(session.displayName, highlighted = true)
         }
         if (showLockHint) {

@@ -418,6 +418,17 @@ class PaymentApi(
         }
     }
 
+    suspend fun sendAssistantMessage(session: CollectorSession, text: String): AssistantResponse {
+        val body = JSONObject().put("text", text).toString().toRequestBody("application/json".toMediaType())
+        // Margen para Gemini más un posible despertar del servidor.
+        val responseBody = execute("POST", "/api/collectors/me/assistant/messages", body, 25_000, session.headers())
+        return try {
+            parseAssistantResponse(responseBody)
+        } catch (_: Exception) {
+            throw ApiException(ApiFailureType.INVALID_RESPONSE)
+        }
+    }
+
     suspend fun getPaymentStatus(requestId: String, statusToken: String): PaymentStatus {
         val responseBody = execute(
             method = "GET",

@@ -527,6 +527,36 @@ async function createDatabase(databasePath) {
       }));
     },
 
+    // Cobros y envíos de un rango [desde, hasta) para estadísticas; montos en centavos.
+    listCollectorActivityBetween(collectorId, fromIso, toIso) {
+      const charges = all(`
+        SELECT t.state, t.currency, p.display_name,
+          CAST(ROUND(CAST(t.amount AS REAL) * 100) AS INTEGER) AS cents, r.created_at
+        FROM payment_requests r
+        JOIN transactions t ON t.id = r.transaction_id
+        JOIN payer_profiles p ON p.id = r.payer_id
+        WHERE r.collector_id = ? AND r.created_at >= ? AND r.created_at < ?
+      `, [collectorId, fromIso, toIso]).map((row) => ({
+        state: row.state,
+        currency: row.currency,
+        payerName: row.display_name,
+        cents: row.cents,
+        createdAt: row.created_at,
+      }));
+      const transfers = all(`
+        SELECT state, currency, CAST(ROUND(CAST(amount AS REAL) * 100) AS INTEGER) AS cents, created_at
+        FROM transfers
+        WHERE sender_collector_id = ? AND created_at >= ? AND created_at < ?
+          AND state NOT IN ('propuesta')
+      `, [collectorId, fromIso, toIso]).map((row) => ({
+        state: row.state,
+        currency: row.currency,
+        cents: row.cents,
+        createdAt: row.created_at,
+      }));
+      return { charges, transfers };
+    },
+
     listCollectorMovements(collectorId, limit = 50) {
       return all(`
         SELECT r.id, t.state, t.amount, t.currency, t.concept, p.display_name,
