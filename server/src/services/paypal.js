@@ -61,7 +61,9 @@ class PayPalService {
     }
 
     if (!response.ok) {
-      throw new Error(`PayPal request failed with status ${response.status}`);
+      const error = new Error(`PayPal request failed with status ${response.status}`);
+      error.status = response.status;
+      throw error;
     }
     return body;
   }
@@ -117,6 +119,45 @@ class PayPalService {
 
   async showOrder(orderId) {
     return this.request(`/v2/checkout/orders/${encodeURIComponent(orderId)}`);
+  }
+
+  // Payouts v1 (Sandbox). transferId se usa como sender_batch_id y como
+  // PayPal-Request-Id: reintentar con el mismo id no duplica el envío.
+  async createPayout({ transferId, receiverEmail, amount, currency, note }) {
+    const body = await this.request("/v1/payments/payouts", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "PayPal-Request-Id": transferId,
+      },
+      body: JSON.stringify({
+        sender_batch_header: {
+          sender_batch_id: transferId,
+          email_subject: "Recibiste dinero con GlassPay (Sandbox)",
+          email_message: note,
+        },
+        items: [{
+          recipient_type: "EMAIL",
+          receiver: receiverEmail,
+          amount: { value: amount, currency },
+          note,
+          sender_item_id: transferId.slice(0, 63),
+        }],
+      }),
+    });
+    const batchId = body.batch_header?.payout_batch_id;
+    if (!batchId) {
+      throw new Error("PayPal payout did not include a batch id");
+    }
+    return { batchId, batchStatus: body.batch_header.batch_status || null };
+  }
+
+  async getPayout(batchId) {
+    const body = await this.request(`/v1/payments/payouts/${encodeURIComponent(batchId)}`);
+    return {
+      batchStatus: body.batch_header?.batch_status || null,
+      itemStatus: body.items?.[0]?.transaction_status || null,
+    };
   }
 
   async verifyWebhookSignature(headers, event) {

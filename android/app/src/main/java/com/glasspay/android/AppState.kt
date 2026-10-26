@@ -34,7 +34,16 @@ fun isAllowedApproveUrl(url: String?): Boolean {
     }
 }
 
-fun movementStatusLabel(state: String): String {
+fun movementStatusLabel(state: String, kind: String = "cobro"): String {
+    if (kind == "envio") {
+        return when (state) {
+            "procesando" -> "Enviando"
+            "completada" -> "Enviado"
+            "no_reclamada" -> "Sin reclamar"
+            "fallida" -> "Falló"
+            else -> "Desconocido"
+        }
+    }
     return when (state) {
         "pagada" -> "Pagado"
         "aprobada", "enviada" -> "Procesando"
@@ -46,7 +55,15 @@ fun movementStatusLabel(state: String): String {
     }
 }
 
-fun movementStatusKind(state: String): StatusKind {
+fun movementStatusKind(state: String, kind: String = "cobro"): StatusKind {
+    if (kind == "envio") {
+        return when (state) {
+            "procesando", "no_reclamada" -> StatusKind.PENDING
+            "completada" -> StatusKind.SUCCESS
+            "fallida" -> StatusKind.FAILURE
+            else -> StatusKind.NEUTRAL
+        }
+    }
     return when (state) {
         "pagada" -> StatusKind.SUCCESS
         "aprobada", "enviada", "pendiente_de_pagador", "creada" -> StatusKind.PENDING

@@ -70,6 +70,23 @@ async function createDatabase(databasePath) {
       UNIQUE (collector_id, payer_id)
     );
 
+    CREATE TABLE IF NOT EXISTS transfers (
+      id TEXT PRIMARY KEY,
+      sender_collector_id TEXT NOT NULL,
+      recipient_payer_id TEXT NOT NULL,
+      amount TEXT NOT NULL,
+      currency TEXT NOT NULL,
+      note TEXT NOT NULL,
+      state TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      paypal_batch_id TEXT,
+      paypal_status TEXT,
+      receiver_email TEXT,
+      payout_attempts INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS qr_tokens (
       token_hash TEXT PRIMARY KEY,
       payer_id TEXT NOT NULL,
@@ -130,6 +147,16 @@ async function createDatabase(databasePath) {
   const collectorColumns = database.exec("PRAGMA table_info(collector_profiles)")[0]?.values || [];
   if (!collectorColumns.some(([, column]) => column === "payer_id")) {
     database.run("ALTER TABLE collector_profiles ADD COLUMN payer_id TEXT");
+  }
+  if (!collectorColumns.some(([, column]) => column === "payout_email")) {
+    database.run("ALTER TABLE collector_profiles ADD COLUMN payout_email TEXT");
+  }
+  const transferColumns = database.exec("PRAGMA table_info(transfers)")[0]?.values || [];
+  if (!transferColumns.some(([, column]) => column === "receiver_email")) {
+    database.run("ALTER TABLE transfers ADD COLUMN receiver_email TEXT");
+  }
+  if (!transferColumns.some(([, column]) => column === "payout_attempts")) {
+    database.run("ALTER TABLE transfers ADD COLUMN payout_attempts INTEGER NOT NULL DEFAULT 0");
   }
   const resolutionColumns = database.exec("PRAGMA table_info(payer_resolutions)")[0]?.values || [];
   if (!resolutionColumns.some(([, column]) => column === "collector_id")) {
@@ -314,6 +341,168 @@ async function createDatabase(databasePath) {
         ]);
         return payer.id;
       });
+    },
+
+    setCollectorPayoutEmail(collectorId, email) {
+      return enqueueWrite(() => {
+        database.run("UPDATE collector_profiles SET payout_email = ? WHERE id = ?", [email, collectorId]);
+      });
+    },
+
+    getPayoutEmailForPayer(payerId) {
+      return get("SELECT payout_email FROM collector_profiles WHERE payer_id = ?", [payerId])?.payout_email
+        || null;
+    },
+
+    // Saldo en centavos = cobrado (pagada) − envíos que reservan dinero.
+    getAvailableCents(collectorId, currency) {
+      const paid = get(`
+        SELECT COALESCE(SUM(CAST(ROUND(CAST(t.amount AS REAL) * 100) AS INTEGER)), 0) AS cents
+        FROM payment_requests r
+        JOIN transactions t ON t.id = r.transaction_id
+        WHERE r.collector_id = ? AND t.currency = ? AND t.state = 'pagada'
+      `, [collectorId, currency]).cents;
+      const sent = get(`
+        SELECT COALESCE(SUM(CAST(ROUND(CAST(amount AS REAL) * 100) AS INTEGER)), 0) AS cents
+        FROM transfers
+        WHERE sender_collector_id = ? AND currency = ?
+          AND state IN ('procesando', 'completada', 'no_reclamada')
+      `, [collectorId, currency]).cents;
+      return { paidCents: paid, sentCents: sent, availableCents: paid - sent };
+    },
+
+    createTransferProposal(transfer) {
+      return enqueueWrite(() => {
+        const timestamp = now();
+        database.run(`
+          INSERT INTO transfers
+            (id, sender_collector_id, recipient_payer_id, amount, currency, note, state,
+             expires_at, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'propuesta', ?, ?, ?)
+        `, [
+          transfer.id,
+          transfer.senderCollectorId,
+          transfer.recipientPayerId,
+          transfer.amount,
+          transfer.currency,
+          transfer.note,
+          transfer.expiresAt,
+          timestamp,
+          timestamp,
+        ]);
+      });
+    },
+
+    // Consume la propuesta y reserva el saldo en una sola escritura serializada.
+    confirmTransferProposal(transferId, collectorId) {
+      return enqueueWrite(() => {
+        const transfer = get(`
+          SELECT * FROM transfers
+          WHERE id = ? AND sender_collector_id = ? AND state = 'propuesta' AND expires_at > ?
+        `, [transferId, collectorId, now()]);
+        if (!transfer) {
+          return null;
+        }
+        const amountCents = Math.round(Number.parseFloat(transfer.amount) * 100);
+        const { availableCents } = this.getAvailableCents(collectorId, transfer.currency);
+        if (amountCents > availableCents) {
+          return { insufficient: true };
+        }
+        // El receptor se fija aquí: los reintentos nunca cambian de destinatario.
+        const receiverEmail = this.getPayoutEmailForPayer(transfer.recipient_payer_id);
+        if (!receiverEmail) {
+          return { cannotReceive: true };
+        }
+        database.run(`
+          UPDATE transfers SET state = 'procesando', receiver_email = ?, updated_at = ?
+          WHERE id = ? AND state = 'propuesta'
+        `, [receiverEmail, now(), transferId]);
+        return { transfer: { ...transfer, state: "procesando" } };
+      });
+    },
+
+    // Solo avanza envíos que siguen abiertos; un estado final no se reescribe.
+    updateTransferPayout(transferId, { batchId, paypalStatus, state }) {
+      return enqueueWrite(() => {
+        database.run(`
+          UPDATE transfers
+          SET paypal_batch_id = COALESCE(?, paypal_batch_id),
+              paypal_status = COALESCE(?, paypal_status),
+              state = ?,
+              updated_at = ?
+          WHERE id = ? AND state IN ('procesando', 'no_reclamada')
+            AND (? <> 'fallida' OR paypal_batch_id IS NOT NULL OR ? IS NOT NULL)
+        `, [batchId || null, paypalStatus || null, state, now(), transferId, state, batchId || null]);
+      });
+    },
+
+    getTransferForPayout(transferId) {
+      return get("SELECT * FROM transfers WHERE id = ?", [transferId]);
+    },
+
+    // Registra un intento de creación del payout; devuelve su número o null si ya no aplica.
+    beginPayoutAttempt(transferId) {
+      return enqueueWrite(() => {
+        database.run(`
+          UPDATE transfers SET payout_attempts = payout_attempts + 1, updated_at = ?
+          WHERE id = ? AND state = 'procesando' AND paypal_batch_id IS NULL
+        `, [now(), transferId]);
+        if (database.getRowsModified() !== 1) {
+          return null;
+        }
+        return get("SELECT payout_attempts FROM transfers WHERE id = ?", [transferId]).payout_attempts;
+      });
+    },
+
+    // Solo libera el saldo si PayPal rechazó el PRIMER intento y nunca hubo lote.
+    markTransferRejected(transferId, paypalStatus) {
+      return enqueueWrite(() => {
+        database.run(`
+          UPDATE transfers SET state = 'fallida', paypal_status = ?, updated_at = ?
+          WHERE id = ? AND state = 'procesando' AND paypal_batch_id IS NULL AND payout_attempts = 1
+        `, [paypalStatus, now(), transferId]);
+      });
+    },
+
+    markTransferForReview(transferId, paypalStatus) {
+      return enqueueWrite(() => {
+        database.run(`
+          UPDATE transfers SET paypal_status = ?, updated_at = ?
+          WHERE id = ? AND state = 'procesando' AND paypal_batch_id IS NULL
+        `, [paypalStatus, now(), transferId]);
+      });
+    },
+
+    listOpenTransfers(collectorId, notUpdatedSinceMs = 30_000) {
+      const cutoff = new Date(Date.now() - notUpdatedSinceMs).toISOString();
+      return all(`
+        SELECT id FROM transfers
+        WHERE sender_collector_id = ? AND state IN ('procesando', 'no_reclamada')
+          AND (paypal_status IS NULL OR paypal_status NOT LIKE 'REVIEW_%')
+          AND updated_at <= ?
+        ORDER BY created_at
+      `, [collectorId, cutoff]).map((row) => row.id);
+    },
+
+    listCollectorTransfers(collectorId, limit = 50) {
+      return all(`
+        SELECT t.id, t.amount, t.currency, t.note, t.state, t.created_at, t.updated_at,
+          p.display_name AS recipient_name
+        FROM transfers t
+        JOIN payer_profiles p ON p.id = t.recipient_payer_id
+        WHERE t.sender_collector_id = ? AND t.state NOT IN ('propuesta')
+        ORDER BY t.created_at DESC
+        LIMIT ?
+      `, [collectorId, limit]).map((row) => ({
+        transferId: row.id,
+        state: row.state,
+        amount: row.amount,
+        currency: row.currency,
+        note: row.note,
+        recipientName: row.recipient_name,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }));
     },
 
     getCollectorSummary(collectorId) {

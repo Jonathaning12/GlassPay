@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.platform.LocalContext
@@ -82,6 +83,8 @@ fun HomeScreen(
     onSessionInvalid: (message: String) -> Unit,
     onCharge: () -> Unit,
     onOpenMyQr: () -> Unit,
+    onSend: () -> Unit,
+    onPayoutEmail: () -> Unit,
     locked: Boolean,
     amountsVisible: Boolean,
     onToggleAmounts: () -> Unit,
@@ -241,10 +244,19 @@ fun HomeScreen(
                         }
                         current.value.activity.forEach { item ->
                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("Saldo disponible", color = GlassPayColors.MutedText)
                                 Text(
-                                    maskAmount(formatMoney(item.paidTotal, item.currency), amountsVisible),
+                                    maskAmount(formatMoney(item.availableTotal, item.currency), amountsVisible),
                                     style = MaterialTheme.typography.headlineLarge,
                                     color = GlassPayColors.Success,
+                                )
+                                Text(
+                                    "Cobrado: " + maskAmount(formatMoney(item.paidTotal, item.currency), amountsVisible),
+                                    style = MaterialTheme.typography.bodyLarge,
+                                )
+                                Text(
+                                    "Enviado: " + maskAmount(formatMoney(item.sentTotal, item.currency), amountsVisible),
+                                    style = MaterialTheme.typography.bodyLarge,
                                 )
                                 Text("${item.paidCount} pagos recibidos", style = MaterialTheme.typography.bodyLarge)
                                 Text(
@@ -253,6 +265,19 @@ fun HomeScreen(
                                     color = GlassPayColors.Warning,
                                 )
                             }
+                        }
+                        HorizontalDivider(color = Color(0xFF3A4260))
+                        Text("Recibir envíos", style = MaterialTheme.typography.titleMedium)
+                        val email = current.value.payoutEmail
+                        if (email == null) {
+                            Text(
+                                "Registra tu correo de PayPal Sandbox para recibir envíos.",
+                                color = GlassPayColors.MutedText,
+                            )
+                            Button(onClick = onPayoutEmail) { Text("Registrar correo") }
+                        } else {
+                            Text("Recibes en $email", color = GlassPayColors.MutedText)
+                            OutlinedButton(onClick = onPayoutEmail) { Text("Cambiar") }
                         }
                         OutlinedButton(onClick = { reload += 1 }) { Text("Actualizar") }
                     }
@@ -300,9 +325,8 @@ fun HomeScreen(
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Button(onClick = onCharge) { Text("Cobrar") }
             OutlinedButton(onClick = onOpenMyQr) { Text("Mi QR") }
-            Button(onClick = {}, enabled = false) { Text("Enviar") }
+            Button(onClick = onSend) { Text("Enviar") }
         }
-        Text("Enviar: Próximamente", color = GlassPayColors.MutedText)
     }
     }
 }

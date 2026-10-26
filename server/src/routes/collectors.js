@@ -1,4 +1,5 @@
-const { randomUUID } = require("node:crypto");
+const { randomBytes, randomUUID } = require("node:crypto");
+const { logRef, syncTransfer } = require("../services/transfers");
 const express = require("express");
 const {
   createOpaqueToken,
@@ -69,16 +70,64 @@ function authenticateCollector(request, database) {
   return verifySessionSecret(secret, profile.session_salt, profile.session_hash) ? profile : null;
 }
 
-function createCollectorsRouter({ database, config }) {
+const PAYOUT_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function normalizePayoutEmail(value) {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const email = value.normalize("NFKC").trim().toLowerCase();
+  return email.length <= 127 && PAYOUT_EMAIL_PATTERN.test(email) ? email : null;
+}
+
+// El dueño solo ve su correo enmascarado; nadie más lo ve.
+function maskEmail(email) {
+  if (!email) {
+    return null;
+  }
+  const [user, domain] = email.split("@");
+  return `${user.slice(0, 1)}***@${domain}`;
+}
+
+function isTransferProposalId(value) {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{43,128}$/.test(value);
+}
+
+function toMovementFromTransfer(transfer) {
+  return {
+    movementId: transfer.transferId,
+    kind: "envio",
+    state: transfer.state,
+    amount: transfer.amount,
+    currency: transfer.currency,
+    concept: transfer.note,
+    payerName: transfer.recipientName,
+    createdAt: transfer.createdAt,
+    updatedAt: transfer.updatedAt,
+  };
+}
+
+function createCollectorsRouter({ database, config, paypal }) {
   const router = express.Router();
   const profileLimiter = createRateLimiter({ maxRequests: 5, windowMs: 60_000 });
   const readLimiter = createRateLimiter({ maxRequests: 60, windowMs: 60_000 });
   const contactWriteLimiter = createRateLimiter({ maxRequests: 20, windowMs: 60_000 });
   const contactResolutionLimiter = createRateLimiter({ maxRequests: 30, windowMs: 60_000 });
   const qrLimiter = createRateLimiter({ maxRequests: 20, windowMs: 60_000 });
+  const transferLimiter = createRateLimiter({ maxRequests: 10, windowMs: 60_000 });
+  const settingsLimiter = createRateLimiter({ maxRequests: 10, windowMs: 60_000 });
+
+  // Refresca hasta 3 envíos abiertos por consulta para no abusar de PayPal.
+  async function refreshOpenTransfers(collectorId) {
+    const intervalMs = (config.payouts?.refreshIntervalSeconds ?? 30) * 1000;
+    for (const transferId of database.listOpenTransfers(collectorId, intervalMs).slice(0, 3)) {
+      await syncTransfer({ database, paypal, transferId });
+    }
+  }
   const incomingWriteLimiter = createRateLimiter({ maxRequests: 20, windowMs: 60_000 });
   // Se importa aquí para evitar una dependencia circular con payers.js.
   const { sanitizeDisplayName } = require("./payers");
+  const { parseAmount, sanitizeConcept } = require("./payments");
 
   router.post("/", profileLimiter, async (request, response) => {
     const displayName = sanitizeDisplayName(request.body?.displayName);
@@ -111,9 +160,18 @@ function createCollectorsRouter({ database, config }) {
     }
 
     await database.expirePaymentRequests();
+    const activity = database.getCollectorSummary(collector.id).map((item) => {
+      const balance = database.getAvailableCents(collector.id, item.currency);
+      return {
+        ...item,
+        sentTotal: (balance.sentCents / 100).toFixed(2),
+        availableTotal: (balance.availableCents / 100).toFixed(2),
+      };
+    });
     return response.status(200).json({
       displayName: collector.display_name,
-      activity: database.getCollectorSummary(collector.id),
+      activity,
+      payoutEmail: maskEmail(collector.payout_email),
     });
   });
 
@@ -124,8 +182,113 @@ function createCollectorsRouter({ database, config }) {
     }
 
     await database.expirePaymentRequests();
-    return response.status(200).json({
-      movements: database.listCollectorMovements(collector.id),
+    await refreshOpenTransfers(collector.id);
+    const movements = [
+      ...database.listCollectorMovements(collector.id).map((movement) => ({ ...movement, kind: "cobro" })),
+      ...database.listCollectorTransfers(collector.id).map(toMovementFromTransfer),
+    ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50);
+    return response.status(200).json({ movements });
+  });
+
+  router.put("/me/payout-email", settingsLimiter, async (request, response) => {
+    const collector = authenticateCollector(request, database);
+    if (!collector) {
+      return response.status(401).json({ error: "collector authentication failed" });
+    }
+    if (request.body?.email === null) {
+      await database.setCollectorPayoutEmail(collector.id, null);
+      return response.status(200).json({ payoutEmail: null });
+    }
+    const email = normalizePayoutEmail(request.body?.email);
+    if (!email) {
+      return response.status(400).json({ error: "email is invalid" });
+    }
+    await database.setCollectorPayoutEmail(collector.id, email);
+    console.info("Payout email updated", { collectorId: collector.id });
+    return response.status(200).json({ payoutEmail: maskEmail(email) });
+  });
+
+  router.post("/me/transfers/preview", transferLimiter, async (request, response) => {
+    const collector = authenticateCollector(request, database);
+    if (!collector) {
+      return response.status(401).json({ error: "collector authentication failed" });
+    }
+    const amount = parseAmount(request.body?.amount, config.payments.maxAmount);
+    const currency = config.payments.defaultCurrency;
+    const note = request.body?.note === undefined || request.body?.note === ""
+      ? "Envío GlassPay"
+      : sanitizeConcept(request.body?.note);
+    const contact = isContactId(request.body?.contactId)
+      ? database.getCollectorContact(request.body.contactId, collector.id)
+      : null;
+    if (!amount || !note) {
+      return response.status(400).json({ error: "transfer is invalid" });
+    }
+    if (!contact) {
+      return response.status(404).json({ error: "contact not found" });
+    }
+    if (!database.getPayoutEmailForPayer(contact.payer_id)) {
+      return response.status(409).json({ error: "recipient cannot receive" });
+    }
+    const { availableCents } = database.getAvailableCents(collector.id, currency);
+    if (Math.round(Number.parseFloat(amount) * 100) > availableCents) {
+      return response.status(409).json({ error: "insufficient balance" });
+    }
+
+    const transferProposalId = randomBytes(32).toString("base64url");
+    const expiresAt = new Date(Date.now() + config.agent.proposalTtlSeconds * 1000).toISOString();
+    await database.createTransferProposal({
+      id: transferProposalId,
+      senderCollectorId: collector.id,
+      recipientPayerId: contact.payer_id,
+      amount,
+      currency,
+      note,
+      expiresAt,
+    });
+    return response.status(201).json({
+      transferProposalId,
+      amount,
+      currency,
+      note,
+      recipientName: contact.display_name,
+      expiresAt,
+    });
+  });
+
+  router.post("/me/transfers/confirm", transferLimiter, async (request, response) => {
+    const collector = authenticateCollector(request, database);
+    if (!collector) {
+      return response.status(401).json({ error: "collector authentication failed" });
+    }
+    const proposalId = request.body?.transferProposalId;
+    const result = isTransferProposalId(proposalId)
+      ? await database.confirmTransferProposal(proposalId, collector.id)
+      : null;
+    if (!result) {
+      return response.status(404).json({ error: "transfer not found" });
+    }
+    if (result.insufficient) {
+      return response.status(409).json({ error: "insufficient balance" });
+    }
+    if (result.cannotReceive) {
+      return response.status(409).json({ error: "recipient cannot receive" });
+    }
+
+    console.info("Transfer confirmed", {
+      collectorId: collector.id,
+      transfer: logRef(proposalId),
+      amount: result.transfer.amount,
+    });
+    await syncTransfer({ database, paypal, transferId: proposalId });
+    const [transfer] = database.listCollectorTransfers(collector.id)
+      .filter((item) => item.transferId === proposalId);
+    return response.status(201).json({
+      transferId: transfer.transferId,
+      state: transfer.state,
+      amount: transfer.amount,
+      currency: transfer.currency,
+      recipientName: transfer.recipientName,
     });
   });
 

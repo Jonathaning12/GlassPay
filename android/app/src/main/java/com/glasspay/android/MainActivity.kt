@@ -75,6 +75,9 @@ fun GlassPayRoot() {
     var tab by remember { mutableStateOf(AppTab.HOME) }
     var showMyQr by remember { mutableStateOf(false) }
     var showAddContact by remember { mutableStateOf(false) }
+    var showSend by remember { mutableStateOf(false) }
+    var sendContact by remember { mutableStateOf<Contact?>(null) }
+    var showPayoutEmail by remember { mutableStateOf(false) }
     var flowResolve by remember { mutableStateOf<ResolveState>(ResolveState.Scanning) }
     var flowCharge by remember { mutableStateOf<ChargeState>(ChargeState.Ready()) }
 
@@ -108,6 +111,9 @@ fun GlassPayRoot() {
         saveNotice = null
         showMyQr = false
         showAddContact = false
+        showSend = false
+        sendContact = null
+        showPayoutEmail = false
         tab = next
     }
 
@@ -270,12 +276,37 @@ fun GlassPayRoot() {
                                     onBack = { showMyQr = false },
                                     locked = lockActive,
                                 )
+                            } else if (showPayoutEmail) {
+                                PayoutEmailScreen(
+                                    session = current,
+                                    api = api,
+                                    onSessionInvalid = ::invalidateSession,
+                                    onBack = { showPayoutEmail = false },
+                                )
+                            } else if (showSend) {
+                                SendMoneyScreen(
+                                    session = current,
+                                    api = api,
+                                    initialContact = sendContact,
+                                    locked = lockActive,
+                                    onSessionInvalid = ::invalidateSession,
+                                    onBack = {
+                                        showSend = false
+                                        sendContact = null
+                                    },
+                                    onOpenMovements = { selectTab(AppTab.MOVEMENTS) },
+                                )
                             } else HomeScreen(
                                 session = current,
                                 api = api,
                                 onSessionInvalid = ::invalidateSession,
                                 onCharge = { selectTab(AppTab.CHARGE) },
                                 onOpenMyQr = { showMyQr = true },
+                                onSend = {
+                                    sendContact = null
+                                    showSend = true
+                                },
+                                onPayoutEmail = { showPayoutEmail = true },
                                 locked = lockActive,
                                 amountsVisible = amountsVisible,
                                 onToggleAmounts = { amountsVisible = !amountsVisible },
@@ -307,11 +338,28 @@ fun GlassPayRoot() {
                                     onSessionInvalid = ::invalidateSession,
                                     onDone = { showAddContact = false },
                                 )
+                            } else if (showSend) {
+                                SendMoneyScreen(
+                                    session = current,
+                                    api = api,
+                                    initialContact = sendContact,
+                                    locked = lockActive,
+                                    onSessionInvalid = ::invalidateSession,
+                                    onBack = {
+                                        showSend = false
+                                        sendContact = null
+                                    },
+                                    onOpenMovements = { selectTab(AppTab.MOVEMENTS) },
+                                )
                             } else ContactsScreen(
                                 session = current,
                                 api = api,
                                 onSessionInvalid = ::invalidateSession,
                                 onAddWithQr = { showAddContact = true },
+                                onSend = {
+                                    sendContact = it
+                                    showSend = true
+                                },
                                 onChargeContact = { resolution ->
                                     pendingContactResolution = resolution
                                     selectTab(AppTab.CHARGE)

@@ -65,11 +65,33 @@ data class CurrencyActivity(
     val paidTotal: String,
     val paidCount: Int,
     val inProgressCount: Int,
+    val sentTotal: String = "0.00",
+    val availableTotal: String = "0.00",
 )
 
 data class CollectorProfile(
     val displayName: String,
     val activity: List<CurrencyActivity>,
+    val payoutEmail: String? = null,
+)
+
+data class TransferPreview(
+    val transferProposalId: String,
+    val amount: String,
+    val currency: String,
+    val note: String?,
+    val recipientName: String,
+    val expiresAt: String,
+) {
+    override fun toString(): String = "TransferPreview(expiresAt=$expiresAt)"
+}
+
+data class TransferResult(
+    val transferId: String,
+    val state: String,
+    val amount: String,
+    val currency: String,
+    val recipientName: String,
 )
 
 data class Movement(
@@ -81,10 +103,12 @@ data class Movement(
     val payerName: String,
     val createdAt: String,
     val updatedAt: String,
+    val kind: String = "cobro",
 )
 
 enum class ApiFailureType {
     UNAUTHORIZED,
+    BAD_REQUEST,
     CONFLICT,
     NETWORK,
     TIMEOUT,
@@ -97,6 +121,7 @@ enum class ApiFailureType {
 class ApiException(
     val type: ApiFailureType,
     val httpCode: Int? = null,
+    val serverError: String? = null,
 ) : IOException()
 
 class PaymentApi(
@@ -121,6 +146,67 @@ class PaymentApi(
                 resolutionId = json.getString("resolutionId"),
                 expiresAt = json.getString("expiresAt"),
                 contactId = if (json.isNull("contactId")) null else json.optString("contactId").ifEmpty { null },
+            )
+        } catch (_: Exception) {
+            throw ApiException(ApiFailureType.INVALID_RESPONSE)
+        }
+    }
+
+    suspend fun setPayoutEmail(session: CollectorSession, email: String?): String? {
+        val body = JSONObject().put("email", email ?: JSONObject.NULL).toString()
+            .toRequestBody("application/json".toMediaType())
+        val responseBody = execute("PUT", "/api/collectors/me/payout-email", body, 15_000, session.headers())
+        try {
+            val json = JSONObject(responseBody)
+            return if (json.isNull("payoutEmail")) null else json.optString("payoutEmail").ifEmpty { null }
+        } catch (_: Exception) {
+            throw ApiException(ApiFailureType.INVALID_RESPONSE)
+        }
+    }
+
+    suspend fun previewTransfer(
+        session: CollectorSession,
+        contactId: String,
+        amount: String,
+        note: String?,
+    ): TransferPreview {
+        val payload = JSONObject().put("contactId", contactId).put("amount", amount.toDouble())
+        if (note != null) payload.put("note", note)
+        val responseBody = execute(
+            "POST",
+            "/api/collectors/me/transfers/preview",
+            payload.toString().toRequestBody("application/json".toMediaType()),
+            15_000,
+            session.headers(),
+        )
+        try {
+            val json = JSONObject(responseBody)
+            return TransferPreview(
+                transferProposalId = json.getString("transferProposalId"),
+                amount = json.get("amount").toString(),
+                currency = json.getString("currency"),
+                note = if (json.isNull("note")) null else json.optString("note").ifEmpty { null },
+                recipientName = json.getString("recipientName"),
+                expiresAt = json.getString("expiresAt"),
+            )
+        } catch (_: Exception) {
+            throw ApiException(ApiFailureType.INVALID_RESPONSE)
+        }
+    }
+
+    /** Sin reintentos automáticos, igual que /agent/confirm. */
+    suspend fun confirmTransfer(session: CollectorSession, transferProposalId: String): TransferResult {
+        val body = JSONObject().put("transferProposalId", transferProposalId).toString()
+            .toRequestBody("application/json".toMediaType())
+        val responseBody = execute("POST", "/api/collectors/me/transfers/confirm", body, 30_000, session.headers())
+        try {
+            val json = JSONObject(responseBody)
+            return TransferResult(
+                transferId = json.getString("transferId"),
+                state = json.getString("state"),
+                amount = json.get("amount").toString(),
+                currency = json.getString("currency"),
+                recipientName = json.getString("recipientName"),
             )
         } catch (_: Exception) {
             throw ApiException(ApiFailureType.INVALID_RESPONSE)
@@ -298,8 +384,11 @@ class PaymentApi(
                         paidTotal = item.get("paidTotal").toString(),
                         paidCount = item.getInt("paidCount"),
                         inProgressCount = item.getInt("inProgressCount"),
+                        sentTotal = item.optionalAmount("sentTotal"),
+                        availableTotal = item.optionalAmount("availableTotal"),
                     )
                 },
+                payoutEmail = if (json.isNull("payoutEmail")) null else json.optString("payoutEmail").ifEmpty { null },
             )
         } catch (_: Exception) {
             throw ApiException(ApiFailureType.INVALID_RESPONSE)
@@ -321,6 +410,7 @@ class PaymentApi(
                     payerName = item.getString("payerName"),
                     createdAt = item.getString("createdAt"),
                     updatedAt = item.getString("updatedAt"),
+                    kind = item.optString("kind", "cobro").ifEmpty { "cobro" },
                 )
             }
         } catch (_: Exception) {
@@ -363,6 +453,7 @@ class PaymentApi(
         when (method) {
             "POST" -> requestBuilder.post(requireNotNull(body))
             "DELETE" -> requestBuilder.delete()
+            "PUT" -> requestBuilder.put(requireNotNull(body))
             else -> requestBuilder.get()
         }
         val requestClient = client.newBuilder()
@@ -389,6 +480,7 @@ class PaymentApi(
                     val responseBody = it.body?.string().orEmpty()
                     if (!it.isSuccessful) {
                         val type = when (it.code) {
+                            400 -> ApiFailureType.BAD_REQUEST
                             401 -> ApiFailureType.UNAUTHORIZED
                             409 -> ApiFailureType.CONFLICT
                             404 -> ApiFailureType.NOT_FOUND
@@ -396,7 +488,10 @@ class PaymentApi(
                             in 500..599 -> ApiFailureType.SERVER
                             else -> ApiFailureType.INVALID_RESPONSE
                         }
-                        continuation.resumeWithException(ApiException(type, it.code))
+                        val serverError = runCatching {
+                            JSONObject(responseBody).optString("error").ifEmpty { null }
+                        }.getOrNull()
+                        continuation.resumeWithException(ApiException(type, it.code, serverError))
                     } else {
                         continuation.resume(responseBody)
                     }
@@ -404,4 +499,8 @@ class PaymentApi(
             }
         })
     }
+}
+
+private fun JSONObject.optionalAmount(name: String): String {
+    return if (has(name) && !isNull(name)) get(name).toString() else "0.00"
 }

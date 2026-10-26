@@ -107,11 +107,11 @@ fun MovementsScreen(
 }
 
 @Composable
-private fun StatusChip(state: String) {
-    val color = statusColor(movementStatusKind(state))
+private fun StatusChip(state: String, kind: String) {
+    val color = statusColor(movementStatusKind(state, kind))
     Surface(shape = RoundedCornerShape(50), color = color.copy(alpha = 0.2f)) {
         Text(
-            movementStatusLabel(state),
+            movementStatusLabel(state, kind),
             color = color,
             style = MaterialTheme.typography.labelLarge,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
@@ -126,13 +126,18 @@ private fun MovementCard(movement: Movement, amountsVisible: Boolean, onClick: (
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(movement.concept, style = MaterialTheme.typography.titleMedium)
-            Text("a ${movement.payerName}", color = GlassPayColors.MutedText)
+            if (movement.kind == "envio") {
+                Text("Enviado a ${movement.payerName}", style = MaterialTheme.typography.titleMedium)
+                if (movement.concept.isNotBlank()) Text(movement.concept, color = GlassPayColors.MutedText)
+            } else {
+                Text(movement.concept, style = MaterialTheme.typography.titleMedium)
+                Text("a ${movement.payerName}", color = GlassPayColors.MutedText)
+            }
             Text(
-                maskAmount(formatMoney(movement.amount, movement.currency), amountsVisible),
+                signedAmount(movement, amountsVisible),
                 style = MaterialTheme.typography.titleLarge,
             )
-            StatusChip(movement.state)
+            StatusChip(movement.state, movement.kind)
             Text(formatMovementDate(movement.createdAt), color = GlassPayColors.MutedText)
         }
     }
@@ -146,12 +151,15 @@ private fun MovementDetail(movement: Movement, amountsVisible: Boolean, onBack: 
     ) {
         Button(onClick = onBack) { Text("Volver") }
         Text(
-            maskAmount(formatMoney(movement.amount, movement.currency), amountsVisible),
+            signedAmount(movement, amountsVisible),
             style = MaterialTheme.typography.displaySmall,
         )
-        StatusChip(movement.state)
-        Text("Pagador: ${movement.payerName}", style = MaterialTheme.typography.bodyLarge)
-        Text("Concepto: ${movement.concept}", style = MaterialTheme.typography.bodyLarge)
+        StatusChip(movement.state, movement.kind)
+        Text(
+            (if (movement.kind == "envio") "Destinatario: " else "Pagador: ") + movement.payerName,
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        Text((if (movement.kind == "envio") "Nota: " else "Concepto: ") + movement.concept, style = MaterialTheme.typography.bodyLarge)
         Text("Creado: ${formatMovementDate(movement.createdAt)}", style = MaterialTheme.typography.bodyLarge)
         Text("Actualizado: ${formatMovementDate(movement.updatedAt)}", style = MaterialTheme.typography.bodyLarge)
         Text(
@@ -159,4 +167,9 @@ private fun MovementDetail(movement: Movement, amountsVisible: Boolean, onBack: 
             color = GlassPayColors.MutedText,
         )
     }
+}
+
+private fun signedAmount(movement: Movement, visible: Boolean): String {
+    val text = maskAmount(formatMoney(movement.amount, movement.currency), visible)
+    return if (movement.kind == "envio") "−$text" else text
 }

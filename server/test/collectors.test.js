@@ -22,14 +22,39 @@ async function createTestEnvironment() {
       corsOrigin: "http://localhost:5173",
     },
     agent: { proposalTtlSeconds: 120 },
+    payouts: { refreshIntervalSeconds: 0 },
     paypal: { returnUrl: "http://localhost/return", cancelUrl: "http://localhost/cancel" },
   };
   const orderIds = [];
+  const payouts = {
+    calls: [],
+    // "ok" | "network" | "rejected"; itemStatus lo devuelve getPayout.
+    createMode: "ok",
+    itemStatus: "SUCCESS",
+  };
   const paypal = {
     async createOrder({ referenceId }) {
       const orderId = `order-${referenceId}`;
       orderIds.push(orderId);
       return { orderId, approvalUrl: "https://www.sandbox.paypal.com/approve/test" };
+    },
+    async createPayout(request) {
+      payouts.calls.push(request);
+      if (payouts.delayMs) {
+        await new Promise((resolve) => setTimeout(resolve, payouts.delayMs));
+      }
+      if (payouts.createMode === "network") {
+        throw new Error("network down");
+      }
+      if (payouts.createMode === "rejected") {
+        const error = new Error("PayPal request failed with status 422");
+        error.status = 422;
+        throw error;
+      }
+      return { batchId: `batch-${request.transferId.slice(0, 8)}`, batchStatus: "PENDING" };
+    },
+    async getPayout() {
+      return { batchStatus: "SUCCESS", itemStatus: payouts.itemStatus };
     },
   };
   const agent = {
@@ -49,6 +74,8 @@ async function createTestEnvironment() {
     baseUrl: `http://127.0.0.1:${server.address().port}`,
     database,
     orderIds,
+    payouts,
+    paypal,
     close: async () => {
       await new Promise((resolve) => server.close(resolve));
       await database.close();
@@ -138,7 +165,7 @@ test("collector profile returns name and empty activity for a new collector", as
     const collector = await createCollector(environment.baseUrl);
     const response = await getMe(environment.baseUrl, collector.headers);
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { displayName: "Rodrigo", activity: [] });
+    assert.deepEqual(await response.json(), { displayName: "Rodrigo", activity: [], payoutEmail: null });
   } finally {
     await environment.close();
   }
@@ -341,7 +368,7 @@ test("activity counts a pending charge as in progress", async () => {
     await createChargeFor(environment, collector);
     const response = await getMe(environment.baseUrl, collector.headers);
     assert.deepEqual((await response.json()).activity, [
-      { currency: "MXN", paidTotal: "0.00", paidCount: 0, inProgressCount: 1 },
+      { currency: "MXN", paidTotal: "0.00", paidCount: 0, inProgressCount: 1, sentTotal: "0.00", availableTotal: "0.00" },
     ]);
   } finally {
     await environment.close();
@@ -357,7 +384,7 @@ test("activity sums paid charges only after the transaction is paid", async () =
     await environment.database.transitionState(transaction.id, "pagada");
     const response = await getMe(environment.baseUrl, collector.headers);
     assert.deepEqual((await response.json()).activity, [
-      { currency: "MXN", paidTotal: "150.00", paidCount: 1, inProgressCount: 0 },
+      { currency: "MXN", paidTotal: "150.00", paidCount: 1, inProgressCount: 0, sentTotal: "0.00", availableTotal: "150.00" },
     ]);
   } finally {
     await environment.close();
@@ -885,4 +912,431 @@ test("a legacy collector without payer profile gets one when issuing a QR", asyn
   } finally {
     await environment.close();
   }
+});
+
+const { syncTransfer, transferStateFromPayPal } = require("../src/services/transfers");
+
+const FRIEND_EMAIL = "luis.sandbox@example.com";
+
+async function putJson(url, body, headers = {}) {
+  return fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+}
+
+// "me" cobra 150 pagados a otra persona y tiene a "friend" (con correo de cobro) como contacto.
+async function createTransferScenario(environment, { friendEmail = FRIEND_EMAIL } = {}) {
+  const me = await createCollector(environment.baseUrl, "Rodrigo");
+  const friend = await createCollector(environment.baseUrl, "Luis");
+  const customer = await createCollector(environment.baseUrl, "Cliente");
+  await chargeCollector(environment, me, customer);
+  const transaction = environment.database.findByOrderId(environment.orderIds.at(-1));
+  await environment.database.transitionState(transaction.id, "pagada");
+  if (friendEmail) {
+    await putJson(`${environment.baseUrl}/api/collectors/me/payout-email`, { email: friendEmail }, friend.headers);
+  }
+  const qr = await (await issueCollectorQr(environment.baseUrl, friend.headers)).json();
+  const resolution = await (await postJson(
+    `${environment.baseUrl}/api/payers/resolve`, { token: qr.token }, me.headers,
+  )).json();
+  const contact = await (await saveContact(environment.baseUrl, me.headers, resolution.resolutionId)).json();
+  return { me, friend, customer, contact };
+}
+
+async function previewTransfer(environment, collector, body) {
+  return postJson(`${environment.baseUrl}/api/collectors/me/transfers/preview`, body, collector.headers);
+}
+
+async function confirmTransfer(environment, collector, transferProposalId) {
+  return postJson(`${environment.baseUrl}/api/collectors/me/transfers/confirm`, { transferProposalId }, collector.headers);
+}
+
+async function activityOf(environment, collector) {
+  return (await (await getMe(environment.baseUrl, collector.headers)).json()).activity[0];
+}
+
+async function movementsOf(environment, collector) {
+  return (await (await getMe(environment.baseUrl, collector.headers, "/movements")).json()).movements;
+}
+
+test("payout email is validated, stored and returned masked to its owner only", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const collector = await createCollector(environment.baseUrl);
+    const url = `${environment.baseUrl}/api/collectors/me/payout-email`;
+    assert.equal((await putJson(url, { email: "no-es-correo" }, collector.headers)).status, 400);
+    const response = await putJson(url, { email: "  Rodrigo@Example.com " }, collector.headers);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { payoutEmail: "r***@example.com" });
+    assert.equal((await (await getMe(environment.baseUrl, collector.headers)).json()).payoutEmail, "r***@example.com");
+  } finally {
+    await environment.close();
+  }
+});
+
+test("payout email requires a session", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const response = await putJson(`${environment.baseUrl}/api/collectors/me/payout-email`, { email: "a@b.co" });
+    assert.equal(response.status, 401);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("transfer endpoints require a session", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const preview = await postJson(`${environment.baseUrl}/api/collectors/me/transfers/preview`, {});
+    const confirm = await postJson(`${environment.baseUrl}/api/collectors/me/transfers/confirm`, {});
+    assert.deepEqual([preview.status, confirm.status], [401, 401]);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a transfer to a contact without payout email is rejected", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me, contact } = await createTransferScenario(environment, { friendEmail: null });
+    const response = await previewTransfer(environment, me, { contactId: contact.contactId, amount: 50 });
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: "recipient cannot receive" });
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a transfer above the available balance is rejected at preview", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me, contact } = await createTransferScenario(environment);
+    const response = await previewTransfer(environment, me, { contactId: contact.contactId, amount: 150.01 });
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: "insufficient balance" });
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a transfer with an invalid amount is rejected", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me, contact } = await createTransferScenario(environment);
+    for (const amount of [0, -5, "abc", 1001, "10.123"]) {
+      const response = await previewTransfer(environment, me, { contactId: contact.contactId, amount });
+      assert.equal(response.status, 400, `amount ${amount}`);
+    }
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a transfer to someone else's contact is rejected", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { contact } = await createTransferScenario(environment);
+    const intruder = await createCollector(environment.baseUrl, "Intruso");
+    const response = await previewTransfer(environment, intruder, { contactId: contact.contactId, amount: 10 });
+    assert.equal(response.status, 404);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a confirmed transfer sends a payout and reserves the balance without exposing the email", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me, contact } = await createTransferScenario(environment);
+    const previewResponse = await previewTransfer(environment, me, {
+      contactId: contact.contactId,
+      amount: 100,
+      note: "Mi parte del taxi",
+    });
+    assert.equal(previewResponse.status, 201);
+    const preview = await previewResponse.json();
+    assert.equal(preview.recipientName, "Luis");
+    assert.equal(preview.amount, "100.00");
+    assert.doesNotMatch(JSON.stringify(preview), /example\.com|@/);
+
+    const confirmation = await confirmTransfer(environment, me, preview.transferProposalId);
+    assert.equal(confirmation.status, 201);
+    const transfer = await confirmation.json();
+    assert.equal(transfer.state, "procesando");
+    assert.doesNotMatch(JSON.stringify(transfer), /example\.com|@/);
+
+    assert.equal(environment.payouts.calls.length, 1);
+    assert.equal(environment.payouts.calls[0].receiverEmail, FRIEND_EMAIL);
+    assert.equal(environment.payouts.calls[0].transferId, preview.transferProposalId);
+    assert.equal(environment.payouts.calls[0].amount, "100.00");
+
+    const activity = await activityOf(environment, me);
+    assert.equal(activity.sentTotal, "100.00");
+    assert.equal(activity.availableTotal, "50.00");
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a transfer proposal can be confirmed only once", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me, contact } = await createTransferScenario(environment);
+    const preview = await (await previewTransfer(environment, me, { contactId: contact.contactId, amount: 10 })).json();
+    assert.equal((await confirmTransfer(environment, me, preview.transferProposalId)).status, 201);
+    assert.equal((await confirmTransfer(environment, me, preview.transferProposalId)).status, 404);
+    assert.equal(environment.payouts.calls.length, 1);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("another collector cannot confirm my transfer proposal nor consume it", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me, contact } = await createTransferScenario(environment);
+    const intruder = await createCollector(environment.baseUrl, "Intruso");
+    const preview = await (await previewTransfer(environment, me, { contactId: contact.contactId, amount: 10 })).json();
+    assert.equal((await confirmTransfer(environment, intruder, preview.transferProposalId)).status, 404);
+    assert.equal((await confirmTransfer(environment, me, preview.transferProposalId)).status, 201);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("two proposals cannot together exceed the balance", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me, contact } = await createTransferScenario(environment);
+    const first = await (await previewTransfer(environment, me, { contactId: contact.contactId, amount: 100 })).json();
+    const second = await (await previewTransfer(environment, me, { contactId: contact.contactId, amount: 100 })).json();
+    assert.equal((await confirmTransfer(environment, me, first.transferProposalId)).status, 201);
+    const response = await confirmTransfer(environment, me, second.transferProposalId);
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: "insufficient balance" });
+    assert.equal(environment.payouts.calls.length, 1);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("an expired transfer proposal returns the generic error", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me, friend } = await createTransferScenario(environment);
+    const proposalId = "p".repeat(43);
+    await environment.database.createTransferProposal({
+      id: proposalId,
+      senderCollectorId: me.collectorId,
+      recipientPayerId: environment.database.getCollectorProfile(friend.collectorId).payer_id,
+      amount: "10.00",
+      currency: "MXN",
+      note: "Envío GlassPay",
+      expiresAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    assert.equal((await confirmTransfer(environment, me, proposalId)).status, 404);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a payout rejected by PayPal marks the transfer failed and releases the balance", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me, contact } = await createTransferScenario(environment);
+    environment.payouts.createMode = "rejected";
+    const preview = await (await previewTransfer(environment, me, { contactId: contact.contactId, amount: 100 })).json();
+    const transfer = await (await confirmTransfer(environment, me, preview.transferProposalId)).json();
+    assert.equal(transfer.state, "fallida");
+    assert.equal((await activityOf(environment, me)).availableTotal, "150.00");
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a network error keeps the transfer reserved and retries with the same idempotency key", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me, contact } = await createTransferScenario(environment);
+    environment.payouts.createMode = "network";
+    const preview = await (await previewTransfer(environment, me, { contactId: contact.contactId, amount: 100 })).json();
+    const transfer = await (await confirmTransfer(environment, me, preview.transferProposalId)).json();
+    assert.equal(transfer.state, "procesando");
+    assert.equal((await activityOf(environment, me)).availableTotal, "50.00");
+
+    environment.payouts.createMode = "ok";
+    await movementsOf(environment, me);
+    assert.equal(environment.payouts.calls.length, 2);
+    assert.equal(environment.payouts.calls[1].transferId, environment.payouts.calls[0].transferId);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("movements show the transfer as completed once PayPal reports success", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me, contact } = await createTransferScenario(environment);
+    const preview = await (await previewTransfer(environment, me, {
+      contactId: contact.contactId, amount: 40, note: "Pizza",
+    })).json();
+    await confirmTransfer(environment, me, preview.transferProposalId);
+    const movements = await movementsOf(environment, me);
+    const sent = movements.find((movement) => movement.kind === "envio");
+    assert.equal(sent.state, "completada");
+    assert.equal(sent.payerName, "Luis");
+    assert.equal(sent.concept, "Pizza");
+    assert.ok(movements.some((movement) => movement.kind === "cobro"));
+    assert.doesNotMatch(JSON.stringify(movements), /example\.com|@/);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a returned payout releases the balance", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me, contact } = await createTransferScenario(environment);
+    environment.payouts.itemStatus = "RETURNED";
+    const preview = await (await previewTransfer(environment, me, { contactId: contact.contactId, amount: 100 })).json();
+    await confirmTransfer(environment, me, preview.transferProposalId);
+    await movementsOf(environment, me);
+    assert.equal((await activityOf(environment, me)).availableTotal, "150.00");
+  } finally {
+    await environment.close();
+  }
+});
+
+test("an unclaimed payout keeps the balance reserved", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me, contact } = await createTransferScenario(environment);
+    environment.payouts.itemStatus = "UNCLAIMED";
+    const preview = await (await previewTransfer(environment, me, { contactId: contact.contactId, amount: 100 })).json();
+    await confirmTransfer(environment, me, preview.transferProposalId);
+    const sent = (await movementsOf(environment, me)).find((movement) => movement.kind === "envio");
+    assert.equal(sent.state, "no_reclamada");
+    assert.equal((await activityOf(environment, me)).availableTotal, "50.00");
+  } finally {
+    await environment.close();
+  }
+});
+
+// Deja un envío confirmado en "procesando" sin lote (primer intento con error de red).
+async function confirmWithNetworkFailure(environment, amount = 100) {
+  const scenario = await createTransferScenario(environment);
+  environment.payouts.createMode = "network";
+  const preview = await (await previewTransfer(environment, scenario.me, {
+    contactId: scenario.contact.contactId,
+    amount,
+  })).json();
+  await confirmTransfer(environment, scenario.me, preview.transferProposalId);
+  return { ...scenario, transferId: preview.transferProposalId };
+}
+
+test("a rejection on a retry keeps the balance reserved for manual review", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me, transferId } = await confirmWithNetworkFailure(environment);
+    environment.payouts.createMode = "rejected";
+    await syncTransfer({ database: environment.database, paypal: environment.paypal, transferId });
+    const transfer = environment.database.getTransferForPayout(transferId);
+    assert.equal(transfer.state, "procesando");
+    assert.equal(transfer.paypal_status, "REVIEW_HTTP_422");
+    assert.equal((await activityOf(environment, me)).availableTotal, "50.00");
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a transfer under review is not retried automatically", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me, transferId } = await confirmWithNetworkFailure(environment);
+    environment.payouts.createMode = "rejected";
+    await syncTransfer({ database: environment.database, paypal: environment.paypal, transferId });
+    const callsBefore = environment.payouts.calls.length;
+    environment.payouts.createMode = "ok";
+    await movementsOf(environment, me);
+    assert.equal(environment.payouts.calls.length, callsBefore);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("concurrent syncs of the same transfer call PayPal only once", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { transferId } = await confirmWithNetworkFailure(environment);
+    const callsBefore = environment.payouts.calls.length;
+    environment.payouts.createMode = "ok";
+    environment.payouts.delayMs = 50;
+    const sync = () => syncTransfer({ database: environment.database, paypal: environment.paypal, transferId });
+    await Promise.all([sync(), sync(), sync()]);
+    assert.equal(environment.payouts.calls.length, callsBefore + 1);
+    assert.ok(environment.database.getTransferForPayout(transferId).paypal_batch_id);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a late rejection cannot mark as failed a transfer that already has a PayPal batch", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me, transferId } = await confirmWithNetworkFailure(environment);
+    environment.payouts.createMode = "ok";
+    await syncTransfer({ database: environment.database, paypal: environment.paypal, transferId });
+    await environment.database.markTransferRejected(transferId, "HTTP_400");
+    assert.notEqual(environment.database.getTransferForPayout(transferId).state, "fallida");
+    assert.equal((await activityOf(environment, me)).availableTotal, "50.00");
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a retry keeps the receiver fixed at confirmation even if the recipient changes their email", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { friend, transferId } = await confirmWithNetworkFailure(environment);
+    await putJson(
+      `${environment.baseUrl}/api/collectors/me/payout-email`,
+      { email: "otro.correo@example.com" },
+      friend.headers,
+    );
+    environment.payouts.createMode = "ok";
+    await syncTransfer({ database: environment.database, paypal: environment.paypal, transferId });
+    assert.equal(environment.payouts.calls.at(-1).receiverEmail, FRIEND_EMAIL);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("confirming fails if the recipient removed their email after the preview", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me, friend, contact } = await createTransferScenario(environment);
+    const preview = await (await previewTransfer(environment, me, { contactId: contact.contactId, amount: 10 })).json();
+    await putJson(`${environment.baseUrl}/api/collectors/me/payout-email`, { email: null }, friend.headers);
+    const response = await confirmTransfer(environment, me, preview.transferProposalId);
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: "recipient cannot receive" });
+    assert.equal(environment.payouts.calls.length, 0);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("PayPal payout statuses map to GlassPay transfer states", () => {
+  assert.equal(transferStateFromPayPal({ batchStatus: "SUCCESS", itemStatus: "SUCCESS" }), "completada");
+  assert.equal(transferStateFromPayPal({ batchStatus: "SUCCESS", itemStatus: "UNCLAIMED" }), "no_reclamada");
+  for (const itemStatus of ["FAILED", "RETURNED", "REFUNDED", "REVERSED", "BLOCKED"]) {
+    assert.equal(transferStateFromPayPal({ batchStatus: "SUCCESS", itemStatus }), "fallida", itemStatus);
+  }
+  for (const itemStatus of ["PENDING", "ONHOLD", null]) {
+    assert.equal(transferStateFromPayPal({ batchStatus: "PROCESSING", itemStatus }), "procesando", String(itemStatus));
+  }
+  assert.equal(transferStateFromPayPal({ batchStatus: "DENIED", itemStatus: null }), "fallida");
+  assert.equal(transferStateFromPayPal({ batchStatus: "CANCELED", itemStatus: null }), "fallida");
 });

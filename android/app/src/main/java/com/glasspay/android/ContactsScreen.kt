@@ -42,6 +42,7 @@ fun ContactsScreen(
     onSessionInvalid: (message: String) -> Unit,
     onChargeContact: (PayerResolution) -> Unit,
     onAddWithQr: () -> Unit,
+    onSend: (Contact) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var reload by remember { mutableStateOf(0) }
@@ -169,6 +170,7 @@ fun ContactsScreen(
                             busy = busyContactId == contact.contactId,
                             enabled = busyContactId == null,
                             onCharge = { chargeContact(contact) },
+                            onSend = { onSend(contact) },
                             onDelete = { pendingDelete = contact },
                         )
                     }
@@ -184,33 +186,37 @@ private fun ContactRow(
     busy: Boolean,
     enabled: Boolean,
     onCharge: () -> Unit,
+    onSend: () -> Unit,
     onDelete: () -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Box(
-                modifier = Modifier.size(44.dp).background(MaterialTheme.colorScheme.primary, CircleShape),
-                contentAlignment = Alignment.Center,
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text(contact.displayName.trim().take(1).uppercase(), style = MaterialTheme.typography.titleMedium)
+                Box(
+                    modifier = Modifier.size(44.dp).background(MaterialTheme.colorScheme.primary, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(contact.displayName.trim().take(1).uppercase(), style = MaterialTheme.typography.titleMedium)
+                }
+                Text(
+                    contact.displayName,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                if (busy) CircularProgressIndicator(modifier = Modifier.size(28.dp))
             }
-            Text(
-                contact.displayName,
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f),
-            )
-            if (busy) {
-                CircularProgressIndicator(modifier = Modifier.size(28.dp))
-            } else {
-                Button(onClick = onCharge, enabled = enabled) { Text("Cobrar") }
-                TextButton(onClick = onDelete, enabled = enabled) { Text("Eliminar") }
+            if (!busy) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Button(onClick = onCharge, enabled = enabled) { Text("Cobrar") }
+                    OutlinedButton(onClick = onSend, enabled = enabled) { Text("Enviar") }
+                    TextButton(onClick = onDelete, enabled = enabled) { Text("Eliminar") }
+                }
             }
         }
     }

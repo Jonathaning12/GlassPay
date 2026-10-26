@@ -1007,6 +1007,7 @@ internal fun vibrate(context: android.content.Context) {
 private fun ApiFailureType.toResolveFailureType(): ResolveFailureType {
     return when (this) {
         ApiFailureType.UNAUTHORIZED,
+        ApiFailureType.BAD_REQUEST -> ResolveFailureType.INVALID_RESPONSE
         ApiFailureType.CONFLICT -> ResolveFailureType.OWN_QR
         ApiFailureType.NETWORK -> ResolveFailureType.NETWORK
         ApiFailureType.TIMEOUT -> ResolveFailureType.TIMEOUT
@@ -1020,6 +1021,7 @@ private fun ApiFailureType.toResolveFailureType(): ResolveFailureType {
 private fun ApiFailureType.toChargeFailureType(): ChargeFailureType {
     return when (this) {
         ApiFailureType.UNAUTHORIZED,
+        ApiFailureType.BAD_REQUEST,
         ApiFailureType.CONFLICT -> ChargeFailureType.SERVER
         ApiFailureType.NETWORK -> ChargeFailureType.NETWORK
         ApiFailureType.TIMEOUT -> ChargeFailureType.TIMEOUT
