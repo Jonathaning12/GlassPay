@@ -62,6 +62,14 @@ async function createDatabase(databasePath) {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS collector_contacts (
+      id TEXT PRIMARY KEY,
+      collector_id TEXT NOT NULL,
+      payer_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE (collector_id, payer_id)
+    );
+
     CREATE TABLE IF NOT EXISTS qr_tokens (
       token_hash TEXT PRIMARY KEY,
       payer_id TEXT NOT NULL,
@@ -327,6 +335,92 @@ async function createDatabase(databasePath) {
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       }));
+    },
+
+    // Resolución vigente del cobrador, aunque ya se haya usado para cobrar:
+    // permite guardar como contacto al pagador recién cobrado.
+    findCollectorResolution(hash, collectorId) {
+      return get(`
+        SELECT r.payer_id, p.display_name
+        FROM payer_resolutions r
+        JOIN payer_profiles p ON p.id = r.payer_id
+        WHERE r.resolution_hash = ?
+          AND r.collector_id = ?
+          AND r.expires_at > ?
+      `, [hash, collectorId, now()]);
+    },
+
+    saveCollectorContact(contact, maxContacts) {
+      return enqueueWrite(() => {
+        const findContact = () => get(`
+          SELECT c.id, c.created_at, p.display_name
+          FROM collector_contacts c
+          JOIN payer_profiles p ON p.id = c.payer_id
+          WHERE c.collector_id = ? AND c.payer_id = ?
+        `, [contact.collectorId, contact.payerId]);
+        const existing = findContact();
+        if (!existing) {
+          const { count } = get(
+            "SELECT COUNT(*) AS count FROM collector_contacts WHERE collector_id = ?",
+            [contact.collectorId],
+          );
+          if (count >= maxContacts) {
+            return { limitReached: true };
+          }
+        }
+        database.run(`
+          INSERT OR IGNORE INTO collector_contacts (id, collector_id, payer_id, created_at)
+          VALUES (?, ?, ?, ?)
+        `, [contact.id, contact.collectorId, contact.payerId, now()]);
+        const created = database.getRowsModified() === 1;
+        const row = findContact();
+        if (!row) {
+          return null;
+        }
+        return {
+          created,
+          contact: { contactId: row.id, displayName: row.display_name, createdAt: row.created_at },
+        };
+      });
+    },
+
+    listCollectorContacts(collectorId) {
+      return all(`
+        SELECT c.id, c.created_at, p.display_name
+        FROM collector_contacts c
+        JOIN payer_profiles p ON p.id = c.payer_id
+        WHERE c.collector_id = ?
+        ORDER BY p.display_name COLLATE NOCASE, c.created_at
+        LIMIT 200
+      `, [collectorId]).map((row) => ({
+        contactId: row.id,
+        displayName: row.display_name,
+        createdAt: row.created_at,
+      }));
+    },
+
+    getCollectorContact(contactId, collectorId) {
+      return get(`
+        SELECT c.id, c.payer_id, p.display_name
+        FROM collector_contacts c
+        JOIN payer_profiles p ON p.id = c.payer_id
+        WHERE c.id = ? AND c.collector_id = ?
+      `, [contactId, collectorId]);
+    },
+
+    findContactIdForPayer(collectorId, payerId) {
+      return get(`
+        SELECT id FROM collector_contacts WHERE collector_id = ? AND payer_id = ?
+      `, [collectorId, payerId])?.id || null;
+    },
+
+    deleteCollectorContact(contactId, collectorId) {
+      return enqueueWrite(() => {
+        database.run(`
+          DELETE FROM collector_contacts WHERE id = ? AND collector_id = ?
+        `, [contactId, collectorId]);
+        return database.getRowsModified() === 1;
+      });
     },
 
     createQrToken(token) {

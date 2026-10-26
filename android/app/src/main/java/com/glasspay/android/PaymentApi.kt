@@ -18,6 +18,13 @@ data class PayerResolution(
     val displayName: String,
     val resolutionId: String,
     val expiresAt: String,
+    val contactId: String? = null,
+)
+
+data class Contact(
+    val contactId: String,
+    val displayName: String,
+    val createdAt: String,
 )
 
 data class InterpretResult(
@@ -62,6 +69,7 @@ data class Movement(
 
 enum class ApiFailureType {
     UNAUTHORIZED,
+    CONFLICT,
     NETWORK,
     TIMEOUT,
     NOT_FOUND,
@@ -96,11 +104,65 @@ class PaymentApi(
                 displayName = json.getString("displayName"),
                 resolutionId = json.getString("resolutionId"),
                 expiresAt = json.getString("expiresAt"),
+                contactId = if (json.isNull("contactId")) null else json.optString("contactId").ifEmpty { null },
             )
         } catch (_: Exception) {
             throw ApiException(ApiFailureType.INVALID_RESPONSE)
         }
     }
+
+    suspend fun listContacts(session: CollectorSession): List<Contact> {
+        val responseBody = execute("GET", "/api/collectors/me/contacts", null, 15_000, session.headers())
+        try {
+            val items = JSONObject(responseBody).getJSONArray("contacts")
+            return (0 until items.length()).map { index -> parseContact(items.getJSONObject(index)) }
+        } catch (_: Exception) {
+            throw ApiException(ApiFailureType.INVALID_RESPONSE)
+        }
+    }
+
+    suspend fun saveContact(session: CollectorSession, resolutionId: String): Contact {
+        val body = JSONObject().put("resolutionId", resolutionId).toString()
+            .toRequestBody("application/json".toMediaType())
+        val responseBody = execute("POST", "/api/collectors/me/contacts", body, 15_000, session.headers())
+        try {
+            return parseContact(JSONObject(responseBody))
+        } catch (_: Exception) {
+            throw ApiException(ApiFailureType.INVALID_RESPONSE)
+        }
+    }
+
+    suspend fun deleteContact(session: CollectorSession, contactId: String) {
+        execute("DELETE", "/api/collectors/me/contacts/$contactId", null, 15_000, session.headers())
+    }
+
+    suspend fun contactResolution(session: CollectorSession, contactId: String): PayerResolution {
+        val body = JSONObject().toString().toRequestBody("application/json".toMediaType())
+        val responseBody = execute(
+            "POST",
+            "/api/collectors/me/contacts/$contactId/resolution",
+            body,
+            15_000,
+            session.headers(),
+        )
+        try {
+            val json = JSONObject(responseBody)
+            return PayerResolution(
+                displayName = json.getString("displayName"),
+                resolutionId = json.getString("resolutionId"),
+                expiresAt = json.getString("expiresAt"),
+                contactId = if (json.isNull("contactId")) null else json.optString("contactId").ifEmpty { null },
+            )
+        } catch (_: Exception) {
+            throw ApiException(ApiFailureType.INVALID_RESPONSE)
+        }
+    }
+
+    private fun parseContact(json: JSONObject) = Contact(
+        contactId = json.getString("contactId"),
+        displayName = json.getString("displayName"),
+        createdAt = json.getString("createdAt"),
+    )
 
     suspend fun interpret(
         session: CollectorSession,
@@ -243,10 +305,10 @@ class PaymentApi(
             .url("$baseUrl$path")
             .header("Accept", "application/json")
         headers.forEach { (name, value) -> requestBuilder.header(name, value) }
-        if (method == "POST") {
-            requestBuilder.post(requireNotNull(body))
-        } else {
-            requestBuilder.get()
+        when (method) {
+            "POST" -> requestBuilder.post(requireNotNull(body))
+            "DELETE" -> requestBuilder.delete()
+            else -> requestBuilder.get()
         }
         val requestClient = client.newBuilder()
             .connectTimeout(timeoutMs, TimeUnit.MILLISECONDS)
@@ -273,6 +335,7 @@ class PaymentApi(
                     if (!it.isSuccessful) {
                         val type = when (it.code) {
                             401 -> ApiFailureType.UNAUTHORIZED
+                            409 -> ApiFailureType.CONFLICT
                             404 -> ApiFailureType.NOT_FOUND
                             429 -> ApiFailureType.RATE_LIMITED
                             in 500..599 -> ApiFailureType.SERVER

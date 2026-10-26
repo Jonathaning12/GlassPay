@@ -2,6 +2,7 @@ package com.glasspay.android
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -296,6 +297,129 @@ class ChargeNavigationTest {
 
     @Test
     fun accumulatedTextHiddenInReady() = assertFalse(showsAccumulatedText(ChargeState.Ready()))
+
+    // paymentStep / Approved
+
+    @Test
+    fun stepWaitingIsAwaitingPayer() = assertEquals(PaymentStep.AWAITING_PAYER, paymentStep(PaymentTracking.Waiting))
+
+    @Test
+    fun stepWaitingWithMessageIsAwaitingPayer() =
+        assertEquals(PaymentStep.AWAITING_PAYER, paymentStep(PaymentTracking.WaitingWithMessage("m")))
+
+    @Test
+    fun stepApprovedIsConfirming() = assertEquals(PaymentStep.CONFIRMING, paymentStep(PaymentTracking.Approved))
+
+    @Test
+    fun stepPaidIsPaid() = assertEquals(PaymentStep.PAID, paymentStep(PaymentTracking.Paid))
+
+    @Test
+    fun stepRejectedIsStopped() = assertEquals(PaymentStep.STOPPED, paymentStep(PaymentTracking.Rejected))
+
+    @Test
+    fun stepExpiredIsStopped() = assertEquals(PaymentStep.STOPPED, paymentStep(PaymentTracking.Expired))
+
+    @Test
+    fun stepFailedIsStopped() = assertEquals(PaymentStep.STOPPED, paymentStep(PaymentTracking.Failed))
+
+    @Test
+    fun stepErrorIsStopped() = assertEquals(PaymentStep.STOPPED, paymentStep(PaymentTracking.Error("x")))
+
+    @Test
+    fun onlyPaidTrackingMapsToPaidStep() {
+        listOf(
+            PaymentTracking.Waiting,
+            PaymentTracking.WaitingWithMessage("m"),
+            PaymentTracking.Approved,
+            PaymentTracking.Rejected,
+            PaymentTracking.Expired,
+            PaymentTracking.Failed,
+            PaymentTracking.Error("x"),
+        ).forEach { assertNotEquals("$it no debe ser PAID", PaymentStep.PAID, paymentStep(it)) }
+    }
+
+    @Test
+    fun approvedIsNotTerminal() = assertFalse(isTerminal(PaymentTracking.Approved))
+
+    @Test
+    fun createdApprovedOffersOnlyStopWaiting() {
+        assertEquals(
+            setOf(ChargeAction.STOP_WAITING),
+            availableActions(ChargeState.Created("r", "s", PaymentTracking.Approved)),
+        )
+    }
+
+    @Test
+    fun tabSwitchBlockedWhileCreatedApproved() {
+        val identified = ResolveState.Identified("Ana", "res", "exp")
+        assertFalse(allowsTabSwitch(identified, ChargeState.Created("r", "s", PaymentTracking.Approved)))
+    }
+
+    @Test
+    fun paymentUpdatedAppliesWaitingApprovedPaidInOrder() {
+        val machine = createdMachine()
+        machine.paymentUpdated(PaymentTracking.Waiting)
+        assertEquals(PaymentTracking.Waiting, (machine.state as ChargeState.Created).payment)
+        machine.paymentUpdated(PaymentTracking.Approved)
+        assertEquals(PaymentTracking.Approved, (machine.state as ChargeState.Created).payment)
+        machine.paymentUpdated(PaymentTracking.Paid)
+        assertEquals(PaymentTracking.Paid, (machine.state as ChargeState.Created).payment)
+    }
+
+    // paymentTrackingFor / stopWaiting Approved
+
+    @Test
+    fun trackingForPendienteIsWaiting() =
+        assertEquals(PaymentTracking.Waiting, paymentTrackingFor("pendiente_de_pagador"))
+
+    @Test
+    fun trackingForCreadaIsError() = assertTrue(paymentTrackingFor("creada") is PaymentTracking.Error)
+
+    @Test
+    fun trackingForEnviadaIsError() = assertTrue(paymentTrackingFor("enviada") is PaymentTracking.Error)
+
+    @Test
+    fun trackingForAprobadaIsApproved() = assertEquals(PaymentTracking.Approved, paymentTrackingFor("aprobada"))
+
+    @Test
+    fun trackingForPagadaIsPaid() = assertEquals(PaymentTracking.Paid, paymentTrackingFor("pagada"))
+
+    @Test
+    fun trackingForRechazadaIsRejected() = assertEquals(PaymentTracking.Rejected, paymentTrackingFor("rechazada"))
+
+    @Test
+    fun trackingForExpiradaIsExpired() = assertEquals(PaymentTracking.Expired, paymentTrackingFor("expirada"))
+
+    @Test
+    fun trackingForFallidaIsFailed() = assertEquals(PaymentTracking.Failed, paymentTrackingFor("fallida"))
+
+    @Test
+    fun trackingForUnknownIsErrorAndNeverPaid() {
+        val result = paymentTrackingFor("valor_raro")
+        assertTrue(result is PaymentTracking.Error)
+        assertNotEquals(PaymentTracking.Paid, result)
+    }
+
+    @Test
+    fun stopWaitingFromCreatedApprovedUsesApprovedMessage() {
+        val machine = createdMachine()
+        machine.paymentUpdated(PaymentTracking.Approved)
+        machine.stopWaiting()
+        assertEquals(ChargeState.Ready(STOP_WAITING_APPROVED_MESSAGE), machine.state)
+    }
+
+    @Test
+    fun stopWaitingApprovedMessageDoesNotClaimCancellation() {
+        assertFalse(STOP_WAITING_APPROVED_MESSAGE.contains("cancel", ignoreCase = true))
+    }
+
+    @Test
+    fun stopWaitingFromCreatedWaitingStillUsesStopMessage() {
+        val machine = createdMachine()
+        machine.paymentUpdated(PaymentTracking.Waiting)
+        machine.stopWaiting()
+        assertEquals(ChargeState.Ready(STOP_WAITING_MESSAGE), machine.state)
+    }
 
     // showsTextInput
 

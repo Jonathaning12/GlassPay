@@ -51,6 +51,7 @@ fun GlassPayRoot() {
     var session by remember { mutableStateOf<CollectorSession?>(null) }
     var loaded by remember { mutableStateOf(false) }
     var welcomeMessage by remember { mutableStateOf<String?>(null) }
+    var pendingContactResolution by remember { mutableStateOf<PayerResolution?>(null) }
     var saveNotice by remember { mutableStateOf<String?>(null) }
     var tab by remember { mutableStateOf(AppTab.HOME) }
     var flowResolve by remember { mutableStateOf<ResolveState>(ResolveState.Scanning) }
@@ -71,6 +72,7 @@ fun GlassPayRoot() {
     fun invalidateSession(message: String) {
         welcomeMessage = message
         session = null
+        pendingContactResolution = null
         tab = AppTab.HOME
         flowResolve = ResolveState.Scanning
         flowCharge = ChargeState.Ready()
@@ -150,8 +152,19 @@ fun GlassPayRoot() {
                                     flowResolve = resolve
                                     flowCharge = charge
                                 },
+                                onOpenMovements = { selectTab(AppTab.MOVEMENTS) },
+                                contactResolution = pendingContactResolution,
+                                onContactResolutionConsumed = { pendingContactResolution = null },
                             )
-                            AppTab.CONTACTS -> ContactsScreen()
+                            AppTab.CONTACTS -> ContactsScreen(
+                                session = current,
+                                api = api,
+                                onSessionInvalid = ::invalidateSession,
+                                onChargeContact = { resolution ->
+                                    pendingContactResolution = resolution
+                                    selectTab(AppTab.CHARGE)
+                                },
+                            )
                         }
                     }
                     }

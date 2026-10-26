@@ -23,6 +23,7 @@ sealed interface ResolveState {
         val displayName: String,
         val resolutionId: String,
         val expiresAt: String,
+        val contactId: String? = null,
     ) : ResolveState
 }
 
@@ -47,7 +48,12 @@ sealed interface ResolveEvent {
         val displayName: String,
         val resolutionId: String,
         val expiresAt: String,
+        val contactId: String? = null,
     ) : ResolveEvent
+
+    data class ContactResolved(val resolution: PayerResolution) : ResolveEvent
+
+    data class ContactSaved(val contactId: String) : ResolveEvent
 
     data class Failure(
         val attemptId: Long,
@@ -74,7 +80,7 @@ class ResolveStateMachine(
             }
             is ResolveEvent.Success -> {
                 if (state.matches(event.attemptId)) {
-                    ResolveState.Identified(event.displayName, event.resolutionId, event.expiresAt)
+                    ResolveState.Identified(event.displayName, event.resolutionId, event.expiresAt, event.contactId)
                 } else {
                     state
                 }
@@ -89,6 +95,22 @@ class ResolveStateMachine(
                 } else {
                     ResolveState.Failed(event.type.message())
                 }
+            }
+            is ResolveEvent.ContactResolved -> {
+                if (state is ResolveState.Resolving) {
+                    state
+                } else {
+                    ResolveState.Identified(
+                        event.resolution.displayName,
+                        event.resolution.resolutionId,
+                        event.resolution.expiresAt,
+                        event.resolution.contactId,
+                    )
+                }
+            }
+            is ResolveEvent.ContactSaved -> {
+                val current = state as? ResolveState.Identified
+                if (current == null) state else current.copy(contactId = event.contactId)
             }
             ResolveEvent.Reset -> ResolveState.Scanning
         }

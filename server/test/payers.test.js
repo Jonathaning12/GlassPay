@@ -119,11 +119,13 @@ test("payer QR uses the glasspay prefix and resolves the display name", async ()
     const fixture = await createPaymentRequestFixture(environment);
     assert.match(fixture.qr.token, /^glasspay:/);
     assert.deepEqual(Object.keys(fixture.resolution).sort(), [
+      "contactId",
       "displayName",
       "expiresAt",
       "resolutionId",
     ]);
     assert.equal(fixture.resolution.displayName, "Ana");
+    assert.equal(fixture.resolution.contactId, null);
   } finally {
     await environment.close();
   }

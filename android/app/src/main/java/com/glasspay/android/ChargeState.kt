@@ -25,6 +25,7 @@ sealed interface ChargeState {
 sealed interface PaymentTracking {
     data object Waiting : PaymentTracking
     data class WaitingWithMessage(val message: String) : PaymentTracking
+    data object Approved : PaymentTracking
     data object Paid : PaymentTracking
     data object Rejected : PaymentTracking
     data object Expired : PaymentTracking
@@ -345,7 +346,15 @@ class ChargeStateMachine(
 
     fun stopWaiting(): ChargeState {
         val current = state as? ChargeState.Created ?: return state
-        if (!isTerminal(current.payment)) state = ChargeState.Ready(STOP_WAITING_MESSAGE)
+        if (!isTerminal(current.payment)) {
+            state = ChargeState.Ready(
+                if (current.payment == PaymentTracking.Approved) {
+                    STOP_WAITING_APPROVED_MESSAGE
+                } else {
+                    STOP_WAITING_MESSAGE
+                },
+            )
+        }
         return state
     }
 
@@ -377,12 +386,42 @@ class ChargeStateMachine(
 const val STOP_WAITING_MESSAGE =
     "Dejaste de seguir esta solicitud. El pagador todavía puede aprobarla desde su teléfono."
 
+const val STOP_WAITING_APPROVED_MESSAGE =
+    "Dejaste de seguir esta solicitud. El pagador ya la aprobó; revisa Movimientos para ver cuándo se complete."
+
+fun paymentTrackingFor(serverState: String): PaymentTracking {
+    return when (serverState) {
+        "pendiente_de_pagador" -> PaymentTracking.Waiting
+        "aprobada" -> PaymentTracking.Approved
+        "pagada" -> PaymentTracking.Paid
+        "rechazada" -> PaymentTracking.Rejected
+        "expirada" -> PaymentTracking.Expired
+        "fallida" -> PaymentTracking.Failed
+        else -> PaymentTracking.Error("No pudimos consultar el estado del pago.")
+    }
+}
+
 fun isTerminal(payment: PaymentTracking): Boolean {
     return payment is PaymentTracking.Paid ||
         payment is PaymentTracking.Rejected ||
         payment is PaymentTracking.Expired ||
         payment is PaymentTracking.Failed ||
         payment is PaymentTracking.Error
+}
+
+enum class PaymentStep { SENT, AWAITING_PAYER, CONFIRMING, PAID, STOPPED }
+
+fun paymentStep(tracking: PaymentTracking): PaymentStep {
+    return when (tracking) {
+        PaymentTracking.Waiting,
+        is PaymentTracking.WaitingWithMessage -> PaymentStep.AWAITING_PAYER
+        PaymentTracking.Approved -> PaymentStep.CONFIRMING
+        PaymentTracking.Paid -> PaymentStep.PAID
+        PaymentTracking.Rejected,
+        PaymentTracking.Expired,
+        PaymentTracking.Failed,
+        is PaymentTracking.Error -> PaymentStep.STOPPED
+    }
 }
 
 fun showsRecognizedText(state: ChargeState): Boolean {

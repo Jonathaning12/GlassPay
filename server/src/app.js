@@ -38,7 +38,7 @@ function createApp({ config, database, paypal, agent }) {
   );
   app.use(express.json({ limit: "100kb" }));
   app.use("/api/payers", createPayersRouter({ database, paypal, config }));
-  app.use("/api/collectors", createCollectorsRouter({ database }));
+  app.use("/api/collectors", createCollectorsRouter({ database, config }));
   app.use("/api/agent", createAgentRouter({ database, agent, paypal, config }));
   app.use("/api/payments", createPaymentsRouter({ database, paypal, config }));
   app.use("/paypal", createPayPalPagesRouter());

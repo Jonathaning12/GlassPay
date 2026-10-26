@@ -104,6 +104,7 @@ function createPayersRouter({ database, paypal, config }) {
       displayName: payer.display_name,
       resolutionId,
       expiresAt,
+      contactId: database.findContactIdForPayer(collector.id, payer.id),
     });
   });
 

@@ -69,6 +69,9 @@ fun ChargeScreen(
     api: PaymentApi,
     onSessionInvalid: (message: String) -> Unit,
     onFlowStateChange: (ResolveState, ChargeState) -> Unit,
+    contactResolution: PayerResolution? = null,
+    onContactResolutionConsumed: () -> Unit = {},
+    onOpenMovements: () -> Unit = {},
 ) {
     val collector = session
     val context = LocalContext.current
@@ -106,6 +109,10 @@ fun ChargeScreen(
     var announcedPaymentRequestId by remember { mutableStateOf<String?>(null) }
     var inputSession by remember { mutableStateOf<ChargeInputSession?>(null) }
     var invalidMessage by remember { mutableStateOf<String?>(null) }
+    var savingContact by remember { mutableStateOf(false) }
+    var saveContactJob by remember { mutableStateOf<Job?>(null) }
+    var confirmedCharge by remember { mutableStateOf<ConfirmedCharge?>(null) }
+    var contactMessage by remember { mutableStateOf<String?>(null) }
 
     fun dispatch(event: ResolveEvent) {
         uiState = stateMachine.dispatch(event)
@@ -303,6 +310,12 @@ fun ChargeScreen(
         chargeJob?.cancel()
         lastRecognizedText = null
         recognizedText = null
+        confirmedCharge = ConfirmedCharge(
+            amount = preview.proposal.amount,
+            currency = preview.proposal.currency,
+            concept = preview.proposal.concept,
+            payerName = (uiState as? ResolveState.Identified)?.displayName.orEmpty(),
+        )
         dispatchCharge(chargeMachine.beginConfirmation())
         chargeJob = scope.launch {
             try {
@@ -349,6 +362,7 @@ fun ChargeScreen(
         recognizedText = null
         voiceStatus = null
         speechOutput.stop()
+        confirmedCharge = null
         dispatchCharge(chargeMachine.startOver())
     }
 
@@ -410,8 +424,51 @@ fun ChargeScreen(
         voiceStatus = null
         microphoneRequested = false
         startVoiceWhenPermissionGranted = false
+        contactMessage = null
+        saveContactJob?.cancel()
+        saveContactJob = null
+        savingContact = false
+        confirmedCharge = null
         dispatchCharge(chargeMachine.resetForNewScan())
         dispatch(ResolveEvent.Reset)
+    }
+
+    LaunchedEffect(contactResolution) {
+        val resolution = contactResolution ?: return@LaunchedEffect
+        scanAnotherQr()
+        dispatch(ResolveEvent.ContactResolved(resolution))
+        onContactResolutionConsumed()
+    }
+
+    fun saveContact() {
+        val identified = uiState as? ResolveState.Identified ?: return
+        if (savingContact || identified.contactId != null) return
+        savingContact = true
+        contactMessage = null
+        saveContactJob = scope.launch {
+            try {
+                val saved = api.saveContact(collector, identified.resolutionId)
+                dispatch(ResolveEvent.ContactSaved(saved.contactId))
+                contactMessage = "Guardado en tus contactos"
+                vibrate(context)
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (exception: ApiException) {
+                Log.i("GlassPay", "saveContact failure type=${exception.type} httpCode=${exception.httpCode}")
+                when (exception.type) {
+                    ApiFailureType.UNAUTHORIZED -> invalidMessage = SESSION_INVALID_MESSAGE
+                    ApiFailureType.NOT_FOUND -> contactMessage = "No se pudo guardar. Escanea su QR de nuevo."
+                    ApiFailureType.CONFLICT -> contactMessage = "Llegaste al máximo de contactos."
+                    ApiFailureType.RATE_LIMITED -> contactMessage = "Demasiados intentos. Espera unos segundos."
+                    else -> contactMessage = "No se pudo guardar. Revisa tu conexión."
+                }
+            } catch (_: Exception) {
+                Log.i("GlassPay", "saveContact failure type=UNKNOWN httpCode=none")
+                contactMessage = "No se pudo guardar. Revisa tu conexión."
+            } finally {
+                savingContact = false
+            }
+        }
     }
 
     LaunchedEffect(invalidMessage) {
@@ -451,6 +508,7 @@ fun ChargeScreen(
                         resolution.displayName,
                         resolution.resolutionId,
                         resolution.expiresAt,
+                        resolution.contactId,
                     ),
                 )
                 vibrate(context)
@@ -486,6 +544,10 @@ fun ChargeScreen(
         if (stateMachine.state == identified) {
             cancelActiveRequest()
             chargeJob?.cancel()
+            saveContactJob?.cancel()
+            saveContactJob = null
+            savingContact = false
+            contactMessage = null
             voiceRecognizer.release()
             inputSession = inputSessionAfter(inputSession, ChargeInputClearReason.RESOLUTION_EXPIRED)
             textInput = ""
@@ -524,7 +586,7 @@ fun ChargeScreen(
             val elapsed = (System.currentTimeMillis() - startedAt) / 1_000
             try {
                 val status = api.getPaymentStatus(requestId, current.statusToken)
-                val tracking = status.state.toPaymentTracking().let {
+                val tracking = paymentTrackingFor(status.state).let {
                     if (it == PaymentTracking.Waiting) {
                         PaymentTracking.WaitingWithMessage(waitingPaymentMessage(elapsed))
                     } else {
@@ -558,11 +620,13 @@ fun ChargeScreen(
                     )
                     break
                 }
-                dispatchCharge(
-                    chargeMachine.paymentUpdated(
-                        PaymentTracking.WaitingWithMessage(waitingPaymentMessage(elapsed)),
-                    ),
-                )
+                if (current.payment != PaymentTracking.Approved) {
+                    dispatchCharge(
+                        chargeMachine.paymentUpdated(
+                            PaymentTracking.WaitingWithMessage(waitingPaymentMessage(elapsed)),
+                        ),
+                    )
+                }
             }
             delay(2_000)
         }
@@ -600,6 +664,7 @@ fun ChargeScreen(
                         speechOutput.stop()
                         lastRecognizedText = null
                         recognizedText = null
+                        confirmedCharge = null
                         dispatchCharge(chargeMachine.stopWaiting())
                     },
                     onRetry = {
@@ -607,6 +672,11 @@ fun ChargeScreen(
                         startChargeInput()
                     },
                     onReset = { scanAnotherQr() },
+                    savingContact = savingContact,
+                    contactMessage = contactMessage,
+                    onSaveContact = { saveContact() },
+                    confirmedCharge = confirmedCharge,
+                    onOpenMovements = onOpenMovements,
                     voiceStatus = voiceStatus,
                     lastRecognizedText = lastRecognizedText,
                     accumulatedText = inputSession?.text,
@@ -644,12 +714,28 @@ private fun IdentifiedContent(
     onStopWaiting: () -> Unit,
     onRetry: () -> Unit,
     onReset: () -> Unit,
+    savingContact: Boolean,
+    contactMessage: String?,
+    onSaveContact: () -> Unit,
+    confirmedCharge: ConfirmedCharge?,
+    onOpenMovements: () -> Unit,
     voiceStatus: String?,
     lastRecognizedText: String?,
     accumulatedText: String?,
 ) {
     Text("Pagador identificado", color = Color.White, style = MaterialTheme.typography.headlineSmall)
     Text("Pagador: ${state.displayName}", color = Color.White, style = MaterialTheme.typography.titleLarge)
+    if (state.contactId != null) {
+        Text("En tus contactos", color = Color(0xFFB7F7C0))
+    } else if (savingContact) {
+        CircularProgressIndicator()
+    } else if (chargeState is ChargeState.Ready ||
+        chargeState is ChargeState.Error ||
+        (chargeState is ChargeState.Created && isTerminal(chargeState.payment))
+    ) {
+        Button(onClick = onSaveContact) { Text("Guardar contacto") }
+    }
+    contactMessage?.let { Text(it, color = Color(0xFFFFDDB3)) }
     val actions = availableActions(chargeState)
     when (val charge = chargeState) {
         is ChargeState.Ready -> {
@@ -677,15 +763,12 @@ private fun IdentifiedContent(
             CircularProgressIndicator()
         }
         is ChargeState.Created -> {
-            when (val payment = charge.payment) {
-                PaymentTracking.Waiting -> Text("Esperando al pagador.", color = Color.White)
-                is PaymentTracking.WaitingWithMessage -> Text(payment.message, color = Color.White)
-                PaymentTracking.Paid -> Text("Pago recibido.", color = Color(0xFFB7F7C0))
-                PaymentTracking.Rejected -> Text("El pagador rechazó la solicitud.", color = Color(0xFFFFB4AB))
-                PaymentTracking.Expired -> Text("La solicitud expiró.", color = Color(0xFFFFDDB3))
-                PaymentTracking.Failed -> Text("El pago falló.", color = Color(0xFFFFB4AB))
-                is PaymentTracking.Error -> Text(payment.message, color = Color(0xFFFFB4AB))
-            }
+            PaymentProgress(
+                payment = charge.payment,
+                confirmed = confirmedCharge,
+                onNewCharge = onReset,
+                onOpenMovements = onOpenMovements,
+            )
         }
         is ChargeState.Error -> {
             Text(charge.message, color = Color(0xFFFFB4AB))
@@ -699,7 +782,7 @@ private fun IdentifiedContent(
     if (ChargeAction.START_OVER in actions) Button(onClick = onStartOver) { Text("Empezar de nuevo") }
     if (ChargeAction.BACK in actions) Button(onClick = onBack) { Text("Volver") }
     if (ChargeAction.STOP_WAITING in actions) Button(onClick = onStopWaiting) { Text("Dejar de esperar") }
-    if (ChargeAction.SCAN_ANOTHER in actions) Button(onClick = onReset) { Text("Escanear otro QR") }
+    if (ChargeAction.SCAN_ANOTHER in actions && chargeState !is ChargeState.Created) Button(onClick = onReset) { Text("Escanear otro QR") }
     lastRecognizedText?.takeIf { showsRecognizedText(chargeState) }?.let {
         Text("Entendí: ${displayText(it, 120)}", color = Color(0xFFB7D8FF))
     }
@@ -820,18 +903,6 @@ private fun remainingSeconds(expiresAt: String): Long {
     return ((expiration - System.currentTimeMillis()) / 1_000).coerceAtLeast(0)
 }
 
-private fun String.toPaymentTracking(): PaymentTracking {
-    return when (this) {
-        "pendiente_de_pagador",
-        "aprobada" -> PaymentTracking.Waiting
-        "pagada" -> PaymentTracking.Paid
-        "rechazada" -> PaymentTracking.Rejected
-        "expirada" -> PaymentTracking.Expired
-        "fallida" -> PaymentTracking.Failed
-        else -> PaymentTracking.Error("No pudimos consultar el estado del pago.")
-    }
-}
-
 private fun waitingPaymentMessage(elapsedSeconds: Long): String {
     return when {
         elapsedSeconds < 4 -> "Confirmando tu pago con PayPal…"
@@ -859,7 +930,8 @@ private fun vibrate(context: android.content.Context) {
 
 private fun ApiFailureType.toResolveFailureType(): ResolveFailureType {
     return when (this) {
-        ApiFailureType.UNAUTHORIZED -> ResolveFailureType.INVALID_RESPONSE
+        ApiFailureType.UNAUTHORIZED,
+        ApiFailureType.CONFLICT -> ResolveFailureType.INVALID_RESPONSE
         ApiFailureType.NETWORK -> ResolveFailureType.NETWORK
         ApiFailureType.TIMEOUT -> ResolveFailureType.TIMEOUT
         ApiFailureType.NOT_FOUND -> ResolveFailureType.NOT_FOUND
@@ -871,7 +943,8 @@ private fun ApiFailureType.toResolveFailureType(): ResolveFailureType {
 
 private fun ApiFailureType.toChargeFailureType(): ChargeFailureType {
     return when (this) {
-        ApiFailureType.UNAUTHORIZED -> ChargeFailureType.SERVER
+        ApiFailureType.UNAUTHORIZED,
+        ApiFailureType.CONFLICT -> ChargeFailureType.SERVER
         ApiFailureType.NETWORK -> ChargeFailureType.NETWORK
         ApiFailureType.TIMEOUT -> ChargeFailureType.TIMEOUT
         ApiFailureType.RATE_LIMITED -> ChargeFailureType.RATE_LIMITED
