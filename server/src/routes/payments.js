@@ -1,5 +1,7 @@
 const { randomUUID } = require("node:crypto");
 const express = require("express");
+const { createRateLimiter } = require("../services/payers");
+const { authenticateCollector } = require("./collectors");
 
 function sanitizeConcept(value) {
   if (typeof value !== "string") {
@@ -37,8 +39,13 @@ function isPayPalOrderToken(value) {
 
 function createPaymentsRouter({ database, paypal, config }) {
   const router = express.Router();
+  const createLimiter = createRateLimiter({ maxRequests: 10, windowMs: 60_000 });
 
-  router.post("/", async (request, response) => {
+  // Endpoint de prueba de la Fase 2: también exige la sesión del cobrador.
+  router.post("/", createLimiter, async (request, response) => {
+    if (!authenticateCollector(request, database)) {
+      return response.status(401).json({ error: "collector authentication failed" });
+    }
     const amount = parseAmount(request.body?.amount, config.payments.maxAmount);
     const currency = typeof request.body?.currency === "string"
       ? request.body.currency.toUpperCase()

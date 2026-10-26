@@ -5,6 +5,19 @@ const path = require("node:path");
 const { test } = require("node:test");
 const { createApp } = require("../src/app");
 const { createDatabase } = require("../src/db/database");
+const { createSalt, createSessionSecret, hashSessionSecret } = require("../src/services/payers");
+
+async function createCollectorHeaders(database) {
+  const sessionSecret = createSessionSecret();
+  const sessionSalt = createSalt();
+  await database.createCollectorProfile({
+    id: "collector-test",
+    displayName: "Cobrador",
+    sessionSalt,
+    sessionHash: hashSessionSecret(sessionSecret, sessionSalt),
+  });
+  return { "X-Collector-Id": "collector-test", "X-Collector-Session": sessionSecret };
+}
 
 async function createTestEnvironment(overrides = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "glasspay-payers-"));
@@ -37,11 +50,13 @@ async function createTestEnvironment(overrides = {}) {
       };
     },
   };
+  const collectorHeaders = await createCollectorHeaders(database);
   const server = createApp({ config, database, paypal }).listen(0);
   const address = server.address();
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
     database,
+    collectorHeaders,
     close: async () => {
       await new Promise((resolve) => server.close(resolve));
       await database.close();
@@ -73,14 +88,14 @@ async function createPaymentRequestFixture(environment, displayName = "Ana") {
   const qr = await qrResponse.json();
   const resolutionResponse = await fetch(`${environment.baseUrl}/api/payers/resolve`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
     body: JSON.stringify({ token: qr.token }),
   });
   assert.equal(resolutionResponse.status, 200);
   const resolution = await resolutionResponse.json();
   const collectorResponse = await fetch(`${environment.baseUrl}/api/payers/payment-requests`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
     body: JSON.stringify({
       resolutionId: resolution.resolutionId,
       amount: 25,
@@ -262,6 +277,28 @@ test("authenticated payer can view approveUrl in their request list", async () =
   }
 });
 
+test("payer list hides approveUrl once a request is no longer pending", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { payer, paymentRequest } = await createPaymentRequestFixture(environment);
+    const headers = {
+      "X-Payer-Id": payer.payerId,
+      "X-Payer-Session": payer.sessionSecret,
+    };
+    const rejectResponse = await fetch(
+      `${environment.baseUrl}/api/payers/payment-requests/${paymentRequest.requestId}/reject`,
+      { method: "POST", headers },
+    );
+    assert.equal(rejectResponse.status, 200);
+    const response = await fetch(`${environment.baseUrl}/api/payers/me/payment-requests`, { headers });
+    const [request] = (await response.json()).requests;
+    assert.equal(request.state, "rechazada");
+    assert.equal(request.approveUrl, null);
+  } finally {
+    await environment.close();
+  }
+});
+
 test("another payer cannot view or reject a payment request", async () => {
   const environment = await createTestEnvironment();
   try {
@@ -311,7 +348,7 @@ test("payment request creation rejects a nonexistent resolution generically", as
   try {
     const response = await fetch(`${environment.baseUrl}/api/payers/payment-requests`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
       body: JSON.stringify({
         resolutionId: "resolution-missing-12345678901234567890",
         amount: 25,
@@ -340,14 +377,14 @@ test("payment request creation rejects an expired resolution generically", async
     const qr = await qrResponse.json();
     const resolutionResponse = await fetch(`${environment.baseUrl}/api/payers/resolve`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
       body: JSON.stringify({ token: qr.token }),
     });
     const resolution = await resolutionResponse.json();
     await new Promise((resolve) => setTimeout(resolve, 1100));
     const response = await fetch(`${environment.baseUrl}/api/payers/payment-requests`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
       body: JSON.stringify({
         resolutionId: resolution.resolutionId,
         amount: 25,
@@ -376,12 +413,12 @@ test("expired or unknown QR tokens return the same generic error", async () => {
     const qr = await qrResponse.json();
     const expiredResponse = await fetch(`${environment.baseUrl}/api/payers/resolve`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
       body: JSON.stringify({ token: qr.token }),
     });
     const unknownResponse = await fetch(`${environment.baseUrl}/api/payers/resolve`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
       body: JSON.stringify({ token: "unknown-token-value-1234567890" }),
     });
     assert.equal(expiredResponse.status, 404);
@@ -405,7 +442,7 @@ test("legacy QR token without the glasspay prefix is rejected generically", asyn
     const qr = await qrResponse.json();
     const response = await fetch(`${environment.baseUrl}/api/payers/resolve`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
       body: JSON.stringify({ token: qr.token.slice("glasspay:".length) }),
     });
     assert.equal(response.status, 404);
@@ -429,7 +466,7 @@ test("QR token with the glasspay prefix is accepted", async () => {
     const qr = await qrResponse.json();
     const response = await fetch(`${environment.baseUrl}/api/payers/resolve`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
       body: JSON.stringify({ token: qr.token }),
     });
     assert.equal(response.status, 200);
@@ -454,7 +491,7 @@ test("legacy, unknown, and expired QR tokens share the same generic error", asyn
     const requests = [qr.token.slice("glasspay:".length), "unknown-token-value-1234567890", qr.token]
       .map((token) => fetch(`${environment.baseUrl}/api/payers/resolve`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
         body: JSON.stringify({ token }),
       }));
     const responses = await Promise.all(requests);

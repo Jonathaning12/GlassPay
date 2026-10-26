@@ -14,6 +14,7 @@ const {
   createPaymentRequestFromResolutionHash,
 } = require("../services/payment-requests");
 const { parseAmount, sanitizeConcept } = require("./payments");
+const { authenticateCollector } = require("./collectors");
 
 function sanitizeDisplayName(value) {
   if (typeof value !== "string") {
@@ -76,6 +77,10 @@ function createPayersRouter({ database, paypal, config }) {
   });
 
   router.post("/resolve", resolverLimiter, async (request, response) => {
+    const collector = authenticateCollector(request, database);
+    if (!collector) {
+      return response.status(401).json({ error: "collector authentication failed" });
+    }
     const token = normalizeQrToken(request.body?.token);
     if (!token) {
       return response.status(404).json({ error: "payer token not found" });
@@ -91,6 +96,7 @@ function createPayersRouter({ database, paypal, config }) {
     await database.createPayerResolution({
       hash: hashOpaqueToken(resolutionId),
       payerId: payer.id,
+      collectorId: collector.id,
       expiresAt,
     });
 
@@ -131,7 +137,8 @@ function createPayersRouter({ database, paypal, config }) {
       amount: paymentRequest.amount,
       currency: paymentRequest.currency,
       concept: paymentRequest.concept,
-      approveUrl: paymentRequest.approvalUrl,
+      // Solo una solicitud pendiente puede aprobarse; el enlace no se expone después.
+      approveUrl: paymentRequest.state === "pendiente_de_pagador" ? paymentRequest.approvalUrl : null,
       expiresAt: paymentRequest.expiresAt,
       createdAt: paymentRequest.createdAt,
     }));
@@ -139,6 +146,10 @@ function createPayersRouter({ database, paypal, config }) {
   });
 
   router.post("/payment-requests", resolverLimiter, async (request, response) => {
+    const collector = authenticateCollector(request, database);
+    if (!collector) {
+      return response.status(401).json({ error: "collector authentication failed" });
+    }
     const amount = parseAmount(request.body?.amount, config.payments.maxAmount);
     const currency = typeof request.body?.currency === "string"
       ? request.body.currency.toUpperCase()
@@ -161,6 +172,7 @@ function createPayersRouter({ database, paypal, config }) {
         paypal,
         config,
         resolutionHash: hashOpaqueToken(resolutionId),
+        collectorId: collector.id,
         amount,
         currency,
         concept,

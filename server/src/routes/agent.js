@@ -1,6 +1,7 @@
 const { randomBytes } = require("node:crypto");
 const express = require("express");
 const { createRateLimiter, hashOpaqueToken } = require("../services/payers");
+const { authenticateCollector } = require("./collectors");
 const { PaymentRequestError, createPaymentRequestFromResolutionHash } = require("../services/payment-requests");
 const { sanitizeConcept } = require("./payments");
 
@@ -50,6 +51,10 @@ function createAgentRouter({ database, agent, paypal, config }) {
   const confirmLimiter = createRateLimiter({ maxRequests: 30, windowMs: 60_000 });
 
   router.post("/interpret", interpretLimiter, async (request, response) => {
+    const collector = authenticateCollector(request, database);
+    if (!collector) {
+      return response.status(401).json({ error: "collector authentication failed" });
+    }
     const resolutionId = request.body?.resolutionId;
     const text = typeof request.body?.text === "string"
       ? request.body.text.normalize("NFKC").trim().slice(0, 500)
@@ -59,7 +64,7 @@ function createAgentRouter({ database, agent, paypal, config }) {
     }
 
     const resolutionHash = hashOpaqueToken(resolutionId);
-    if (!database.findPayerResolution(resolutionHash)) {
+    if (!database.findPayerResolution(resolutionHash, collector.id)) {
       return response.status(404).json({ error: "interpretation request not found" });
     }
 
@@ -104,12 +109,16 @@ function createAgentRouter({ database, agent, paypal, config }) {
   });
 
   router.post("/confirm", confirmLimiter, async (request, response) => {
+    const collector = authenticateCollector(request, database);
+    if (!collector) {
+      return response.status(401).json({ error: "collector authentication failed" });
+    }
     const proposalId = request.body?.proposalId;
     if (!isProposalId(proposalId)) {
       return response.status(404).json({ error: "proposal not found" });
     }
 
-    const proposal = await database.consumeChargeProposal(proposalId);
+    const proposal = await database.consumeChargeProposal(proposalId, collector.id);
     if (!proposal) {
       return response.status(404).json({ error: "proposal not found" });
     }
@@ -120,6 +129,7 @@ function createAgentRouter({ database, agent, paypal, config }) {
         paypal,
         config,
         resolutionHash: proposal.resolution_hash,
+        collectorId: collector.id,
         amount: proposal.amount,
         currency: proposal.currency,
         concept: proposal.concept,

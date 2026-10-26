@@ -54,6 +54,14 @@ async function createDatabase(databasePath) {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS collector_profiles (
+      id TEXT PRIMARY KEY,
+      display_name TEXT NOT NULL,
+      session_salt TEXT NOT NULL,
+      session_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS qr_tokens (
       token_hash TEXT PRIMARY KEY,
       payer_id TEXT NOT NULL,
@@ -64,6 +72,7 @@ async function createDatabase(databasePath) {
     CREATE TABLE IF NOT EXISTS payer_resolutions (
       resolution_hash TEXT PRIMARY KEY,
       payer_id TEXT NOT NULL,
+      collector_id TEXT,
       expires_at TEXT NOT NULL,
       used_at TEXT,
       created_at TEXT NOT NULL
@@ -72,6 +81,7 @@ async function createDatabase(databasePath) {
     CREATE TABLE IF NOT EXISTS payment_requests (
       id TEXT PRIMARY KEY,
       payer_id TEXT NOT NULL,
+      collector_id TEXT,
       resolution_hash TEXT NOT NULL UNIQUE,
       transaction_id TEXT NOT NULL UNIQUE,
       status_token_hash TEXT UNIQUE,
@@ -105,6 +115,13 @@ async function createDatabase(databasePath) {
   }
   if (!paymentRequestColumns.some(([, column]) => column === "status_token_expires_at")) {
     database.run("ALTER TABLE payment_requests ADD COLUMN status_token_expires_at TEXT");
+  }
+  if (!paymentRequestColumns.some(([, column]) => column === "collector_id")) {
+    database.run("ALTER TABLE payment_requests ADD COLUMN collector_id TEXT");
+  }
+  const resolutionColumns = database.exec("PRAGMA table_info(payer_resolutions)")[0]?.values || [];
+  if (!resolutionColumns.some(([, column]) => column === "collector_id")) {
+    database.run("ALTER TABLE payer_resolutions ADD COLUMN collector_id TEXT");
   }
   database.run(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_requests_status_token_hash
@@ -252,6 +269,66 @@ async function createDatabase(databasePath) {
       return get("SELECT * FROM payer_profiles WHERE id = ?", [id]);
     },
 
+    createCollectorProfile(profile) {
+      return enqueueWrite(() => {
+        database.run(`
+          INSERT INTO collector_profiles (id, display_name, session_salt, session_hash, created_at)
+          VALUES (?, ?, ?, ?, ?)
+        `, [profile.id, profile.displayName, profile.sessionSalt, profile.sessionHash, now()]);
+      });
+    },
+
+    getCollectorProfile(id) {
+      if (typeof id !== "string") {
+        return null;
+      }
+      return get("SELECT * FROM collector_profiles WHERE id = ?", [id]);
+    },
+
+    getCollectorSummary(collectorId) {
+      return all(`
+        SELECT t.currency,
+          COALESCE(SUM(CASE WHEN t.state = 'pagada'
+            THEN CAST(ROUND(CAST(t.amount AS REAL) * 100) AS INTEGER) ELSE 0 END), 0)
+            AS paid_cents,
+          SUM(CASE WHEN t.state = 'pagada' THEN 1 ELSE 0 END) AS paid_count,
+          SUM(CASE WHEN t.state IN ('pendiente_de_pagador', 'enviada', 'aprobada') THEN 1 ELSE 0 END)
+            AS in_progress_count
+        FROM payment_requests r
+        JOIN transactions t ON t.id = r.transaction_id
+        WHERE r.collector_id = ?
+        GROUP BY t.currency
+        ORDER BY t.currency
+      `, [collectorId]).map((row) => ({
+        currency: row.currency,
+        paidTotal: (row.paid_cents / 100).toFixed(2),
+        paidCount: row.paid_count,
+        inProgressCount: row.in_progress_count,
+      }));
+    },
+
+    listCollectorMovements(collectorId, limit = 50) {
+      return all(`
+        SELECT r.id, t.state, t.amount, t.currency, t.concept, p.display_name,
+          r.created_at, t.updated_at
+        FROM payment_requests r
+        JOIN transactions t ON t.id = r.transaction_id
+        JOIN payer_profiles p ON p.id = r.payer_id
+        WHERE r.collector_id = ?
+        ORDER BY r.created_at DESC
+        LIMIT ?
+      `, [collectorId, limit]).map((row) => ({
+        movementId: row.id,
+        state: row.state,
+        amount: row.amount,
+        currency: row.currency,
+        concept: row.concept,
+        payerName: row.display_name,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }));
+    },
+
     createQrToken(token) {
       return enqueueWrite(() => {
         database.run(`
@@ -274,22 +351,23 @@ async function createDatabase(databasePath) {
       return enqueueWrite(() => {
         database.run(`
           INSERT INTO payer_resolutions
-            (resolution_hash, payer_id, expires_at, created_at)
-          VALUES (?, ?, ?, ?)
-        `, [resolution.hash, resolution.payerId, resolution.expiresAt, now()]);
+            (resolution_hash, payer_id, collector_id, expires_at, created_at)
+          VALUES (?, ?, ?, ?, ?)
+        `, [resolution.hash, resolution.payerId, resolution.collectorId, resolution.expiresAt, now()]);
       });
     },
 
-    consumePayerResolution(hash) {
+    consumePayerResolution(hash, collectorId) {
       return enqueueWrite(() => {
         const resolution = get(`
           SELECT r.payer_id, p.display_name
           FROM payer_resolutions r
           JOIN payer_profiles p ON p.id = r.payer_id
           WHERE r.resolution_hash = ?
+            AND r.collector_id = ?
             AND r.used_at IS NULL
             AND r.expires_at > ?
-        `, [hash, now()]);
+        `, [hash, collectorId, now()]);
         if (!resolution) {
           return null;
         }
@@ -302,15 +380,16 @@ async function createDatabase(databasePath) {
       });
     },
 
-    findPayerResolution(hash) {
+    findPayerResolution(hash, collectorId) {
       return get(`
         SELECT r.payer_id, p.display_name
         FROM payer_resolutions r
         JOIN payer_profiles p ON p.id = r.payer_id
         WHERE r.resolution_hash = ?
+          AND r.collector_id = ?
           AND r.used_at IS NULL
           AND r.expires_at > ?
-      `, [hash, now()]);
+      `, [hash, collectorId, now()]);
     },
 
     expirePaymentRequests() {
@@ -350,12 +429,13 @@ async function createDatabase(databasePath) {
         const timestamp = now();
         database.run(`
           INSERT INTO payment_requests
-            (id, payer_id, resolution_hash, transaction_id, status_token_hash,
+            (id, payer_id, collector_id, resolution_hash, transaction_id, status_token_hash,
              status_token_expires_at, state, expires_at, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, 'pendiente_de_pagador', ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, 'pendiente_de_pagador', ?, ?, ?)
         `, [
           request.id,
           request.payerId,
+          request.collectorId || null,
           request.resolutionHash,
           request.transactionId,
           request.statusTokenHash,
@@ -445,14 +525,18 @@ async function createDatabase(databasePath) {
       });
     },
 
-    consumeChargeProposal(proposalId) {
+    consumeChargeProposal(proposalId, collectorId) {
       return enqueueWrite(() => {
         const timestamp = now();
+        // Solo el cobrador dueño de la resolución puede consumir la propuesta.
         database.run(`
           UPDATE charge_proposals
           SET status = 'used', used_at = ?
           WHERE id = ? AND status = 'ready' AND used_at IS NULL AND expires_at > ?
-        `, [timestamp, proposalId, timestamp]);
+            AND resolution_hash IN (
+              SELECT resolution_hash FROM payer_resolutions WHERE collector_id = ?
+            )
+        `, [timestamp, proposalId, timestamp, collectorId]);
         if (database.getRowsModified() !== 1) {
           return null;
         }

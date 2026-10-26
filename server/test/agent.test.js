@@ -5,7 +5,13 @@ const path = require("node:path");
 const { test } = require("node:test");
 const { createApp } = require("../src/app");
 const { createDatabase } = require("../src/db/database");
-const { createOpaqueToken, hashOpaqueToken } = require("../src/services/payers");
+const {
+  createOpaqueToken,
+  createSalt,
+  createSessionSecret,
+  hashOpaqueToken,
+  hashSessionSecret,
+} = require("../src/services/payers");
 const {
   createAgentService,
   deterministicParse,
@@ -24,6 +30,18 @@ function agentConfig(overrides = {}) {
   };
 }
 
+async function createCollectorHeaders(database) {
+  const sessionSecret = createSessionSecret();
+  const sessionSalt = createSalt();
+  await database.createCollectorProfile({
+    id: "collector-test",
+    displayName: "Cobrador",
+    sessionSalt,
+    sessionHash: hashSessionSecret(sessionSecret, sessionSalt),
+  });
+  return { "X-Collector-Id": "collector-test", "X-Collector-Session": sessionSecret };
+}
+
 async function createAgentTestEnvironment({ resolutionTtlSeconds = 60 } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "glasspay-agent-resolution-"));
   const database = await createDatabase(path.join(directory, "test.db"));
@@ -34,9 +52,11 @@ async function createAgentTestEnvironment({ resolutionTtlSeconds = 60 } = {}) {
     sessionSalt: "c2FsdA==",
     sessionHash: "aGFzaA==",
   });
+  const collectorHeaders = await createCollectorHeaders(database);
   await database.createPayerResolution({
     hash: hashOpaqueToken(resolutionId),
     payerId: "payer-resolution-test",
+    collectorId: "collector-test",
     expiresAt: new Date(Date.now() + resolutionTtlSeconds * 1000).toISOString(),
   });
   const config = {
@@ -72,6 +92,7 @@ async function createAgentTestEnvironment({ resolutionTtlSeconds = 60 } = {}) {
     baseUrl: `http://127.0.0.1:${server.address().port}`,
     database,
     resolutionId,
+    collectorHeaders,
     close: async () => {
       await new Promise((resolve) => server.close(resolve));
       await database.close();
@@ -336,7 +357,7 @@ test("interpretation creates a one-use 256-bit proposal and confirmation returns
   try {
     const interpretation = await fetch(`${environment.baseUrl}/api/agent/interpret`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
       body: JSON.stringify({
         resolutionId: environment.resolutionId,
         text: "cóbrale 25 pesos por el café",
@@ -348,7 +369,7 @@ test("interpretation creates a one-use 256-bit proposal and confirmation returns
 
     const confirmation = await fetch(`${environment.baseUrl}/api/agent/confirm`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
       body: JSON.stringify({ proposalId: proposal.proposalId }),
     });
     const confirmationBody = await confirmation.json();
@@ -360,7 +381,7 @@ test("interpretation creates a one-use 256-bit proposal and confirmation returns
 
     const repeated = await fetch(`${environment.baseUrl}/api/agent/confirm`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
       body: JSON.stringify({ proposalId: proposal.proposalId }),
     });
     assert.equal(repeated.status, 404);
@@ -374,7 +395,7 @@ test("interpret rejects a nonexistent resolution with a generic error", async ()
   try {
     const response = await fetch(`${environment.baseUrl}/api/agent/interpret`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
       body: JSON.stringify({
         resolutionId: "resolution-missing-12345678901234567890",
         text: "cóbrale 25 pesos por el café",
@@ -392,7 +413,7 @@ test("interpret rejects an expired resolution with a generic error", async () =>
     await new Promise((resolve) => setTimeout(resolve, 1100));
     const response = await fetch(`${environment.baseUrl}/api/agent/interpret`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
       body: JSON.stringify({
         resolutionId: environment.resolutionId,
         text: "cóbrale 25 pesos por el café",
@@ -409,7 +430,7 @@ test("confirm rejects a proposal whose resolution expired with a generic error",
   try {
     const interpretation = await fetch(`${environment.baseUrl}/api/agent/interpret`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
       body: JSON.stringify({
         resolutionId: environment.resolutionId,
         text: "cóbrale 25 pesos por el café",
@@ -420,7 +441,7 @@ test("confirm rejects a proposal whose resolution expired with a generic error",
     await new Promise((resolve) => setTimeout(resolve, 1100));
     const response = await fetch(`${environment.baseUrl}/api/agent/confirm`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
       body: JSON.stringify({ proposalId: proposal.proposalId }),
     });
     await assertGenericAgentError(response, "payment request cannot be created");
@@ -434,7 +455,7 @@ test("interpret rejects a statusToken used as a resolutionId", async () => {
   try {
     const response = await fetch(`${environment.baseUrl}/api/agent/interpret`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
       body: JSON.stringify({
         resolutionId: createOpaqueToken(32),
         text: "cóbrale 25 pesos por el café",
@@ -451,7 +472,7 @@ test("confirm rejects a statusToken used as a proposalId", async () => {
   try {
     const interpretation = await fetch(`${environment.baseUrl}/api/agent/interpret`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
       body: JSON.stringify({
         resolutionId: environment.resolutionId,
         text: "cóbrale 25 pesos por el café",
@@ -460,14 +481,14 @@ test("confirm rejects a statusToken used as a proposalId", async () => {
     const proposal = await interpretation.json();
     const confirmation = await fetch(`${environment.baseUrl}/api/agent/confirm`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
       body: JSON.stringify({ proposalId: proposal.proposalId }),
     });
     const confirmationBody = await confirmation.json();
     assert.equal(confirmation.status, 201);
     const response = await fetch(`${environment.baseUrl}/api/agent/confirm`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...environment.collectorHeaders },
       body: JSON.stringify({ proposalId: confirmationBody.statusToken }),
     });
     await assertGenericAgentError(response, "proposal not found");

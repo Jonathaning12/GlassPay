@@ -6,6 +6,12 @@ import "./styles.css";
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3000";
 const STORAGE_KEY = "glasspay-payer-session";
 
+const CLOSED_STATE_LABELS = {
+  rechazada: "Rechazada",
+  expirada: "Expirada",
+  fallida: "Falló",
+};
+
 function waitingMessage(elapsedMs) {
   if (elapsedMs < 4000) return "Confirmando tu pago con PayPal…";
   if (elapsedMs < 10000) return "Preparando tu comprobante…";
@@ -204,6 +210,12 @@ function App() {
     return () => window.clearInterval(interval);
   }, [approvalStartedAt]);
 
+  // "aprobada" significa que PayPal ya recibió la aprobación y falta la captura:
+  // ya no se puede volver a aprobar, así que pasa a "Pagos realizados".
+  const pendingRequests = requests.filter((request) => request.state === "pendiente_de_pagador");
+  const completedRequests = requests.filter((request) => ["aprobada", "pagada"].includes(request.state));
+  const closedRequests = requests.filter((request) => request.state in CLOSED_STATE_LABELS);
+
   if (!session) {
     return (
       <main className="shell">
@@ -247,46 +259,74 @@ function App() {
         )}
       </section>
       <section className="card">
-        <h2>Solicitudes</h2>
-        {requests.length === 0 && <p className="muted">No tienes solicitudes pendientes.</p>}
+        <h2>Por aprobar</h2>
+        {pendingRequests.length === 0 && <p className="muted">No tienes solicitudes pendientes.</p>}
         <div className="stack">
-          {requests.map((request) => (
+          {pendingRequests.map((request) => (
             <article className="request" key={request.requestId}>
               <div>
                 <strong>{request.amount} {request.currency}</strong>
                 <p>{request.concept}</p>
-                <span className="badge">{request.state.replaceAll("_", " ")}</span>
-                {request.state === "pagada" && <p className="success">Pago recibido</p>}
-                {request.state === "pendiente_de_pagador" &&
-                  approvalStartedAt &&
-                  approvalStartedAt.requestId === request.requestId && (
-                    <p className="muted" aria-live="polite">
-                      {waitingMessage(clock - approvalStartedAt.startedAt)}
-                      {" El servidor aún no confirma un pago recibido."}
-                    </p>
-                  )}
+                {approvalStartedAt && approvalStartedAt.requestId === request.requestId && (
+                  <p className="muted" aria-live="polite">
+                    {waitingMessage(clock - approvalStartedAt.startedAt)}
+                    {" El servidor aún no confirma un pago recibido."}
+                  </p>
+                )}
               </div>
-              {request.state === "pendiente_de_pagador" && (
-                <div className="actions">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setApprovalStartedAt({ requestId: request.requestId, startedAt: Date.now() });
-                      window.open(request.approveUrl, "_blank", "noopener,noreferrer");
-                    }}
-                  >
-                    Aprobar con PayPal
-                  </button>
-                  <button type="button" className="secondary" onClick={() => rejectRequest(request.requestId)}>
-                    Rechazar
-                  </button>
-                </div>
-              )}
+              <div className="actions">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setApprovalStartedAt({ requestId: request.requestId, startedAt: Date.now() });
+                    window.open(request.approveUrl, "_blank", "noopener,noreferrer");
+                  }}
+                >
+                  Aprobar con PayPal
+                </button>
+                <button type="button" className="secondary" onClick={() => rejectRequest(request.requestId)}>
+                  Rechazar
+                </button>
+              </div>
             </article>
           ))}
         </div>
         {error && <p className="error" role="alert">{error}</p>}
       </section>
+      {completedRequests.length > 0 && (
+        <section className="card">
+          <h2>Pagos realizados</h2>
+          <div className="stack">
+            {completedRequests.map((request) => (
+              <article className="request" key={request.requestId}>
+                <div>
+                  <strong>{request.amount} {request.currency}</strong>
+                  <p>{request.concept}</p>
+                  {request.state === "pagada"
+                    ? <p className="success">Pago recibido</p>
+                    : <span className="badge">Procesando pago</span>}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+      {closedRequests.length > 0 && (
+        <section className="card">
+          <h2>Historial</h2>
+          <div className="stack">
+            {closedRequests.map((request) => (
+              <article className="request" key={request.requestId}>
+                <div>
+                  <strong>{request.amount} {request.currency}</strong>
+                  <p>{request.concept}</p>
+                  <span className="badge">{CLOSED_STATE_LABELS[request.state]}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
     </main>
   );
 }

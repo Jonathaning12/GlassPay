@@ -13,12 +13,13 @@ async function createPaymentRequestFromResolutionHash({
   paypal,
   config,
   resolutionHash,
+  collectorId,
   amount,
   currency,
   concept,
 }) {
   await database.expirePaymentRequests();
-  const resolution = await database.consumePayerResolution(resolutionHash);
+  const resolution = await database.consumePayerResolution(resolutionHash, collectorId);
   if (!resolution) {
     throw new PaymentRequestError("payment request cannot be created", 404);
   }
@@ -57,6 +58,7 @@ async function createPaymentRequestFromResolutionHash({
     await database.createPaymentRequest({
       id: requestId,
       payerId: resolution.payer_id,
+      collectorId,
       resolutionHash,
       transactionId,
       statusTokenHash: hashOpaqueToken(statusToken),
