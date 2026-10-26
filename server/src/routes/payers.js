@@ -90,6 +90,9 @@ function createPayersRouter({ database, paypal, config }) {
     if (!payer) {
       return response.status(404).json({ error: "payer token not found" });
     }
+    if (collector.payer_id && payer.id === collector.payer_id) {
+      return response.status(409).json({ error: "cannot charge yourself" });
+    }
 
     const resolutionId = createOpaqueToken(24);
     const expiresAt = new Date(Date.now() + config.payers.resolutionTtlSeconds * 1000).toISOString();
@@ -142,6 +145,7 @@ function createPayersRouter({ database, paypal, config }) {
       approveUrl: paymentRequest.state === "pendiente_de_pagador" ? paymentRequest.approvalUrl : null,
       expiresAt: paymentRequest.expiresAt,
       createdAt: paymentRequest.createdAt,
+      fromName: paymentRequest.collectorName,
     }));
     return response.status(200).json({ requests });
   });

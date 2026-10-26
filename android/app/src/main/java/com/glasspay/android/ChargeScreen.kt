@@ -12,6 +12,31 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
@@ -72,7 +97,10 @@ fun ChargeScreen(
     contactResolution: PayerResolution? = null,
     onContactResolutionConsumed: () -> Unit = {},
     onOpenMovements: () -> Unit = {},
+    locked: Boolean = false,
 ) {
+    // La seguridad no depende de que la propuesta venza antes que el bloqueo: bloqueada, no se confirma.
+    val lockedNow = androidx.compose.runtime.rememberUpdatedState(locked)
     val collector = session
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -304,6 +332,7 @@ fun ChargeScreen(
     }
 
     fun confirmCharge() {
+        if (lockedNow.value) return
         val preview = chargeState as? ChargeState.Preview ?: return
         if (preview.remainingSeconds <= 0 || chargeJob?.isActive == true) return
         voiceRecognizer.release()
@@ -379,7 +408,7 @@ fun ChargeScreen(
         when (voiceCommand(text, chargeState)) {
             VoiceCommand.CANCEL -> cancelCharge()
             VoiceCommand.START_OVER -> startOverCharge()
-            VoiceCommand.CONFIRM -> confirmCharge()
+            VoiceCommand.CONFIRM -> if (!lockedNow.value) confirmCharge()
             VoiceCommand.NONE -> if (chargeState is ChargeState.Listening) interpretText(text)
         }
     }
@@ -519,7 +548,7 @@ fun ChargeScreen(
                         invalidMessage = SESSION_INVALID_MESSAGE
                         return@launch
                     }
-                    if (exception.type == ApiFailureType.NOT_FOUND) rejectedToken = token
+                    if (exception.type == ApiFailureType.NOT_FOUND || exception.type == ApiFailureType.CONFLICT) rejectedToken = token
                     dispatch(ResolveEvent.Failure(attemptId, exception.type.toResolveFailureType()))
                 }
             } catch (_: Exception) {
@@ -634,10 +663,25 @@ fun ChargeScreen(
 
     Box(modifier = Modifier.fillMaxSize().background(Color(0xFF0B1020))) {
         if (cameraGranted && uiState !is ResolveState.Identified) {
-            CameraPreview(lifecycleOwner = lifecycleOwner, onTokenDetected = ::resolveToken)
+            CameraScanner(lifecycleOwner = lifecycleOwner, onTokenDetected = ::resolveToken)
+            ScanFrame(modifier = Modifier.align(Alignment.Center))
+            if (uiState is ResolveState.Scanning) {
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = Color(0xCC161D36),
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp),
+                ) {
+                    Text(
+                        "Apunta al QR de tu amigo",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+                    )
+                }
+            }
         }
         Column(
-            modifier = Modifier.align(Alignment.TopCenter).padding(24.dp),
+            modifier = Modifier.align(Alignment.TopCenter).verticalScroll(rememberScrollState()).padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -692,6 +736,7 @@ fun ChargeScreen(
                 else -> ResolveContent(
                     state = uiState,
                     onRetry = { (uiState as? ResolveState.RetryableError)?.let { resolveToken(it.token) } },
+                    onScanAnother = { dispatch(ResolveEvent.Reset) },
                     cameraError = cameraError,
                 )
             }
@@ -723,17 +768,36 @@ private fun IdentifiedContent(
     lastRecognizedText: String?,
     accumulatedText: String?,
 ) {
-    Text("Pagador identificado", color = Color.White, style = MaterialTheme.typography.headlineSmall)
-    Text("Pagador: ${state.displayName}", color = Color.White, style = MaterialTheme.typography.titleLarge)
-    if (state.contactId != null) {
-        Text("En tus contactos", color = Color(0xFFB7F7C0))
-    } else if (savingContact) {
-        CircularProgressIndicator()
-    } else if (chargeState is ChargeState.Ready ||
-        chargeState is ChargeState.Error ||
-        (chargeState is ChargeState.Created && isTerminal(chargeState.payment))
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
-        Button(onClick = onSaveContact) { Text("Guardar contacto") }
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Box(
+                modifier = Modifier.size(44.dp).background(MaterialTheme.colorScheme.primary, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(state.displayName.trim().take(1).uppercase(), style = MaterialTheme.typography.titleMedium)
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Pagador", color = GlassPayColors.MutedText, style = MaterialTheme.typography.labelLarge)
+                Text(state.displayName, color = Color.White, style = MaterialTheme.typography.headlineSmall)
+                if (state.contactId != null) {
+                    Text("En tus contactos", color = Color(0xFFB7F7C0))
+                } else if (savingContact) {
+                    CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                } else if (chargeState is ChargeState.Ready ||
+                    chargeState is ChargeState.Error ||
+                    (chargeState is ChargeState.Created && isTerminal(chargeState.payment))
+                ) {
+                    OutlinedButton(onClick = onSaveContact) { Text("Guardar contacto") }
+                }
+            }
+        }
     }
     contactMessage?.let { Text(it, color = Color(0xFFFFDDB3)) }
     val actions = availableActions(chargeState)
@@ -741,7 +805,13 @@ private fun IdentifiedContent(
         is ChargeState.Ready -> {
             charge.message?.let { Text(it, color = Color(0xFFFFB4AB)) }
         }
-        ChargeState.Listening -> Text(voiceStatus ?: "Preparando micrófono…", color = Color.White)
+        ChargeState.Listening -> Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            MicIndicator()
+            Text(voiceStatus ?: "Preparando micrófono…", color = Color.White, style = MaterialTheme.typography.titleMedium)
+        }
         ChargeState.Interpreting -> {
             Text("Interpretando…", color = Color.White)
             CircularProgressIndicator()
@@ -750,13 +820,27 @@ private fun IdentifiedContent(
             Text(charge.question, color = Color(0xFFFFDDB3))
         }
         is ChargeState.Preview -> {
-            Text("Vista previa", color = Color.White, style = MaterialTheme.typography.titleLarge)
-            Text("Monto: ${charge.proposal.amount}", color = Color.White)
-            Text("Moneda: ${charge.proposal.currency}", color = Color.White)
-            Text("Concepto: ${charge.proposal.concept}", color = Color.White)
-            Text("Pagador: ${state.displayName}", color = Color.White)
-            Text("Vence en ${charge.remainingSeconds}s", color = Color(0xFFFFDDB3))
-            charge.message?.let { Text(it, color = Color(0xFFFFB4AB)) }
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            ) {
+                Column(modifier = Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Vista previa", color = GlassPayColors.MutedText, style = MaterialTheme.typography.labelLarge)
+                    Text(
+                        formatMoney(charge.proposal.amount, charge.proposal.currency),
+                        color = Color.White,
+                        style = MaterialTheme.typography.displaySmall,
+                    )
+                    HorizontalDivider(color = Color(0xFF3A4260))
+                    Text("Concepto", color = GlassPayColors.MutedText, style = MaterialTheme.typography.labelLarge)
+                    Text(charge.proposal.concept, color = Color.White, style = MaterialTheme.typography.titleMedium)
+                    Text("Pagador", color = GlassPayColors.MutedText, style = MaterialTheme.typography.labelLarge)
+                    Text(state.displayName, color = Color.White, style = MaterialTheme.typography.titleMedium)
+                    Text("Vence en ${charge.remainingSeconds}s", color = Color(0xFFFFDDB3))
+                    charge.message?.let { Text(it, color = Color(0xFFFFB4AB)) }
+                }
+            }
         }
         ChargeState.Confirming -> {
             Text("Confirmando…", color = Color.White)
@@ -774,13 +858,17 @@ private fun IdentifiedContent(
             Text(charge.message, color = Color(0xFFFFB4AB))
         }
     }
-    if (ChargeAction.CONFIRM in actions) Button(onClick = onConfirm) { Text("Confirmar") }
+    if (ChargeAction.CONFIRM in actions) {
+        Button(onClick = onConfirm, modifier = Modifier.fillMaxWidth().height(56.dp)) {
+            Text("Confirmar", style = MaterialTheme.typography.titleMedium)
+        }
+    }
     if (ChargeAction.DICTATE in actions) Button(onClick = onStartCharge) { Text("Dictar cobro") }
     if (ChargeAction.ANSWER in actions) Button(onClick = onStartCharge) { Text("Responder") }
     if (ChargeAction.RETRY in actions) Button(onClick = onRetry) { Text("Intentar de nuevo") }
-    if (ChargeAction.CANCEL in actions) Button(onClick = onCancel) { Text("Cancelar") }
-    if (ChargeAction.START_OVER in actions) Button(onClick = onStartOver) { Text("Empezar de nuevo") }
-    if (ChargeAction.BACK in actions) Button(onClick = onBack) { Text("Volver") }
+    if (ChargeAction.CANCEL in actions) OutlinedButton(onClick = onCancel) { Text("Cancelar") }
+    if (ChargeAction.START_OVER in actions) TextButton(onClick = onStartOver) { Text("Empezar de nuevo") }
+    if (ChargeAction.BACK in actions) TextButton(onClick = onBack) { Text("Volver") }
     if (ChargeAction.STOP_WAITING in actions) Button(onClick = onStopWaiting) { Text("Dejar de esperar") }
     if (ChargeAction.SCAN_ANOTHER in actions && chargeState !is ChargeState.Created) Button(onClick = onReset) { Text("Escanear otro QR") }
     lastRecognizedText?.takeIf { showsRecognizedText(chargeState) }?.let {
@@ -808,9 +896,68 @@ private fun IdentifiedContent(
 }
 
 @Composable
+private fun ScanFrame(modifier: Modifier = Modifier) {
+    val color = Color.White
+    Canvas(modifier = modifier.size(240.dp)) {
+        val stroke = 6.dp.toPx()
+        val arm = 44.dp.toPx()
+        val radius = 18.dp.toPx()
+        val w = size.width
+        val h = size.height
+        val style = Stroke(width = stroke, cap = StrokeCap.Round)
+        fun corner(x: Float, y: Float, dx: Float, dy: Float) {
+            val path = Path().apply {
+                moveTo(x, y + dy * arm)
+                lineTo(x, y + dy * radius)
+                quadraticTo(x, y, x + dx * radius, y)
+                lineTo(x + dx * arm, y)
+            }
+            drawPath(path, color, style = style)
+        }
+        corner(0f, 0f, 1f, 1f)
+        corner(w, 0f, -1f, 1f)
+        corner(0f, h, 1f, -1f)
+        corner(w, h, -1f, -1f)
+    }
+}
+
+@Composable
+private fun MicIndicator() {
+    val animate = animationsEnabled()
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(48.dp)) {
+        if (animate) {
+            val transition = rememberInfiniteTransition(label = "mic")
+            val scale by transition.animateFloat(
+                initialValue = 1f,
+                targetValue = 1.5f,
+                animationSpec = infiniteRepeatable(tween(1200), RepeatMode.Restart),
+                label = "micScale",
+            )
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        alpha = (1.5f - scale) / 0.5f * 0.5f
+                    }
+                    .background(MaterialTheme.colorScheme.primary, CircleShape),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .background(MaterialTheme.colorScheme.primary, CircleShape)
+                .semantics { contentDescription = "Micrófono escuchando" },
+        )
+    }
+}
+
+@Composable
 private fun ResolveContent(
     state: ResolveState,
     onRetry: () -> Unit,
+    onScanAnother: () -> Unit,
     cameraError: String?,
 ) {
     Text(
@@ -823,82 +970,11 @@ private fun ResolveContent(
         style = MaterialTheme.typography.headlineSmall,
     )
     if (state is ResolveState.RetryableError) Button(onClick = onRetry) { Text("Reintentar") }
+    if (state is ResolveState.Failed) Button(onClick = onScanAnother) { Text("Escanear otro QR") }
     cameraError?.let { Text(it, color = Color(0xFFFFB4AB)) }
 }
 
-@Composable
-private fun CameraPreview(
-    lifecycleOwner: androidx.lifecycle.LifecycleOwner,
-    onTokenDetected: (String) -> Unit,
-) {
-    val context = LocalContext.current
-    val previewView = remember { PreviewView(context) }
-    val executor = remember { Executors.newSingleThreadExecutor() }
-    val scanner = remember {
-        BarcodeScanning.getClient(
-            BarcodeScannerOptions.Builder()
-                .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
-                .build(),
-        )
-    }
-    val latestCallback = androidx.compose.runtime.rememberUpdatedState(onTokenDetected)
-    val disposed = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
-    val boundProvider = remember { arrayOfNulls<ProcessCameraProvider>(1) }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            disposed.set(true)
-            boundProvider[0]?.unbindAll()
-            executor.shutdown()
-            scanner.close()
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        val provider = ProcessCameraProvider.getInstance(context).get()
-        if (disposed.get()) return@LaunchedEffect
-        boundProvider[0] = provider
-        val preview = Preview.Builder().build().also { it.surfaceProvider = previewView.surfaceProvider }
-        val analysis = ImageAnalysis.Builder()
-            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .build()
-        analysis.setAnalyzer(executor) { imageProxy ->
-            if (disposed.get()) {
-                imageProxy.close()
-            } else {
-                analyzeFrame(imageProxy, scanner) { token ->
-                    if (!disposed.get()) latestCallback.value(token)
-                }
-            }
-        }
-        provider.unbindAll()
-        provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
-    }
-    AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
-}
-
-private fun analyzeFrame(
-    imageProxy: ImageProxy,
-    scanner: com.google.mlkit.vision.barcode.BarcodeScanner,
-    onTokenDetected: (String) -> Unit,
-) {
-    val mediaImage = imageProxy.image
-    if (mediaImage == null) {
-        imageProxy.close()
-        return
-    }
-    try {
-        scanner.process(InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees))
-            .addOnSuccessListener { barcodes ->
-                barcodes.firstNotNullOfOrNull { QrTokenParser.extractToken(it.rawValue) }?.let(onTokenDetected)
-            }
-            .addOnCompleteListener { imageProxy.close() }
-    } catch (_: Exception) {
-        imageProxy.close()
-    }
-}
-
-private fun remainingSeconds(expiresAt: String): Long {
+internal fun remainingSeconds(expiresAt: String): Long {
     val expiration = runCatching { Instant.parse(expiresAt).toEpochMilli() }.getOrNull() ?: return 0
     return ((expiration - System.currentTimeMillis()) / 1_000).coerceAtLeast(0)
 }
@@ -913,7 +989,7 @@ private fun waitingPaymentMessage(elapsedSeconds: Long): String {
     }
 }
 
-private fun vibrate(context: android.content.Context) {
+internal fun vibrate(context: android.content.Context) {
     if (context.checkSelfPermission(android.Manifest.permission.VIBRATE) !=
         android.content.pm.PackageManager.PERMISSION_GRANTED
     ) return
@@ -931,7 +1007,7 @@ private fun vibrate(context: android.content.Context) {
 private fun ApiFailureType.toResolveFailureType(): ResolveFailureType {
     return when (this) {
         ApiFailureType.UNAUTHORIZED,
-        ApiFailureType.CONFLICT -> ResolveFailureType.INVALID_RESPONSE
+        ApiFailureType.CONFLICT -> ResolveFailureType.OWN_QR
         ApiFailureType.NETWORK -> ResolveFailureType.NETWORK
         ApiFailureType.TIMEOUT -> ResolveFailureType.TIMEOUT
         ApiFailureType.NOT_FOUND -> ResolveFailureType.NOT_FOUND

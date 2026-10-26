@@ -4,10 +4,10 @@ Agente de pagos manos libres para una demo de PayPal Sandbox.
 
 ## Estructura
 
-- `android/`: app Android del cobrador.
-- `server/`: API Express, integración con PayPal Sandbox y futura IA.
+- `android/`: app Android del cobrador (billetera con pestañas Inicio, Movimientos, Cobrar y Contactos).
+- `server/`: API Express, integración con PayPal Sandbox y agente de IA (Gemini con respaldo determinista).
 - `payer-web/`: interfaz web del pagador.
-- `docs/`: documentación del proyecto.
+- `docs/`: documentación del proyecto. Guion de demo: `docs/demo-guion.md`.
 
 ## Requisitos
 
@@ -40,11 +40,14 @@ El servidor expone:
 Configura en `server/.env` los valores de `.env.example`. Nunca coloques
 credenciales reales en `.env.example`, el código o Git.
 
-Para crear una orden local:
+Para crear una orden local (requiere la sesión de un cobrador; ver "Cuenta del
+cobrador"):
 
 ```powershell
 curl.exe -X POST http://localhost:3000/api/payments `
   -H "Content-Type: application/json" `
+  -H "X-Collector-Id: <collectorId>" `
+  -H "X-Collector-Session: <sessionSecret>" `
   -d "{\"amount\":350,\"currency\":\"MXN\",\"concept\":\"Cena\"}"
 ```
 
@@ -96,6 +99,41 @@ Los QR contienen siempre `glasspay:<token>`. El endpoint
 o vencido devuelve el mismo error genérico. Si la sesión del pagador responde
 401, `payer-web` borra la sesión local y vuelve a mostrar la pantalla para
 crear un perfil.
+
+## Cuenta del cobrador y contactos
+
+Los endpoints que usa el cobrador exigen los headers `X-Collector-Id` y
+`X-Collector-Session` (nunca en la URL); una sesión inválida responde 401
+genérico. Esto incluye `POST /api/payers/resolve`, `POST /api/agent/interpret`,
+`POST /api/agent/confirm`, `POST /api/payers/payment-requests` y
+`POST /api/payments`. Cada resolución de QR queda ligada al cobrador que la
+creó.
+
+- `POST /api/collectors` crea el cobrador (`{ displayName }`) y entrega el secreto una sola vez.
+- `GET /api/collectors/me` devuelve el nombre y la "Actividad en GlassPay (Sandbox)".
+- `GET /api/collectors/me/movements` lista los últimos 50 cobros, sin datos de PayPal.
+- `GET /api/collectors/me/contacts` lista los contactos.
+- `POST /api/collectors/me/contacts` guarda como contacto al pagador de una resolución propia y vigente.
+- `DELETE /api/collectors/me/contacts/:contactId` elimina un contacto propio.
+- `POST /api/collectors/me/contacts/:contactId/resolution` crea una resolución nueva para cobrarle sin escanear su QR.
+
+## App Android
+
+Desde PowerShell:
+
+```powershell
+$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+cd android
+.\gradlew.bat testDebugUnitTest
+.\gradlew.bat assembleDebug
+$env:Path += ";$env:LOCALAPPDATA\Android\Sdk\platform-tools"
+adb install -r app\build\outputs\apk\debug\app-debug.apk
+```
+
+La app crea la cuenta del cobrador, guarda su secreto cifrado con el Android
+Keystore, lee el QR con la cámara, interpreta la frase dictada, muestra la
+vista previa y solo crea la solicitud tras la confirmación explícita. "Pago
+recibido" aparece únicamente cuando el servidor reporta `pagada`.
 
 ## Agente de IA
 

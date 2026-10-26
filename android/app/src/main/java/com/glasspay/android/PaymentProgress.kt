@@ -52,7 +52,7 @@ data class ConfirmedCharge(
 private val StepGray = Color(0xFF3A4260)
 
 @Composable
-private fun animationsEnabled(): Boolean {
+internal fun animationsEnabled(): Boolean {
     val context = LocalContext.current
     return remember {
         runCatching {

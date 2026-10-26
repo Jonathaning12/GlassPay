@@ -127,6 +127,10 @@ async function createDatabase(databasePath) {
   if (!paymentRequestColumns.some(([, column]) => column === "collector_id")) {
     database.run("ALTER TABLE payment_requests ADD COLUMN collector_id TEXT");
   }
+  const collectorColumns = database.exec("PRAGMA table_info(collector_profiles)")[0]?.values || [];
+  if (!collectorColumns.some(([, column]) => column === "payer_id")) {
+    database.run("ALTER TABLE collector_profiles ADD COLUMN payer_id TEXT");
+  }
   const resolutionColumns = database.exec("PRAGMA table_info(payer_resolutions)")[0]?.values || [];
   if (!resolutionColumns.some(([, column]) => column === "collector_id")) {
     database.run("ALTER TABLE payer_resolutions ADD COLUMN collector_id TEXT");
@@ -291,6 +295,25 @@ async function createDatabase(databasePath) {
         return null;
       }
       return get("SELECT * FROM collector_profiles WHERE id = ?", [id]);
+    },
+
+    // Perfil de pagador propio del cobrador: le permite mostrar su QR y recibir cobros.
+    linkCollectorPayer(collectorId, payer) {
+      return enqueueWrite(() => {
+        const current = get("SELECT payer_id FROM collector_profiles WHERE id = ?", [collectorId]);
+        if (current?.payer_id) {
+          return current.payer_id;
+        }
+        database.run(`
+          INSERT INTO payer_profiles (id, display_name, session_salt, session_hash, created_at)
+          VALUES (?, ?, ?, ?, ?)
+        `, [payer.id, payer.displayName, payer.sessionSalt, payer.sessionHash, now()]);
+        database.run("UPDATE collector_profiles SET payer_id = ? WHERE id = ? AND payer_id IS NULL", [
+          payer.id,
+          collectorId,
+        ]);
+        return payer.id;
+      });
     },
 
     getCollectorSummary(collectorId) {
@@ -544,9 +567,10 @@ async function createDatabase(databasePath) {
     listPayerRequests(payerId) {
       return all(`
         SELECT r.id, r.state, r.expires_at, r.created_at, r.updated_at,
-          t.amount, t.currency, t.concept, t.approval_url
+          t.amount, t.currency, t.concept, t.approval_url, c.display_name AS collector_name
         FROM payment_requests r
         JOIN transactions t ON t.id = r.transaction_id
+        LEFT JOIN collector_profiles c ON c.id = r.collector_id
         WHERE r.payer_id = ?
           AND r.state IN ('pendiente_de_pagador', 'aprobada', 'pagada', 'rechazada', 'expirada', 'fallida')
         ORDER BY r.created_at DESC
@@ -560,6 +584,7 @@ async function createDatabase(databasePath) {
         currency: request.currency,
         concept: request.concept,
         approvalUrl: request.approval_url,
+        collectorName: request.collector_name || null,
       }));
     },
 

@@ -12,8 +12,41 @@ const {
 
 const MAX_CONTACTS_PER_COLLECTOR = 200;
 
+async function ensureCollectorPayer(database, collector) {
+  if (collector.payer_id) {
+    return collector.payer_id;
+  }
+  const sessionSalt = createSalt();
+  // Nadie conoce este secreto: el perfil de pagador del cobrador solo se usa con su sesión de cobrador.
+  return database.linkCollectorPayer(collector.id, {
+    id: randomUUID(),
+    displayName: collector.display_name,
+    sessionSalt,
+    sessionHash: hashSessionSecret(createSessionSecret(), sessionSalt),
+  });
+}
+
+function toIncomingRequest(paymentRequest) {
+  return {
+    requestId: paymentRequest.id,
+    state: paymentRequest.state,
+    amount: paymentRequest.amount,
+    currency: paymentRequest.currency,
+    concept: paymentRequest.concept,
+    approveUrl: paymentRequest.state === "pendiente_de_pagador" ? paymentRequest.approvalUrl : null,
+    expiresAt: paymentRequest.expiresAt,
+    createdAt: paymentRequest.createdAt,
+    fromName: paymentRequest.collectorName,
+  };
+}
+
 function isResolutionId(value) {
   return typeof value === "string" && /^[A-Za-z0-9_-]{32,128}$/.test(value);
+}
+
+function isRequestId(value) {
+  return typeof value === "string"
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
 function isContactId(value) {
@@ -42,6 +75,8 @@ function createCollectorsRouter({ database, config }) {
   const readLimiter = createRateLimiter({ maxRequests: 60, windowMs: 60_000 });
   const contactWriteLimiter = createRateLimiter({ maxRequests: 20, windowMs: 60_000 });
   const contactResolutionLimiter = createRateLimiter({ maxRequests: 30, windowMs: 60_000 });
+  const qrLimiter = createRateLimiter({ maxRequests: 20, windowMs: 60_000 });
+  const incomingWriteLimiter = createRateLimiter({ maxRequests: 20, windowMs: 60_000 });
   // Se importa aquí para evitar una dependencia circular con payers.js.
   const { sanitizeDisplayName } = require("./payers");
 
@@ -60,6 +95,11 @@ function createCollectorsRouter({ database, config }) {
       sessionSalt,
       sessionHash: hashSessionSecret(sessionSecret, sessionSalt),
     });
+    try {
+      await ensureCollectorPayer(database, database.getCollectorProfile(collectorId));
+    } catch {
+      // No bloquea la cuenta: el perfil de pagador se crea después al pedir el QR.
+    }
 
     return response.status(201).json({ collectorId, sessionSecret, displayName });
   });
@@ -89,6 +129,47 @@ function createCollectorsRouter({ database, config }) {
     });
   });
 
+  router.post("/me/qr", qrLimiter, async (request, response) => {
+    const collector = authenticateCollector(request, database);
+    if (!collector) {
+      return response.status(401).json({ error: "collector authentication failed" });
+    }
+    const payerId = await ensureCollectorPayer(database, collector);
+    const token = createOpaqueToken(32);
+    const expiresAt = new Date(Date.now() + config.payers.qrTokenTtlSeconds * 1000).toISOString();
+    await database.createQrToken({ hash: hashOpaqueToken(token), payerId, expiresAt });
+    return response.status(201).json({ token: `glasspay:${token}`, expiresAt });
+  });
+
+  router.get("/me/incoming-requests", readLimiter, async (request, response) => {
+    const collector = authenticateCollector(request, database);
+    if (!collector) {
+      return response.status(401).json({ error: "collector authentication failed" });
+    }
+    if (!collector.payer_id) {
+      return response.status(200).json({ requests: [] });
+    }
+    await database.expirePaymentRequests();
+    return response.status(200).json({
+      requests: database.listPayerRequests(collector.payer_id).map(toIncomingRequest),
+    });
+  });
+
+  router.post("/me/incoming-requests/:requestId/reject", incomingWriteLimiter, async (request, response) => {
+    const collector = authenticateCollector(request, database);
+    if (!collector) {
+      return response.status(401).json({ error: "collector authentication failed" });
+    }
+    await database.expirePaymentRequests();
+    const rejected = collector.payer_id
+      && isRequestId(request.params.requestId)
+      && await database.rejectPaymentRequest(request.params.requestId, collector.payer_id);
+    if (!rejected) {
+      return response.status(404).json({ error: "payment request not found" });
+    }
+    return response.status(200).json({ requestId: request.params.requestId, state: "rechazada" });
+  });
+
   router.get("/me/contacts", readLimiter, (request, response) => {
     const collector = authenticateCollector(request, database);
     if (!collector) {
@@ -108,6 +189,9 @@ function createCollectorsRouter({ database, config }) {
       : null;
     if (!resolution) {
       return response.status(404).json({ error: "contact cannot be saved" });
+    }
+    if (collector.payer_id && resolution.payer_id === collector.payer_id) {
+      return response.status(409).json({ error: "cannot add yourself" });
     }
 
     const result = await database.saveCollectorContact({

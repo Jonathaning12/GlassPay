@@ -702,3 +702,187 @@ test("charging a contact still respects the pending requests limit per payer", a
     await environment.close();
   }
 });
+
+async function issueCollectorQr(baseUrl, collectorHeaders) {
+  return postJson(`${baseUrl}/api/collectors/me/qr`, {}, collectorHeaders);
+}
+
+async function listIncoming(baseUrl, collectorHeaders) {
+  return fetch(`${baseUrl}/api/collectors/me/incoming-requests`, { headers: collectorHeaders });
+}
+
+async function chargeCollector(environment, charger, target) {
+  const qr = await (await issueCollectorQr(environment.baseUrl, target.headers)).json();
+  const resolution = await (await postJson(
+    `${environment.baseUrl}/api/payers/resolve`, { token: qr.token }, charger.headers,
+  )).json();
+  const response = await chargeResolution(environment.baseUrl, charger.headers, resolution.resolutionId);
+  assert.equal(response.status, 201);
+  return response.json();
+}
+
+test("a collector can issue their own prefixed QR", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const collector = await createCollector(environment.baseUrl);
+    const response = await issueCollectorQr(environment.baseUrl, collector.headers);
+    assert.equal(response.status, 201);
+    const qr = await response.json();
+    assert.match(qr.token, /^glasspay:/);
+    assert.deepEqual(Object.keys(qr).sort(), ["expiresAt", "token"]);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("issuing a collector QR requires a session", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const response = await issueCollectorQr(environment.baseUrl, {});
+    assert.equal(response.status, 401);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("another collector resolves my QR with my display name", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const me = await createCollector(environment.baseUrl, "Rodrigo");
+    const friend = await createCollector(environment.baseUrl, "Luis");
+    const qr = await (await issueCollectorQr(environment.baseUrl, me.headers)).json();
+    const response = await postJson(`${environment.baseUrl}/api/payers/resolve`, { token: qr.token }, friend.headers);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).displayName, "Rodrigo");
+  } finally {
+    await environment.close();
+  }
+});
+
+test("resolving my own QR is rejected", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const me = await createCollector(environment.baseUrl);
+    const qr = await (await issueCollectorQr(environment.baseUrl, me.headers)).json();
+    const response = await postJson(`${environment.baseUrl}/api/payers/resolve`, { token: qr.token }, me.headers);
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: "cannot charge yourself" });
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a collector can save another collector as a contact via QR without charging", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const me = await createCollector(environment.baseUrl, "Rodrigo");
+    const friend = await createCollector(environment.baseUrl, "Luis");
+    const qr = await (await issueCollectorQr(environment.baseUrl, friend.headers)).json();
+    const resolution = await (await postJson(
+      `${environment.baseUrl}/api/payers/resolve`, { token: qr.token }, me.headers,
+    )).json();
+    const response = await saveContact(environment.baseUrl, me.headers, resolution.resolutionId);
+    assert.equal(response.status, 201);
+    assert.equal((await response.json()).displayName, "Luis");
+    assert.deepEqual(await (await getMe(environment.baseUrl, me.headers, "/movements")).json(), { movements: [] });
+  } finally {
+    await environment.close();
+  }
+});
+
+test("incoming requests list what others charged me with the charger name", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const me = await createCollector(environment.baseUrl, "Rodrigo");
+    const friend = await createCollector(environment.baseUrl, "Luis");
+    const charge = await chargeCollector(environment, friend, me);
+    const response = await listIncoming(environment.baseUrl, me.headers);
+    assert.equal(response.status, 200);
+    const { requests } = await response.json();
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].requestId, charge.requestId);
+    assert.equal(requests[0].fromName, "Luis");
+    assert.equal(requests[0].state, "pendiente_de_pagador");
+    assert.equal(requests[0].approveUrl, "https://www.sandbox.paypal.com/approve/test");
+    assert.doesNotMatch(JSON.stringify(requests), /statusToken|resolution|order-/i);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("incoming requests of another collector are not visible", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const me = await createCollector(environment.baseUrl, "Rodrigo");
+    const friend = await createCollector(environment.baseUrl, "Luis");
+    await chargeCollector(environment, friend, me);
+    const { requests } = await (await listIncoming(environment.baseUrl, friend.headers)).json();
+    assert.deepEqual(requests, []);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("incoming requests require a session", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    assert.equal((await listIncoming(environment.baseUrl, {})).status, 401);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("I can reject a request charged to me and its approveUrl disappears", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const me = await createCollector(environment.baseUrl, "Rodrigo");
+    const friend = await createCollector(environment.baseUrl, "Luis");
+    const charge = await chargeCollector(environment, friend, me);
+    const response = await postJson(
+      `${environment.baseUrl}/api/collectors/me/incoming-requests/${charge.requestId}/reject`, {}, me.headers,
+    );
+    assert.equal(response.status, 200);
+    const { requests } = await (await listIncoming(environment.baseUrl, me.headers)).json();
+    assert.equal(requests[0].state, "rechazada");
+    assert.equal(requests[0].approveUrl, null);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("the charger cannot reject a request on behalf of the payer", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const me = await createCollector(environment.baseUrl, "Rodrigo");
+    const friend = await createCollector(environment.baseUrl, "Luis");
+    const charge = await chargeCollector(environment, friend, me);
+    const response = await postJson(
+      `${environment.baseUrl}/api/collectors/me/incoming-requests/${charge.requestId}/reject`, {}, friend.headers,
+    );
+    assert.equal(response.status, 404);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a legacy collector without payer profile gets one when issuing a QR", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const sessionSecret = "legacy-secret-legacy-secret-legacy-secret-00";
+    const { createSalt, hashSessionSecret } = require("../src/services/payers");
+    const sessionSalt = createSalt();
+    await environment.database.createCollectorProfile({
+      id: "legacy-collector",
+      displayName: "Legado",
+      sessionSalt,
+      sessionHash: hashSessionSecret(sessionSecret, sessionSalt),
+    });
+    const headers = { "X-Collector-Id": "legacy-collector", "X-Collector-Session": sessionSecret };
+    assert.deepEqual(await (await listIncoming(environment.baseUrl, headers)).json(), { requests: [] });
+    const response = await issueCollectorQr(environment.baseUrl, headers);
+    assert.equal(response.status, 201);
+    assert.ok(environment.database.getCollectorProfile("legacy-collector").payer_id);
+  } finally {
+    await environment.close();
+  }
+});

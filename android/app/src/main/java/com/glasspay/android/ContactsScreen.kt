@@ -41,6 +41,7 @@ fun ContactsScreen(
     api: PaymentApi,
     onSessionInvalid: (message: String) -> Unit,
     onChargeContact: (PayerResolution) -> Unit,
+    onAddWithQr: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var reload by remember { mutableStateOf(0) }
@@ -144,6 +145,7 @@ fun ContactsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("Contactos", style = MaterialTheme.typography.headlineMedium)
+        Button(onClick = onAddWithQr) { Text("Agregar con QR") }
         message?.let { Text(it, color = GlassPayColors.Warning) }
         when (val current = state) {
             LoadState.Loading -> CircularProgressIndicator()

@@ -6,6 +6,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -29,24 +32,29 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MovementsScreen(
     session: CollectorSession,
     api: PaymentApi,
     onSessionInvalid: (message: String) -> Unit,
+    amountsVisible: Boolean,
 ) {
     var reload by remember { mutableStateOf(0) }
     var state by remember { mutableStateOf<LoadState<List<Movement>>>(LoadState.Loading) }
     var selected by remember { mutableStateOf<Movement?>(null) }
+    var refreshing by remember { mutableStateOf(false) }
 
     LaunchedEffect(reload) {
-        state = LoadState.Loading
+        if (state is LoadState.Loaded) refreshing = true else state = LoadState.Loading
         try {
             state = LoadState.Loaded(api.getMovements(session))
+            refreshing = false
         } catch (exception: CancellationException) {
             throw exception
         } catch (exception: ApiException) {
             Log.i("GlassPay", "movements failure type=${exception.type} httpCode=${exception.httpCode}")
+            refreshing = false
             if (isSessionInvalid(exception.type)) {
                 onSessionInvalid(SESSION_INVALID_MESSAGE)
             } else {
@@ -54,6 +62,7 @@ fun MovementsScreen(
             }
         } catch (_: Exception) {
             Log.i("GlassPay", "movements failure type=UNKNOWN httpCode=none")
+            refreshing = false
             state = LoadState.Failed
         }
     }
@@ -62,10 +71,11 @@ fun MovementsScreen(
 
     val detail = selected
     if (detail != null) {
-        MovementDetail(detail, onBack = { selected = null })
+        MovementDetail(detail, amountsVisible, onBack = { selected = null })
         return
     }
 
+    PullToRefreshBox(isRefreshing = refreshing, onRefresh = { reload += 1 }) {
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -73,7 +83,9 @@ fun MovementsScreen(
         Text("Movimientos", style = MaterialTheme.typography.headlineMedium)
         Text("Actividad en GlassPay (Sandbox)", color = GlassPayColors.MutedText)
         when (val current = state) {
-            LoadState.Loading -> CircularProgressIndicator()
+            LoadState.Loading -> repeat(3) {
+                SkeletonBox(Modifier.fillMaxWidth().height(110.dp))
+            }
             LoadState.Failed -> {
                 Text("No pudimos cargar tus movimientos.", color = GlassPayColors.Error)
                 Button(onClick = { reload += 1 }) { Text("Reintentar") }
@@ -85,11 +97,12 @@ fun MovementsScreen(
                 }
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(current.value, key = { it.movementId }) { movement ->
-                        MovementCard(movement, onClick = { selected = movement })
+                        MovementCard(movement, amountsVisible, onClick = { selected = movement })
                     }
                 }
             }
         }
+    }
     }
 }
 
@@ -107,7 +120,7 @@ private fun StatusChip(state: String) {
 }
 
 @Composable
-private fun MovementCard(movement: Movement, onClick: () -> Unit) {
+private fun MovementCard(movement: Movement, amountsVisible: Boolean, onClick: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -115,7 +128,10 @@ private fun MovementCard(movement: Movement, onClick: () -> Unit) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(movement.concept, style = MaterialTheme.typography.titleMedium)
             Text("a ${movement.payerName}", color = GlassPayColors.MutedText)
-            Text(formatMoney(movement.amount, movement.currency), style = MaterialTheme.typography.titleLarge)
+            Text(
+                maskAmount(formatMoney(movement.amount, movement.currency), amountsVisible),
+                style = MaterialTheme.typography.titleLarge,
+            )
             StatusChip(movement.state)
             Text(formatMovementDate(movement.createdAt), color = GlassPayColors.MutedText)
         }
@@ -123,14 +139,14 @@ private fun MovementCard(movement: Movement, onClick: () -> Unit) {
 }
 
 @Composable
-private fun MovementDetail(movement: Movement, onBack: () -> Unit) {
+private fun MovementDetail(movement: Movement, amountsVisible: Boolean, onBack: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Button(onClick = onBack) { Text("Volver") }
         Text(
-            formatMoney(movement.amount, movement.currency),
+            maskAmount(formatMoney(movement.amount, movement.currency), amountsVisible),
             style = MaterialTheme.typography.displaySmall,
         )
         StatusChip(movement.state)

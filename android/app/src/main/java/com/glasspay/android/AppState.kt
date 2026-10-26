@@ -20,6 +20,20 @@ fun allowsTabSwitch(resolve: ResolveState, charge: ChargeState): Boolean {
         (charge is ChargeState.Created && isTerminal(charge.payment))
 }
 
+/** Solo se abre el enlace de aprobación si es https y el host es exactamente el de PayPal Sandbox. */
+fun isAllowedApproveUrl(url: String?): Boolean {
+    if (url.isNullOrBlank()) return false
+    return try {
+        val uri = java.net.URI(url)
+        uri.scheme.equals("https", ignoreCase = true) &&
+            uri.host.equals("www.sandbox.paypal.com", ignoreCase = true) &&
+            uri.userInfo == null &&
+            (uri.port == -1 || uri.port == 443)
+    } catch (_: Exception) {
+        false
+    }
+}
+
 fun movementStatusLabel(state: String): String {
     return when (state) {
         "pagada" -> "Pagado"

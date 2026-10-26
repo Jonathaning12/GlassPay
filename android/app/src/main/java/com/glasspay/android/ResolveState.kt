@@ -28,6 +28,7 @@ sealed interface ResolveState {
 }
 
 enum class ResolveFailureType {
+    OWN_QR,
     NETWORK,
     TIMEOUT,
     NOT_FOUND,
@@ -146,5 +147,6 @@ private fun ResolveFailureType.message(): String {
         ResolveFailureType.SERVER -> "GlassPay no pudo procesar el QR. Intenta de nuevo."
         ResolveFailureType.INVALID_RESPONSE -> "Recibimos una respuesta inválida de GlassPay."
         ResolveFailureType.NOT_FOUND -> "El QR no es válido o ya venció."
+        ResolveFailureType.OWN_QR -> "Ese es tu propio QR."
     }
 }

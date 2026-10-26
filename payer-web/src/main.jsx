@@ -267,6 +267,7 @@ function App() {
               <div>
                 <strong>{request.amount} {request.currency}</strong>
                 <p>{request.concept}</p>
+                {request.fromName && <p className="muted">Te cobra {request.fromName}</p>}
                 {approvalStartedAt && approvalStartedAt.requestId === request.requestId && (
                   <p className="muted" aria-live="polite">
                     {waitingMessage(clock - approvalStartedAt.startedAt)}
@@ -302,6 +303,7 @@ function App() {
                 <div>
                   <strong>{request.amount} {request.currency}</strong>
                   <p>{request.concept}</p>
+                  {request.fromName && <p className="muted">Te cobra {request.fromName}</p>}
                   {request.state === "pagada"
                     ? <p className="success">Pago recibido</p>
                     : <span className="badge">Procesando pago</span>}

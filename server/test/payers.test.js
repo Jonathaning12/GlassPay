@@ -279,6 +279,19 @@ test("authenticated payer can view approveUrl in their request list", async () =
   }
 });
 
+test("payer list shows the name of the collector who charges", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { payer } = await createPaymentRequestFixture(environment);
+    const response = await fetch(`${environment.baseUrl}/api/payers/me/payment-requests`, {
+      headers: { "X-Payer-Id": payer.payerId, "X-Payer-Session": payer.sessionSecret },
+    });
+    assert.equal((await response.json()).requests[0].fromName, "Cobrador");
+  } finally {
+    await environment.close();
+  }
+});
+
 test("payer list hides approveUrl once a request is no longer pending", async () => {
   const environment = await createTestEnvironment();
   try {

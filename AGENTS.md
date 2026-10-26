@@ -328,3 +328,12 @@ Decisiones aprobadas:
 - Navegación por pestañas (Inicio, Movimientos, Cobrar, Contactos) sin dependencias nuevas.
 
 Reglas: antes de cada entrega de 5W, plan corto (pantallas, archivos, endpoints, tablas) y espera de aprobación. Todas las reglas de seguridad de este archivo siguen vigentes.
+
+# FASE 5W.4 (aprobada el 2026-10-26)
+
+- Excepción a "Sin biometría": el cobrador puede desbloquear SU PROPIA app con el bloqueo del teléfono (huella o PIN/patrón/contraseña del dispositivo) mediante `BiometricPrompt` del sistema. La app nunca recibe ni guarda datos biométricos; solo el resultado. La identificación de otras personas sigue siendo solo por QR con token opaco. No se crea un NIP propio de GlassPay.
+- El desbloqueo se pide al abrir la app, al volver tras 5 minutos en segundo plano y siempre antes de confirmar un envío de dinero.
+- Montos sensibles ocultos por defecto con un botón de ojo.
+- La cuenta del cobrador también tiene perfil de pagador: puede mostrar su QR en el móvil, ser agregada como contacto y recibir/aprobar solicitudes desde la app.
+- Enviar dinero: PayPal Payouts (Sandbox) desde la cuenta Sandbox Business de GlassPay. Saldo disponible = cobrado − enviado, calculado y validado de forma atómica en el servidor. El destinatario registra su correo PayPal Sandbox, que se guarda solo en el servidor y nunca se muestra a otros. Tope por envío igual al de cobros. Doble confirmación: vista previa + desbloqueo del teléfono.
+- Orden: 5W.4a (bloqueo + ojo), 5W.4b (Mi QR, agregar con QR, solicitudes recibidas), 5W.4c (enviar dinero).

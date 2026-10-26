@@ -21,6 +21,22 @@ data class PayerResolution(
     val contactId: String? = null,
 )
 
+data class MyQr(val token: String, val expiresAt: String) {
+    override fun toString(): String = "MyQr(expiresAt=$expiresAt)"
+}
+
+data class IncomingRequest(
+    val requestId: String,
+    val state: String,
+    val amount: String,
+    val currency: String,
+    val concept: String,
+    val approveUrl: String?,
+    val expiresAt: String,
+    val createdAt: String,
+    val fromName: String?,
+)
+
 data class Contact(
     val contactId: String,
     val displayName: String,
@@ -109,6 +125,45 @@ class PaymentApi(
         } catch (_: Exception) {
             throw ApiException(ApiFailureType.INVALID_RESPONSE)
         }
+    }
+
+    suspend fun issueMyQr(session: CollectorSession): MyQr {
+        val body = JSONObject().toString().toRequestBody("application/json".toMediaType())
+        val responseBody = execute("POST", "/api/collectors/me/qr", body, 15_000, session.headers())
+        try {
+            val json = JSONObject(responseBody)
+            return MyQr(json.getString("token"), json.getString("expiresAt"))
+        } catch (_: Exception) {
+            throw ApiException(ApiFailureType.INVALID_RESPONSE)
+        }
+    }
+
+    suspend fun incomingRequests(session: CollectorSession): List<IncomingRequest> {
+        val responseBody = execute("GET", "/api/collectors/me/incoming-requests", null, 15_000, session.headers())
+        try {
+            val items = JSONObject(responseBody).getJSONArray("requests")
+            return (0 until items.length()).map { index ->
+                val item = items.getJSONObject(index)
+                IncomingRequest(
+                    requestId = item.getString("requestId"),
+                    state = item.getString("state"),
+                    amount = item.get("amount").toString(),
+                    currency = item.getString("currency"),
+                    concept = item.getString("concept"),
+                    approveUrl = if (item.isNull("approveUrl")) null else item.optString("approveUrl").ifEmpty { null },
+                    expiresAt = item.optString("expiresAt"),
+                    createdAt = item.optString("createdAt"),
+                    fromName = if (item.isNull("fromName")) null else item.optString("fromName").ifEmpty { null },
+                )
+            }
+        } catch (_: Exception) {
+            throw ApiException(ApiFailureType.INVALID_RESPONSE)
+        }
+    }
+
+    suspend fun rejectIncoming(session: CollectorSession, requestId: String) {
+        val body = JSONObject().toString().toRequestBody("application/json".toMediaType())
+        execute("POST", "/api/collectors/me/incoming-requests/$requestId/reject", body, 15_000, session.headers())
     }
 
     suspend fun listContacts(session: CollectorSession): List<Contact> {
