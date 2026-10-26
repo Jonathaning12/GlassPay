@@ -37,7 +37,31 @@ data class PaymentStatus(
     val concept: String,
 )
 
+data class CurrencyActivity(
+    val currency: String,
+    val paidTotal: String,
+    val paidCount: Int,
+    val inProgressCount: Int,
+)
+
+data class CollectorProfile(
+    val displayName: String,
+    val activity: List<CurrencyActivity>,
+)
+
+data class Movement(
+    val movementId: String,
+    val state: String,
+    val amount: String,
+    val currency: String,
+    val concept: String,
+    val payerName: String,
+    val createdAt: String,
+    val updatedAt: String,
+)
+
 enum class ApiFailureType {
+    UNAUTHORIZED,
     NETWORK,
     TIMEOUT,
     NOT_FOUND,
@@ -62,10 +86,10 @@ class PaymentApi(
         execute("GET", "/health", null, 60_000)
     }
 
-    suspend fun resolveQrToken(token: String, timeoutMs: Long): PayerResolution = withContext(Dispatchers.IO) {
+    suspend fun resolveQrToken(session: CollectorSession, token: String, timeoutMs: Long): PayerResolution = withContext(Dispatchers.IO) {
         val body = JSONObject().put("token", "glasspay:$token").toString()
             .toRequestBody("application/json".toMediaType())
-        val responseBody = execute("POST", "/api/payers/resolve", body, timeoutMs)
+        val responseBody = execute("POST", "/api/payers/resolve", body, timeoutMs, session.headers())
         try {
             val json = JSONObject(responseBody)
             PayerResolution(
@@ -79,6 +103,7 @@ class PaymentApi(
     }
 
     suspend fun interpret(
+        session: CollectorSession,
         resolutionId: String,
         text: String,
     ): InterpretResult {
@@ -90,7 +115,7 @@ class PaymentApi(
                     .put("text", text)
                     .toString()
                     .toRequestBody("application/json".toMediaType())
-                val json = JSONObject(execute("POST", "/api/agent/interpret", body, 20_000))
+                val json = JSONObject(execute("POST", "/api/agent/interpret", body, 20_000, session.headers()))
                 if (json.optBoolean("needsClarification")) {
                     return InterpretResult(null, json.optString("clarificationQuestion"))
                 }
@@ -114,16 +139,76 @@ class PaymentApi(
         }
     }
 
-    suspend fun confirm(proposalId: String): PaymentRequestCreated {
+    suspend fun confirm(session: CollectorSession, proposalId: String): PaymentRequestCreated {
         val body = JSONObject()
             .put("proposalId", proposalId)
             .toString()
             .toRequestBody("application/json".toMediaType())
-        val json = JSONObject(execute("POST", "/api/agent/confirm", body, 20_000))
+        val json = JSONObject(execute("POST", "/api/agent/confirm", body, 20_000, session.headers()))
         return PaymentRequestCreated(
             requestId = json.getString("requestId"),
             statusToken = json.getString("statusToken"),
         )
+    }
+
+    suspend fun createCollector(displayName: String): CollectorSession {
+        val body = JSONObject().put("displayName", displayName).toString()
+            .toRequestBody("application/json".toMediaType())
+        val responseBody = execute("POST", "/api/collectors", body, 60_000)
+        try {
+            val json = JSONObject(responseBody)
+            return CollectorSession(
+                collectorId = json.getString("collectorId"),
+                sessionSecret = json.getString("sessionSecret"),
+                displayName = json.getString("displayName"),
+            )
+        } catch (_: Exception) {
+            throw ApiException(ApiFailureType.INVALID_RESPONSE)
+        }
+    }
+
+    suspend fun getCollectorProfile(session: CollectorSession): CollectorProfile {
+        val responseBody = execute("GET", "/api/collectors/me", null, 15_000, session.headers())
+        try {
+            val json = JSONObject(responseBody)
+            val items = json.getJSONArray("activity")
+            return CollectorProfile(
+                displayName = json.getString("displayName"),
+                activity = (0 until items.length()).map { index ->
+                    val item = items.getJSONObject(index)
+                    CurrencyActivity(
+                        currency = item.getString("currency"),
+                        paidTotal = item.get("paidTotal").toString(),
+                        paidCount = item.getInt("paidCount"),
+                        inProgressCount = item.getInt("inProgressCount"),
+                    )
+                },
+            )
+        } catch (_: Exception) {
+            throw ApiException(ApiFailureType.INVALID_RESPONSE)
+        }
+    }
+
+    suspend fun getMovements(session: CollectorSession): List<Movement> {
+        val responseBody = execute("GET", "/api/collectors/me/movements", null, 15_000, session.headers())
+        try {
+            val items = JSONObject(responseBody).getJSONArray("movements")
+            return (0 until items.length()).map { index ->
+                val item = items.getJSONObject(index)
+                Movement(
+                    movementId = item.getString("movementId"),
+                    state = item.getString("state"),
+                    amount = item.get("amount").toString(),
+                    currency = item.getString("currency"),
+                    concept = item.getString("concept"),
+                    payerName = item.getString("payerName"),
+                    createdAt = item.getString("createdAt"),
+                    updatedAt = item.getString("updatedAt"),
+                )
+            }
+        } catch (_: Exception) {
+            throw ApiException(ApiFailureType.INVALID_RESPONSE)
+        }
     }
 
     suspend fun getPaymentStatus(requestId: String, statusToken: String): PaymentStatus {
@@ -187,6 +272,7 @@ class PaymentApi(
                     val responseBody = it.body?.string().orEmpty()
                     if (!it.isSuccessful) {
                         val type = when (it.code) {
+                            401 -> ApiFailureType.UNAUTHORIZED
                             404 -> ApiFailureType.NOT_FOUND
                             429 -> ApiFailureType.RATE_LIMITED
                             in 500..599 -> ApiFailureType.SERVER
