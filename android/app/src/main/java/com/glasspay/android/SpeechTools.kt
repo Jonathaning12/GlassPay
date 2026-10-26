@@ -2,11 +2,9 @@ package com.glasspay.android
 
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -27,27 +25,15 @@ class VoiceRecognizer(
     private var resultDelivered = false
     private var released = false
     private val recognitionAvailable = SpeechRecognizer.isRecognitionAvailable(context)
-    private val audioPermissionGranted =
-        context.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) ==
-            PackageManager.PERMISSION_GRANTED
     private var recognizer: SpeechRecognizer? = null
 
     init {
-        if (BuildConfig.DEBUG) {
-            Log.d(
-                "GlassPayVoice",
-                "recognitionAvailable=$recognitionAvailable " +
-                    "recordAudioGranted=$audioPermissionGranted",
-            )
-        }
         recognizer = createRecognizer(appContext)
     }
 
     private fun createRecognizer(context: Context): SpeechRecognizer? {
         if (!recognitionAvailable) return null
-        if (BuildConfig.DEBUG) Log.d("GlassPayVoice", "createSpeechRecognizer:before")
         val created = SpeechRecognizer.createSpeechRecognizer(context)
-        if (BuildConfig.DEBUG) Log.d("GlassPayVoice", "createSpeechRecognizer:after")
         created.setRecognitionListener(object : RecognitionListener {
             override fun onResults(results: Bundle) {
                 val text = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
@@ -63,9 +49,6 @@ class VoiceRecognizer(
 
             override fun onError(error: Int) {
                 if (released || resultDelivered) return
-                if (BuildConfig.DEBUG) {
-                    Log.d("GlassPayVoice", "recognitionErrorCode=$error")
-                }
                 reportError(error, voiceErrorMessage(error))
             }
 
@@ -97,10 +80,7 @@ class VoiceRecognizer(
             }
             try {
                 resultDelivered = false
-                if (BuildConfig.DEBUG) Log.d("GlassPayVoice", "cancel:before")
                 speechRecognizer.cancel()
-                if (BuildConfig.DEBUG) Log.d("GlassPayVoice", "cancel:after")
-                if (BuildConfig.DEBUG) Log.d("GlassPayVoice", "startListening:before")
                 speechRecognizer.startListening(
                     Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                         putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-MX")
@@ -109,27 +89,12 @@ class VoiceRecognizer(
                         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                     },
                 )
-                if (BuildConfig.DEBUG) Log.d("GlassPayVoice", "startListening:after")
-            } catch (exception: SecurityException) {
-                if (BuildConfig.DEBUG) {
-                    Log.d(
-                        "GlassPayVoice",
-                        "startListening exceptionClass=${exception.javaClass.name} " +
-                            "message=${exception.message}",
-                    )
-                }
+            } catch (_: SecurityException) {
                 reportError(
                     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS,
                     "Permiso de micrófono denegado. Usa la entrada por texto.",
                 )
-            } catch (exception: RuntimeException) {
-                if (BuildConfig.DEBUG) {
-                    Log.d(
-                        "GlassPayVoice",
-                        "startListening exceptionClass=${exception.javaClass.name} " +
-                            "message=${exception.message}",
-                    )
-                }
+            } catch (_: RuntimeException) {
                 reportError(
                     SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
                     "El servicio de voz está ocupado o no pudo iniciar. Intenta de nuevo.",
@@ -200,6 +165,10 @@ class SpeechOutput(
         } else {
             onDone()
         }
+    }
+
+    fun stop() {
+        speech.stop()
     }
 
     fun shutdown() {

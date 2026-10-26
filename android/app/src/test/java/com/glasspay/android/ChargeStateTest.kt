@@ -24,7 +24,7 @@ class ChargeStateTest {
     }
 
     @Test
-    fun networkFailureOnConfirmationIsNotRecoverable() {
+    fun confirmationFailureIsNotRecoverable() {
         val machine = ChargeStateMachine()
         machine.beginListening()
         machine.beginInterpretation()
@@ -187,19 +187,13 @@ class ChargeStateTest {
     }
 
     @Test
-    fun clearsSessionWhenProposalExpires() {
+    fun otherVoiceErrorKeepsSession() {
         assertEquals(
-            null,
-            inputSessionAfter(sampleSession(), ChargeInputClearReason.PROPOSAL_EXPIRED),
-        )
-    }
-
-    @Test
-    fun keepsSessionOnRecoverableVoiceErrors() {
-        val session = sampleSession()
-        assertEquals(
-            session,
-            inputSessionAfter(session, ChargeInputClearReason.RECOVERABLE_VOICE_ERROR),
+            sampleSession(),
+            inputSessionAfterVoiceError(
+                sampleSession(),
+                android.speech.SpeechRecognizer.ERROR_CLIENT,
+            ),
         )
     }
 

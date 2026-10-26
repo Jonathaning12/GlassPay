@@ -49,6 +49,7 @@ import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -123,10 +124,7 @@ private fun GlassPayApp() {
         if (!granted) {
             startVoiceWhenPermissionGranted = false
             dispatchCharge(
-                ChargeState.Error(
-                    "Permiso de micrófono denegado. Usa la entrada por texto.",
-                    recoverable = true,
-                ),
+                chargeMachine.inputError("Permiso de micrófono denegado. Usa la entrada por texto."),
             )
         } else if (startVoiceWhenPermissionGranted) {
             startVoiceWhenPermissionGranted = false
@@ -150,7 +148,7 @@ private fun GlassPayApp() {
                 }
                 voiceStatus = null
                 inputSession = inputSessionAfterVoiceError(inputSession, errorCode)
-                dispatchCharge(ChargeState.Error(message, recoverable = true))
+                dispatchCharge(chargeMachine.inputError(message))
             },
         )
     }
@@ -174,10 +172,7 @@ private fun GlassPayApp() {
         }
         if (!voiceRecognizer.isAvailable()) {
             dispatchCharge(
-                ChargeState.Error(
-                    "El reconocimiento de voz no está disponible. Usa la entrada por texto.",
-                    recoverable = true,
-                ),
+                chargeMachine.inputError("El reconocimiento de voz no está disponible. Usa la entrada por texto."),
             )
             return
         }
@@ -186,6 +181,10 @@ private fun GlassPayApp() {
     }
 
     fun startChargeInput() {
+        if (chargeMachine.state is ChargeState.Ready) {
+            lastRecognizedText = null
+            recognizedText = null
+        }
         dispatchCharge(chargeMachine.beginListening())
         speechOutput.speak(
             "Dicta el monto y el concepto del cobro.",
@@ -207,13 +206,13 @@ private fun GlassPayApp() {
                 ChargeInputAppendResult.TooManyRounds -> {
                     inputSession = null
                     dispatchCharge(
-                        ChargeState.Ready("No pude completar la aclaración. Empieza el cobro otra vez."),
+                        chargeMachine.restartInput("No pude completar la aclaración. Empieza el cobro otra vez."),
                     )
                     return
                 }
                 ChargeInputAppendResult.TooLong -> {
                     inputSession = null
-                    dispatchCharge(ChargeState.Ready("La frase es demasiado larga. Empieza el cobro otra vez."))
+                    dispatchCharge(chargeMachine.restartInput("La frase es demasiado larga. Empieza el cobro otra vez."))
                     return
                 }
                 ChargeInputAppendResult.Invalid -> return
@@ -221,7 +220,7 @@ private fun GlassPayApp() {
         }
         if (nextSession == null) {
             inputSession = null
-            dispatchCharge(ChargeState.Ready("La frase es demasiado larga. Empieza el cobro otra vez."))
+            dispatchCharge(chargeMachine.restartInput("La frase es demasiado larga. Empieza el cobro otra vez."))
             return
         }
         inputSession = nextSession
@@ -240,6 +239,8 @@ private fun GlassPayApp() {
                     speechOutput.speak(result.clarificationQuestion ?: "¿Qué dato debo aclarar?", "clarification")
                 } else {
                     inputSession = inputSessionAfter(inputSession, ChargeInputClearReason.PROPOSAL_CREATED)
+                    lastRecognizedText = null
+                    recognizedText = null
                     val remaining = remainingSeconds(next.expiresAt)
                     dispatchCharge(chargeMachine.preview(next, remaining))
                     speechOutput.speak(
@@ -270,6 +271,8 @@ private fun GlassPayApp() {
                     )
                 }
                 dispatchCharge(chargeMachine.failure(exception.type.toChargeFailureType()))
+            } catch (exception: CancellationException) {
+                throw exception
             } catch (_: Exception) {
                 Log.i("GlassPay", "interpret failure type=UNKNOWN httpCode=none")
                 inputSession = inputSessionAfterDecision(
@@ -286,6 +289,8 @@ private fun GlassPayApp() {
         if (preview.remainingSeconds <= 0 || chargeJob?.isActive == true) return
         voiceRecognizer.release()
         chargeJob?.cancel()
+        lastRecognizedText = null
+        recognizedText = null
         dispatchCharge(chargeMachine.beginConfirmation())
         chargeJob = scope.launch {
             try {
@@ -299,6 +304,8 @@ private fun GlassPayApp() {
                 } else {
                     dispatchCharge(chargeMachine.confirmationFailure())
                 }
+            } catch (exception: CancellationException) {
+                throw exception
             } catch (_: Exception) {
                 Log.i("GlassPay", "confirm failure type=UNKNOWN httpCode=none")
                 dispatchCharge(chargeMachine.confirmationFailure())
@@ -310,6 +317,8 @@ private fun GlassPayApp() {
         voiceRecognizer.cancel()
         chargeJob?.cancel()
         inputSession = inputSessionAfter(inputSession, ChargeInputClearReason.CANCELLED)
+        lastRecognizedText = null
+        recognizedText = null
         dispatchCharge(chargeMachine.cancel())
         speechOutput.speak("Cobro cancelado.", "charge_cancelled")
     }
@@ -321,7 +330,9 @@ private fun GlassPayApp() {
         textInput = ""
         lastRecognizedText = null
         recognizedText = null
-        dispatchCharge(ChargeState.Ready())
+        voiceStatus = null
+        speechOutput.stop()
+        dispatchCharge(chargeMachine.startOver())
     }
 
     fun interpretTextInput(text: String) {
@@ -369,6 +380,23 @@ private fun GlassPayApp() {
         activeJob = null
     }
 
+    fun scanAnotherQr() {
+        cancelActiveRequest()
+        chargeJob?.cancel()
+        voiceRecognizer.release()
+        speechOutput.stop()
+        inputSession = inputSessionAfter(inputSession, ChargeInputClearReason.RESTARTED)
+        announcedPaymentRequestId = null
+        textInput = ""
+        recognizedText = null
+        lastRecognizedText = null
+        voiceStatus = null
+        microphoneRequested = false
+        startVoiceWhenPermissionGranted = false
+        dispatchCharge(chargeMachine.resetForNewScan())
+        dispatch(ResolveEvent.Reset)
+    }
+
     fun resolveToken(token: String) {
         if (uiState is ResolveState.Identified || uiState is ResolveState.Failed) return
         if (token == rejectedToken) return
@@ -386,6 +414,9 @@ private fun GlassPayApp() {
                 val resolution = api.resolveQrToken(token, if (waking) 60_000 else 15_000)
                 serverReady = true
                 inputSession = inputSessionAfter(inputSession, ChargeInputClearReason.QR_CHANGED)
+                if (chargeMachine.state is ChargeState.Ready) {
+                    dispatchCharge(chargeMachine.resetForNewScan())
+                }
                 dispatch(
                     ResolveEvent.Success(
                         attemptId,
@@ -412,16 +443,26 @@ private fun GlassPayApp() {
         }
     }
 
-    LaunchedEffect(uiState) {
+    val holdsPaymentRequest = chargeState is ChargeState.Confirming ||
+        chargeState is ChargeState.Created ||
+        (chargeState as? ChargeState.Error)?.recoverable == false
+    LaunchedEffect(uiState, holdsPaymentRequest) {
         val identified = uiState as? ResolveState.Identified ?: return@LaunchedEffect
         val remaining = remainingSeconds(identified.expiresAt)
         if (remaining > 0) delay(remaining * 1_000)
+        if (holdsPaymentRequest) return@LaunchedEffect
         if (stateMachine.state == identified) {
             cancelActiveRequest()
             chargeJob?.cancel()
             voiceRecognizer.release()
             inputSession = inputSessionAfter(inputSession, ChargeInputClearReason.RESOLUTION_EXPIRED)
-            dispatchCharge(ChargeState.Ready("La resolución venció. Escanea otro QR."))
+            textInput = ""
+            recognizedText = null
+            lastRecognizedText = null
+            voiceStatus = null
+            dispatchCharge(chargeMachine.resetForNewScan(
+                    (chargeMachine.state as? ChargeState.Ready)?.message ?: "La resolución venció. Escanea otro QR.",
+                ))
             dispatch(ResolveEvent.Reset)
         }
     }
@@ -458,8 +499,10 @@ private fun GlassPayApp() {
                         it
                     }
                 }
-                dispatchCharge(chargeMachine.paymentUpdated(tracking))
-                if (tracking == PaymentTracking.Paid && announcedPaymentRequestId != requestId) {
+                val updated = chargeMachine.paymentUpdated(tracking)
+                dispatchCharge(updated)
+                if (updated !is ChargeState.Created || updated.requestId != requestId) break
+                if (updated.payment == PaymentTracking.Paid && announcedPaymentRequestId != requestId) {
                     announcedPaymentRequestId = requestId
                     vibrate(context)
                     speechOutput.speak("Pago recibido.", "payment_received")
@@ -513,15 +556,25 @@ private fun GlassPayApp() {
                     onConfirm = { confirmCharge() },
                     onCancel = { cancelCharge() },
                     onStartOver = { startOverCharge() },
-                    onReset = {
-                        cancelActiveRequest()
-                        chargeJob?.cancel()
+                    onBack = {
                         voiceRecognizer.release()
-                        inputSession = inputSessionAfter(inputSession, ChargeInputClearReason.RESTARTED)
-                        announcedPaymentRequestId = null
-                        dispatchCharge(ChargeState.Ready())
-                        dispatch(ResolveEvent.Reset)
+                        speechOutput.stop()
+                        voiceStatus = null
+                        lastRecognizedText = null
+                        recognizedText = null
+                        dispatchCharge(chargeMachine.back())
                     },
+                    onStopWaiting = {
+                        speechOutput.stop()
+                        lastRecognizedText = null
+                        recognizedText = null
+                        dispatchCharge(chargeMachine.stopWaiting())
+                    },
+                    onRetry = {
+                        dispatchCharge(chargeMachine.startOver())
+                        startChargeInput()
+                    },
+                    onReset = { scanAnotherQr() },
                     voiceStatus = voiceStatus,
                     lastRecognizedText = lastRecognizedText,
                     accumulatedText = inputSession?.text,
@@ -555,6 +608,9 @@ private fun IdentifiedContent(
     onConfirm: () -> Unit,
     onCancel: () -> Unit,
     onStartOver: () -> Unit,
+    onBack: () -> Unit,
+    onStopWaiting: () -> Unit,
+    onRetry: () -> Unit,
     onReset: () -> Unit,
     voiceStatus: String?,
     lastRecognizedText: String?,
@@ -562,10 +618,10 @@ private fun IdentifiedContent(
 ) {
     Text("Pagador identificado", color = Color.White, style = MaterialTheme.typography.headlineSmall)
     Text("Pagador: ${state.displayName}", color = Color.White, style = MaterialTheme.typography.titleLarge)
+    val actions = availableActions(chargeState)
     when (val charge = chargeState) {
         is ChargeState.Ready -> {
             charge.message?.let { Text(it, color = Color(0xFFFFB4AB)) }
-            Button(onClick = onStartCharge) { Text("Dictar cobro") }
         }
         ChargeState.Listening -> Text(voiceStatus ?: "Preparando micrófono…", color = Color.White)
         ChargeState.Interpreting -> {
@@ -574,8 +630,6 @@ private fun IdentifiedContent(
         }
         is ChargeState.Clarification -> {
             Text(charge.question, color = Color(0xFFFFDDB3))
-            Button(onClick = onStartCharge) { Text("Responder") }
-            Button(onClick = onStartOver) { Text("Empezar de nuevo") }
         }
         is ChargeState.Preview -> {
             Text("Vista previa", color = Color.White, style = MaterialTheme.typography.titleLarge)
@@ -585,9 +639,6 @@ private fun IdentifiedContent(
             Text("Pagador: ${state.displayName}", color = Color.White)
             Text("Vence en ${charge.remainingSeconds}s", color = Color(0xFFFFDDB3))
             charge.message?.let { Text(it, color = Color(0xFFFFB4AB)) }
-            Button(onClick = onConfirm, enabled = charge.remainingSeconds > 0) { Text("Confirmar") }
-            Button(onClick = onCancel, enabled = charge.remainingSeconds > 0) { Text("Cancelar") }
-            Button(onClick = onStartOver, enabled = charge.remainingSeconds > 0) { Text("Empezar de nuevo") }
         }
         ChargeState.Confirming -> {
             Text("Confirmando…", color = Color.White)
@@ -603,42 +654,41 @@ private fun IdentifiedContent(
                 PaymentTracking.Failed -> Text("El pago falló.", color = Color(0xFFFFB4AB))
                 is PaymentTracking.Error -> Text(payment.message, color = Color(0xFFFFB4AB))
             }
-            Button(onClick = onReset) { Text("Escanear otro QR") }
         }
         is ChargeState.Error -> {
             Text(charge.message, color = Color(0xFFFFB4AB))
-            if (charge.recoverable) {
-                Button(onClick = onStartCharge) { Text("Intentar de nuevo") }
-            } else {
-                Button(onClick = onReset) { Text("Escanear otro QR") }
-            }
         }
     }
-    lastRecognizedText?.let {
+    if (ChargeAction.CONFIRM in actions) Button(onClick = onConfirm) { Text("Confirmar") }
+    if (ChargeAction.DICTATE in actions) Button(onClick = onStartCharge) { Text("Dictar cobro") }
+    if (ChargeAction.ANSWER in actions) Button(onClick = onStartCharge) { Text("Responder") }
+    if (ChargeAction.RETRY in actions) Button(onClick = onRetry) { Text("Intentar de nuevo") }
+    if (ChargeAction.CANCEL in actions) Button(onClick = onCancel) { Text("Cancelar") }
+    if (ChargeAction.START_OVER in actions) Button(onClick = onStartOver) { Text("Empezar de nuevo") }
+    if (ChargeAction.BACK in actions) Button(onClick = onBack) { Text("Volver") }
+    if (ChargeAction.STOP_WAITING in actions) Button(onClick = onStopWaiting) { Text("Dejar de esperar") }
+    if (ChargeAction.SCAN_ANOTHER in actions) Button(onClick = onReset) { Text("Escanear otro QR") }
+    lastRecognizedText?.takeIf { showsRecognizedText(chargeState) }?.let {
         Text("Entendí: ${displayText(it, 120)}", color = Color(0xFFB7D8FF))
     }
-    if (chargeState is ChargeState.Clarification) {
+    if (showsAccumulatedText(chargeState)) {
         accumulatedText?.let {
             Text("Frase acumulada: ${displayText(it, 240)}", color = Color(0xFFB7D8FF))
         }
     }
-    OutlinedTextField(
-        value = textInput,
-        onValueChange = onTextInput,
-        label = { Text("Frase del cobro (opcional)") },
-        modifier = Modifier.fillMaxWidth(),
-        enabled = chargeState is ChargeState.Ready ||
-            chargeState is ChargeState.Listening ||
-            chargeState is ChargeState.Clarification,
-    )
-    Button(
-        onClick = onInterpretText,
-        enabled = textInput.isNotBlank() &&
-            (chargeState is ChargeState.Ready ||
-                chargeState is ChargeState.Listening ||
-                chargeState is ChargeState.Clarification),
-    ) {
-        Text("Interpretar texto")
+    if (showsTextInput(chargeState)) {
+        OutlinedTextField(
+            value = textInput,
+            onValueChange = onTextInput,
+            label = { Text("Frase del cobro (opcional)") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(
+            onClick = onInterpretText,
+            enabled = textInput.isNotBlank(),
+        ) {
+            Text("Interpretar texto")
+        }
     }
 }
 
@@ -735,14 +785,6 @@ private fun waitingPaymentMessage(elapsedSeconds: Long): String {
         elapsedSeconds < 30 -> "Esto está tardando un poco más de lo normal…"
         else -> "Tu pago está en proceso…"
     }
-}
-
-private fun isTerminal(payment: PaymentTracking): Boolean {
-    return payment is PaymentTracking.Paid ||
-        payment is PaymentTracking.Rejected ||
-        payment is PaymentTracking.Expired ||
-        payment is PaymentTracking.Failed ||
-        payment is PaymentTracking.Error
 }
 
 private fun vibrate(context: android.content.Context) {

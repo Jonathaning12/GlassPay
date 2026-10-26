@@ -136,7 +136,7 @@ Fase 7 - Extras (solo si sobra tiempo)
 - No inventes endpoints, parámetros ni funciones del SDK. Si no estás seguro, dilo y propón cómo verificarlo.
 - Explícame brevemente los conceptos de Android que sean nuevos (permisos, ciclo de vida, corrutinas) cuando aparezcan, sin extenderte.
 - Cuando algo falle, diagnostica la causa raíz antes de parchear. Anota en MEMORY.md los problemas relevantes.
-- Mantén el alcance acotado: el caso a demostrar es "cobrar una cuenta a un amigo". No agregues funciones que no estén en el plan sin preguntarme.
+- Mantén el alcance acotado: el caso central a demostrar sigue siendo "cobrar una cuenta a un amigo", ahora dentro de una app tipo billetera (ver "FASE 5W"). No agregues funciones que no estén en el plan sin preguntarme.
 - Código claro, con nombres descriptivos, manejo de errores y comentarios solo donde aporten.
 - Si el entorno limita red, ejecución o acceso a archivos, dímelo y dame los pasos para hacerlo manualmente.
 
@@ -313,3 +313,18 @@ Criterio de terminado: dicto la frase, veo y escucho el recibo, confirmo por voz
 5. Guion de demo de 2 minutos en docs/, con datos de prueba, orden de pasos y plan B para cada punto de fallo (QR, voz, red, Render, Gemini).
 6. Documenta en MEMORY.md como limitación conocida que los endpoints del cobrador no tienen autenticación fuerte (solo rate limiting, resolutionId y tokens de vida corta) y propón, sin implementarla aún, una mejora sencilla para después del hackathon.
 Criterio de terminado: flujo completo con el dispositivo simulado de Meta (o con el celular si no hay acceso), "Pago recibido" visible y audible sin intervención manual, y tres ejecuciones seguidas sin fallos.
+# FASE 5W - App tipo billetera (aprobada el 2026-10-25; va antes de 5C)
+
+Cambio de alcance aprobado: la app del cobrador evoluciona de "cámara + cobro" a una app tipo billetera (sin la marca de PayPal ni de ningún banco). El flujo de cobro por QR + voz se conserva tal cual, con todas sus reglas de seguridad.
+
+Decisiones aprobadas:
+- Orden: primero se corrigen los bugs de voz/UI que bloquean la prueba de 5B; luego la interfaz de billetera; la integración de lentes (5C) se pospone.
+- Se puede tocar `server/` con un plan previo por endpoint (cuenta del cobrador, contactos, movimientos).
+- Identidad del cobrador: perfil creado desde la app con un secreto de sesión (mismo patrón que el pagador: aleatorio, solo su hash en el servidor). En Android se guarda cifrado en el dispositivo; es la única excepción a "nada sensible en disco".
+- Saldo y movimientos salen del registro propio de GlassPay en el servidor y se rotulan como "Actividad en GlassPay (Sandbox)", nunca como saldo bancario real. No se usan las APIs de reportes de PayPal por ahora.
+- Enviar dinero: el botón existe pero queda "Próximamente"; PayPal Payouts (Sandbox) será una entrega aparte, tras verificar su documentación, con la misma doble confirmación.
+- Contactos: un pagador puede guardarse como contacto tras escanear su QR una vez; el contacto guarda solo el nombre visible y un ID opaco del servidor (nunca el token QR). Cobrar a un contacto guardado sigue requiriendo la confirmación del cobrador y la aprobación del pagador en PayPal.
+- Persistencia de la demo: datos sembrados al arrancar el servidor; Postgres en Render solo con aprobación explícita.
+- Navegación por pestañas (Inicio, Movimientos, Cobrar, Contactos) sin dependencias nuevas.
+
+Reglas: antes de cada entrega de 5W, plan corto (pantallas, archivos, endpoints, tablas) y espera de aprobación. Todas las reglas de seguridad de este archivo siguen vigentes.

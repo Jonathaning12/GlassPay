@@ -155,9 +155,18 @@ function extractWordAmount(text) {
 
 function deterministicParse(text, context) {
   const normalized = normalizeText(text);
-  const numericMatch = normalized.match(/(^|[^\w])-?\d+(?:[.,]\d{1,2})?/);
+  // El reconocedor de voz de Android escribe montos como "$150" o "$1,200":
+  // el "$" queda fuera del grupo capturado y la coma de miles se descarta.
+  // El signo se captura aparte para que "-$150" siga siendo negativo.
+  const numericMatch = normalized.match(
+    /(?:^|[^\w\-−])([-−]?)\s?\$?\s?(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:[.,]\d{1,2})?)(?!\d)/,
+  );
   const amount = numericMatch
-    ? Number.parseFloat(numericMatch[0].replace(",", "."))
+    ? Number.parseFloat(
+      (numericMatch[1] ? "-" : "") + (/,\d{3}/.test(numericMatch[2])
+        ? numericMatch[2].replace(/,/g, "")
+        : numericMatch[2].replace(",", ".")),
+    )
     : extractWordAmount(normalized);
   const currency = /\b(d[oó]lares?|usd)\b/.test(normalized)
     ? "USD"

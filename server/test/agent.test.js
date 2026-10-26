@@ -105,6 +105,84 @@ test("deterministic parser understands Spanish amounts and asks for missing data
   assert.equal(ambiguous.needsClarification, true);
 });
 
+const parserContext = {
+  defaultCurrency: "MXN",
+  allowedCurrencies: ["MXN"],
+  maxAmount: 1000,
+};
+
+test("deterministic parser reads a dollar-sign amount written by the voice recognizer", () => {
+  const result = deterministicParse("Cóbrale $150 por la camiseta", parserContext);
+  assert.equal(result.amount, 150);
+  assert.equal(result.currency, "MXN");
+  assert.equal(result.needsClarification, false);
+});
+
+test("deterministic parser reads a dollar-sign amount followed by pesos", () => {
+  const result = deterministicParse("Cóbrale $150 pesos por la camiseta", parserContext);
+  assert.equal(result.amount, 150);
+  assert.equal(result.currency, "MXN");
+});
+
+test("deterministic parser reads a dollar-sign amount with decimals", () => {
+  assert.equal(deterministicParse("cobra $55.50 por el taxi", parserContext).amount, 55.5);
+});
+
+test("deterministic parser reads a thousands separator as thousands", () => {
+  assert.equal(deterministicParse("cóbrale $1,200 por la renta", parserContext).amount, 1200);
+});
+
+test("deterministic parser keeps a decimal comma as decimals", () => {
+  assert.equal(deterministicParse("cobra 55,50 por el taxi", parserContext).amount, 55.5);
+});
+
+test("deterministic parser still reads plain amounts", () => {
+  assert.equal(deterministicParse("Cobrale 150 pesos por la camiseta", parserContext).amount, 150);
+});
+
+test("deterministic parser keeps negative dollar-sign amounts invalid", () => {
+  const result = deterministicParse("cóbrale -$150 por la camiseta", parserContext);
+  assert.equal(result.amount, -150);
+  assert.equal(result.needsClarification, true);
+});
+
+test("deterministic parser keeps a spaced negative dollar-sign amount invalid", () => {
+  const result = deterministicParse("cóbrale - $150 por la camiseta", parserContext);
+  assert.equal(result.amount, -150);
+  assert.equal(result.needsClarification, true);
+});
+
+test("deterministic parser keeps a Unicode minus amount invalid", () => {
+  const result = deterministicParse("cóbrale −150 por la camiseta", parserContext);
+  assert.equal(result.amount, -150);
+  assert.equal(result.needsClarification, true);
+});
+
+test("deterministic parser keeps negative plain amounts invalid", () => {
+  const result = deterministicParse("cóbrale -150 por la camiseta", parserContext);
+  assert.equal(result.amount, -150);
+  assert.equal(result.needsClarification, true);
+});
+
+test("deterministic parser treats dollar sign with dólares as USD", () => {
+  const result = deterministicParse("cóbrale $30 dólares por la comida", parserContext);
+  assert.equal(result.amount, 30);
+  assert.equal(result.currency, "USD");
+});
+
+test("model result matching a dollar-sign amount is accepted", () => {
+  const result = validateModelResultAgainstText({
+    amount: 150,
+    currency: "MXN",
+    concept: "camiseta",
+    needsClarification: false,
+    clarificationQuestion: "",
+    method: "gemini",
+  }, "Cóbrale $150 por la camiseta", parserContext);
+  assert.equal(result.needsClarification, false);
+  assert.equal(result.amount, 150);
+});
+
 test("model results cannot introduce unsupported amounts or concepts", () => {
   const context = {
     defaultCurrency: "MXN",
