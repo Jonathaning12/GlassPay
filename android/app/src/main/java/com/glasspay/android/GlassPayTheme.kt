@@ -30,6 +30,9 @@ object GlassPayColors {
     val Error = Color(0xFFFF8A80)
     val ErrorSoft = Color(0xFF3A1614)
     val QrPaper = Color(0xFFFFFFFF)
+    // Series de gráficas (chart/cobrado y chart/enviado de Figma), validadas para daltonismo sobre Card.
+    val ChartPaid = Color(0xFF14A3C4)
+    val ChartSent = Color(0xFF9878F0)
 }
 
 fun statusColor(kind: StatusKind): Color {

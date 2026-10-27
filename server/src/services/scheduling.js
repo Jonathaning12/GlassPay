@@ -10,6 +10,13 @@ const DEFAULT_HOUR = 10; // Si solo dicen el día ("mañana"), se programa a las
 const WEEKDAYS = ["domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado"];
 const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
 
+// Para comparar nombres: sin acentos ni signos ("Ana," debe coincidir con "Ana").
+function foldWords(text) {
+  return fold(text).replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+const OCCURRENCES_PATTERN = /\b(?:por|durante)\s+\d{1,2}\s+(?:veces|semanas|meses)\b|\b\d{1,2}\s+veces\b/;
+
 function fold(text) {
   return text.normalize("NFKC").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
     .replace(/[¿?¡!]/g, " ").replace(/\s+/g, " ").trim();
@@ -81,6 +88,11 @@ function computeRunAt(when, now) {
 
 const RELATIVE_PATTERN = /\b(?:en|dentro de)\s+(\d+|un|una|media|dos|tres|cuatro|cinco|diez|quince|veinte|treinta)\s+(minutos?|horas?|dias?)\b/;
 const TIME_PATTERN = /\ba\s+la(?:s)?\s+(\d{1,2}|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)(?::(\d{2})|\s+y\s+media)?(?:\s*(am|pm|de la manana|de la tarde|de la noche))?/;
+const MONTH_NAMES = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+];
+const DAY_OF_MONTH_PATTERN = new RegExp(`\\b(?:el|del|a partir del)\\s+(\\d{1,2})(?:\\s+de\\s+(${MONTH_NAMES.join("|")}))?\\b`);
 const SMALL_NUMBERS = {
   un: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10,
   once: 11, doce: 12, quince: 15, veinte: 20, treinta: 30, media: 0.5,
@@ -112,10 +124,23 @@ function parseWhenFallback(text, now) {
     dayOffset = 0;
     dayText = "hoy";
   } else {
-    const weekday = WEEKDAYS.findIndex((name) => new RegExp(`\\b(?:el|este|el proximo)\\s+${name}\\b`).test(folded));
+    const weekday = WEEKDAYS.findIndex((name) => new RegExp(`\\b(?:el|este|el proximo|cada)\\s+${name}\\b`).test(folded));
+    const dayOfMonth = folded.match(DAY_OF_MONTH_PATTERN);
     if (weekday >= 0) {
       dayOffset = (weekday - today.weekday + 7) % 7 || 7;
       dayText = WEEKDAYS[weekday];
+    } else if (dayOfMonth) {
+      const day = Number(dayOfMonth[1]);
+      const namedMonth = dayOfMonth[2] ? MONTH_NAMES.indexOf(dayOfMonth[2]) : -1;
+      // Sin mes: este mes si el día no ha pasado; si ya pasó, el próximo.
+      let month = namedMonth >= 0 ? namedMonth : today.month;
+      let year = today.year;
+      if (namedMonth < 0 && day < today.day) month += 1;
+      if (namedMonth >= 0 && (namedMonth < today.month || (namedMonth === today.month && day < today.day))) year += 1;
+      const target = new Date(Date.UTC(year, month, day));
+      if (target.getUTCDate() !== day) return null;
+      dayOffset = Math.round((target.getTime() - Date.UTC(today.year, today.month, today.day)) / DAY_MS);
+      dayText = dayOfMonth[0];
     }
   }
   const timeMatch = folded.match(TIME_PATTERN);
@@ -137,6 +162,33 @@ function parseWhenFallback(text, now) {
     date = `${target.getUTCFullYear()}-${String(target.getUTCMonth() + 1).padStart(2, "0")}-${String(target.getUTCDate()).padStart(2, "0")}`;
   }
   return { whenType: "absolute", minutesFromNow: 0, date, time, matched: [dayText, timeMatch?.[0] || ""].join(" ") };
+}
+
+const RECURRENCE_PATTERN = /\bcada\s+(semana|mes|lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b|\b(semanal|mensual)(?:mente)?\b/;
+
+/** "cada mes" → monthly; "cada semana" o "cada viernes" → weekly; si no, null. */
+function detectRecurrence(text) {
+  const match = fold(text).match(RECURRENCE_PATTERN);
+  if (!match) return null;
+  const word = match[1] || match[2];
+  return word === "mes" || word === "mensual" ? "monthly" : "weekly";
+}
+
+/** Siguiente fecha de una serie; el día 31 inexistente pasa al último día del mes. */
+function nextOccurrence(row) {
+  const current = new Date(row.run_at);
+  if (row.recurrence === "weekly") {
+    return new Date(current.getTime() + 7 * DAY_MS).toISOString();
+  }
+  if (row.recurrence !== "monthly") return null;
+  const parts = localParts(current);
+  const anchor = row.anchor_day || parts.day;
+  const daysInNext = new Date(Date.UTC(parts.year, parts.month + 2, 0)).getUTCDate();
+  return fromLocal(parts.year, parts.month + 1, Math.min(anchor, daysInNext), parts.hour, parts.minute).toISOString();
+}
+
+function localDay(date) {
+  return localParts(date).day;
 }
 
 /** Todos los números que aparecen en el texto (cifras y palabras), para validar el monto de la IA. */
@@ -163,12 +215,13 @@ function numbersInText(text) {
 }
 
 /** Respaldo sin IA para el monto: el primer número que no forme parte de la fecha u hora. */
-function amountFallback(text, whenMatched) {
-  let folded = fold(text);
-  for (const part of (whenMatched || "").split(" ").filter(Boolean)) {
-    folded = folded.replace(part, " ");
-  }
-  folded = folded.replace(RELATIVE_PATTERN, " ").replace(TIME_PATTERN, " ");
+function amountFallback(text) {
+  // Se quitan las expresiones de fecha completas (no sus palabras sueltas: "6" no debe borrar el 6 de "600").
+  const folded = fold(text)
+    .replace(new RegExp(RELATIVE_PATTERN.source, "g"), " ")
+    .replace(new RegExp(TIME_PATTERN.source, "g"), " ")
+    .replace(new RegExp(DAY_OF_MONTH_PATTERN.source, "g"), " ")
+    .replace(new RegExp(OCCURRENCES_PATTERN.source, "g"), " ");
   const numeric = folded.match(/\$?\s?(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:[.,]\d{1,2})?)/);
   if (numeric) {
     const raw = /,\d{3}/.test(numeric[1]) ? numeric[1].replace(/,/g, "") : numeric[1].replace(",", ".");
@@ -180,7 +233,7 @@ function amountFallback(text, whenMatched) {
 
 /** Concepto: lo que sigue a "por"/"para" hasta la fecha u hora. */
 function conceptFallback(text) {
-  const match = text.match(/\b(?:por|para)\s+(.+?)(?=\s+(?:hoy|ma[ñn]ana|pasado|el\s+\w+|este\s+\w+|a\s+las?\s|en\s+\d|dentro\s+de)|$)/i);
+  const match = text.replace(new RegExp(OCCURRENCES_PATTERN.source, "gi"), " ").match(/\b(?:por|para)\s+(.+?)(?=\s+(?:hoy|ma[ñn]ana|pasado|el\s+\w+|este\s+\w+|a\s+las?\s|en\s+\d|dentro\s+de|cada\s|a\s+partir|empezando|entre\s)|$)/i);
   return match ? match[1].trim() : "";
 }
 
@@ -189,18 +242,18 @@ function conceptFallback(text) {
  * inventarlo) y coincidir con un solo contacto guardado.
  */
 function matchContact(contactName, text, contacts) {
-  const foldedText = ` ${fold(text)} `;
-  const mentioned = (name) => foldedText.includes(` ${fold(name)} `);
+  const foldedText = ` ${foldWords(text)} `;
+  const mentioned = (name) => foldedText.includes(` ${foldWords(name)} `);
   let candidates = [];
-  const wanted = fold(contactName || "");
+  const wanted = foldWords(contactName || "");
   if (wanted && mentioned(wanted.split(" ")[0])) {
-    candidates = contacts.filter((contact) => fold(contact.displayName) === wanted);
+    candidates = contacts.filter((contact) => foldWords(contact.displayName) === wanted);
     if (candidates.length === 0) {
-      candidates = contacts.filter((contact) => fold(contact.displayName).split(" ")[0] === wanted.split(" ")[0]);
+      candidates = contacts.filter((contact) => foldWords(contact.displayName).split(" ")[0] === wanted.split(" ")[0]);
     }
   }
   if (candidates.length === 0 && !wanted) {
-    candidates = contacts.filter((contact) => mentioned(contact.displayName) || mentioned(fold(contact.displayName).split(" ")[0]));
+    candidates = contacts.filter((contact) => mentioned(contact.displayName) || mentioned(foldWords(contact.displayName).split(" ")[0]));
   }
   if (candidates.length === 1) return { status: "match", contact: candidates[0] };
   if (candidates.length > 1) return { status: "ambiguous", candidates };
@@ -211,6 +264,10 @@ module.exports = {
   amountFallback,
   computeRunAt,
   conceptFallback,
+  detectRecurrence,
+  foldWords,
+  localDay,
+  nextOccurrence,
   describeNow,
   formatRunAt,
   matchContact,

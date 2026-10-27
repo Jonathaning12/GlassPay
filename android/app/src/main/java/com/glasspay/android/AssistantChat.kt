@@ -20,16 +20,41 @@ data class AssistantProposal(
     val proposalId: String,
     val action: String,
     val contactName: String,
-    val amount: String,
+    /** Nulo en un recordatorio sin monto. */
+    val amount: String?,
     val currency: String,
     val concept: String,
-    val runAt: String,
-    val runAtLabel: String,
+    /** Nulo en una división que se cobra al confirmar. */
+    val runAt: String?,
+    val runAtLabel: String?,
     val expiresAt: String,
+    val recurrence: String? = null,
+    val occurrencesTotal: Int? = null,
+    val participants: List<SplitShare> = emptyList(),
+    val myShare: String? = null,
+    /** Aviso: hoy el saldo no alcanza (se vuelve a verificar al enviar). */
+    val balanceWarning: Boolean = false,
 )
+
+data class SplitShare(val contactName: String, val amount: String)
+
+/** Lo que pasó al confirmar una propuesta. */
+sealed interface ProposalOutcome {
+    data class Scheduled(val items: List<ScheduledItem>) : ProposalOutcome
+    data object Cancelled : ProposalOutcome
+    data class Split(val results: List<SplitResult>) : ProposalOutcome
+    data class ReminderSent(val contactName: String) : ProposalOutcome
+}
+
+/** Recordatorio que le llegó al usuario (texto de plantilla fija del servidor). */
+data class Reminder(val reminderId: String, val text: String, val createdAt: String)
+
+data class SplitResult(val contactName: String, val amount: String, val ok: Boolean, val failure: String?)
 
 data class ScheduledItem(
     val scheduledId: String,
+    /** "charge" o "reminder". */
+    val kind: String = "charge",
     val contactName: String,
     val amount: String,
     val currency: String,
@@ -39,6 +64,9 @@ data class ScheduledItem(
     val autoExecute: Boolean,
     val state: String,
     val failure: String?,
+    val recurrence: String? = null,
+    val occurrencesTotal: Int = 1,
+    val occurrencesDone: Int = 0,
 )
 
 /** Respuesta redactada por el servidor; la app solo la muestra. */
@@ -78,12 +106,22 @@ internal fun parseAssistantResponse(body: String): AssistantResponse {
             proposalId = it.getString("proposalId"),
             action = it.getString("action"),
             contactName = it.getString("contactName"),
-            amount = it.getString("amount"),
+            amount = it.optStringOrNull("amount"),
             currency = it.getString("currency"),
             concept = it.getString("concept"),
-            runAt = it.getString("runAt"),
-            runAtLabel = it.getString("runAtLabel"),
+            runAt = it.optStringOrNull("runAt"),
+            runAtLabel = it.optStringOrNull("runAtLabel"),
             expiresAt = it.getString("expiresAt"),
+            recurrence = it.optStringOrNull("recurrence"),
+            occurrencesTotal = if (it.isNull("occurrencesTotal")) null else it.optInt("occurrencesTotal"),
+            participants = it.optJSONArray("participants")?.let { shares ->
+                (0 until shares.length()).map { index ->
+                    val share = shares.getJSONObject(index)
+                    SplitShare(share.getString("contactName"), share.getString("amount"))
+                }
+            }.orEmpty(),
+            myShare = it.optStringOrNull("myShare"),
+            balanceWarning = it.optBoolean("balanceWarning", false),
         )
     }
     val scheduled = reply.optJSONArray("scheduled")?.let { items ->
@@ -103,6 +141,7 @@ internal fun parseAssistantResponse(body: String): AssistantResponse {
 internal fun parseScheduledItem(item: JSONObject): ScheduledItem {
     return ScheduledItem(
         scheduledId = item.getString("scheduledId"),
+        kind = item.optString("kind", "charge").ifEmpty { "charge" },
         contactName = item.getString("contactName"),
         amount = item.getString("amount"),
         currency = item.getString("currency"),
@@ -111,8 +150,78 @@ internal fun parseScheduledItem(item: JSONObject): ScheduledItem {
         runAtLabel = item.getString("runAtLabel"),
         autoExecute = item.getBoolean("autoExecute"),
         state = item.getString("state"),
-        failure = if (item.isNull("failure")) null else item.optString("failure"),
+        failure = item.optStringOrNull("failure"),
+        recurrence = item.optStringOrNull("recurrence"),
+        occurrencesTotal = item.optInt("occurrencesTotal", 1),
+        occurrencesDone = item.optInt("occurrencesDone", 0),
     )
+}
+
+internal fun parseProposalOutcome(body: String): ProposalOutcome {
+    val json = JSONObject(body)
+    json.optJSONArray("split")?.let { items ->
+        return ProposalOutcome.Split(
+            (0 until items.length()).map { index ->
+                val item = items.getJSONObject(index)
+                SplitResult(item.getString("contactName"), item.getString("amount"), item.getBoolean("ok"), item.optStringOrNull("failure"))
+            },
+        )
+    }
+    json.optJSONArray("scheduledItems")?.let { items ->
+        return ProposalOutcome.Scheduled((0 until items.length()).map { parseScheduledItem(items.getJSONObject(it)) })
+    }
+    json.optJSONObject("scheduled")?.let { return ProposalOutcome.Scheduled(listOf(parseScheduledItem(it))) }
+    if (json.optBoolean("cancelled")) return ProposalOutcome.Cancelled
+    json.optJSONObject("reminder")?.let { return ProposalOutcome.ReminderSent(it.optString("contactName")) }
+    throw IllegalArgumentException("unknown proposal outcome")
+}
+
+private fun JSONObject.optStringOrNull(name: String): String? = if (isNull(name)) null else optString(name).ifEmpty { null }
+
+fun recurrenceLabel(recurrence: String?, total: Int?): String? {
+    val every = when (recurrence) {
+        "weekly" -> "Cada semana"
+        "monthly" -> "Cada mes"
+        else -> return null
+    }
+    return if (total != null && total > 0) "$every · $total veces" else every
+}
+
+/** Mensaje del chat tras confirmar; nunca dice "pagado": el pagador aún debe aprobar en PayPal. */
+fun proposalOutcomeMessage(outcome: ProposalOutcome, autoExecute: Boolean): String {
+    return when (outcome) {
+        ProposalOutcome.Cancelled -> "Listo, cancelé la programación."
+        is ProposalOutcome.ReminderSent ->
+            "Listo, le envié el recordatorio a ${outcome.contactName}. Lo verá en su sección «Por pagar»."
+        is ProposalOutcome.Split -> {
+            val ok = outcome.results.filter { it.ok }
+            val failed = outcome.results.filterNot { it.ok }
+            buildString {
+                append(
+                    if (ok.isEmpty()) {
+                        "No pude crear ningún cobro."
+                    } else {
+                        "Creé ${ok.size} ${if (ok.size == 1) "cobro" else "cobros"}: " +
+                            ok.joinToString(", ") { "${it.contactName} ${formatMoney(it.amount, "MXN").substringBeforeLast(" ")}" } +
+                            ". Cada quien lo aprueba en PayPal."
+                    },
+                )
+                if (failed.isNotEmpty()) {
+                    append(" No se creó para: " + failed.joinToString(", ") { it.contactName } + ".")
+                }
+            }
+        }
+        is ProposalOutcome.Scheduled -> {
+            val first = outcome.items.firstOrNull()
+            val who = if (outcome.items.size > 1) "${outcome.items.size} personas" else first?.contactName.orEmpty()
+            val series = recurrenceLabel(first?.recurrence, first?.occurrencesTotal)?.let { " ($it)" }.orEmpty()
+            if (autoExecute) {
+                "Listo. El ${first?.runAtLabel} crearé el cobro a $who$series; luego lo aprueban en PayPal."
+            } else {
+                "Listo. El ${first?.runAtLabel} te pediré confirmar el cobro a $who$series."
+            }
+        }
+    }
 }
 
 const val MAX_ASSISTANT_MESSAGE_LENGTH = 500
@@ -191,7 +300,15 @@ val DEFAULT_ASSISTANT_SUGGESTIONS = listOf(
     "¿Qué puedes hacer?",
 )
 
-fun scheduledStateLabel(state: String): String {
+fun scheduledStateLabel(state: String, kind: String = "charge"): String {
+    if (state == "completado") {
+        return when (kind) {
+            "reminder" -> "Enviado"
+            // El envío por PayPal puede seguir procesándose: se ve en Movimientos.
+            "payment" -> "Envío creado"
+            else -> "Cobro creado"
+        }
+    }
     return when (state) {
         "programado" -> "Programado"
         "esperando_confirmacion" -> "Espera tu confirmación"
@@ -223,6 +340,9 @@ fun scheduledFailureMessage(failure: String?): String? {
         "atrasado" -> "El servidor estaba inactivo a esa hora, así que no se creó."
         "interrumpido" -> "Se interrumpió. Revisa Movimientos antes de volver a cobrar."
         "sin_confirmar" -> "No lo confirmaste dentro de las 2 horas siguientes."
+        "limite_recordatorios" -> "Ya le enviaste 2 recordatorios hoy a este contacto."
+        "saldo_insuficiente" -> "No se envió: tu saldo no alcanzaba a esa hora."
+        "sin_correo" -> "No se envió: tu contacto ya no tiene correo de cobro."
         else -> "No se pudo crear el cobro."
     }
 }
@@ -233,7 +353,8 @@ fun isScheduledActive(state: String): Boolean =
 fun proposalErrorMessage(type: ApiFailureType): String {
     return when (type) {
         ApiFailureType.NOT_FOUND -> "La propuesta ya venció o se usó. Pídemela de nuevo."
-        ApiFailureType.CONFLICT -> "No se pudo programar: ya pasó la hora o llegaste al máximo de programaciones."
+        ApiFailureType.CONFLICT ->
+            "No se pudo: ya pasó la hora, llegaste al máximo de programaciones o ya enviaste 2 recordatorios hoy a ese contacto."
         else -> assistantErrorMessage(type)
     }
 }

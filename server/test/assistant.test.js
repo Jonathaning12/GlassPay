@@ -43,6 +43,10 @@ test("model output is validated by code, never trusted", () => {
       minutesFromNow: 0,
       date: "",
       time: "",
+      contactNames: [],
+      includesMe: false,
+      recurrence: "none",
+      occurrences: 0,
       method: "gemini",
     },
   );

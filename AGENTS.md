@@ -337,3 +337,11 @@ Reglas: antes de cada entrega de 5W, plan corto (pantallas, archivos, endpoints,
 - La cuenta del cobrador también tiene perfil de pagador: puede mostrar su QR en el móvil, ser agregada como contacto y recibir/aprobar solicitudes desde la app.
 - Enviar dinero: PayPal Payouts (Sandbox) desde la cuenta Sandbox Business de GlassPay. Saldo disponible = cobrado − enviado, calculado y validado de forma atómica en el servidor. El destinatario registra su correo PayPal Sandbox, que se guarda solo en el servidor y nunca se muestra a otros. Tope por envío igual al de cobros. Doble confirmación: vista previa + desbloqueo del teléfono.
 - Orden: 5W.4a (bloqueo + ojo), 5W.4b (Mi QR, agregar con QR, solicitudes recibidas), 5W.4c (enviar dinero).
+
+# FASE C3 - Pagos programados desde el asistente (aprobada el 2026-10-26)
+
+- Excepción a "doble confirmación en tiempo real" SOLO para pagos programados con el interruptor "Enviar automáticamente a la hora (bajo tu riesgo)", que el usuario enciende explícitamente en cada pago (apagado por defecto). La autorización se da al programar, con vista previa + desbloqueo del teléfono (huella o PIN/patrón del sistema); a la hora, el servidor envía sin volver a preguntar.
+- Con el interruptor apagado, a la hora el pago queda "esperando confirmación" y se envía solo tras vista previa + desbloqueo del teléfono, como cualquier envío.
+- Límites: solo contactos guardados con correo de cobro, tope por pago igual al de cobros, máximo 3 pagos automáticos activos, horizonte de 30 días, saldo verificado y reservado de forma atómica al momento de enviar (saldo insuficiente → no se envía, sin reintento), solo pagos únicos.
+- WorkManager (androidx.work) aprobado para avisar con la app cerrada; las notificaciones no muestran montos ni nombres.
+- El servidor no puede verificar la huella: su autorización real es la sesión del cobrador + la propuesta de un solo uso (riesgo documentado en MEMORY.md).

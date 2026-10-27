@@ -15,6 +15,7 @@ const {
 } = require("../services/payment-requests");
 const { parseAmount, sanitizeConcept } = require("./payments");
 const { authenticateCollector } = require("./collectors");
+const { toVisibleReminder } = require("../services/reminders");
 
 function sanitizeDisplayName(value) {
   if (typeof value !== "string") {
@@ -147,7 +148,21 @@ function createPayersRouter({ database, paypal, config }) {
       createdAt: paymentRequest.createdAt,
       fromName: paymentRequest.collectorName,
     }));
-    return response.status(200).json({ requests });
+    const reminders = database.listPayerReminders(payer.id).map(toVisibleReminder);
+    return response.status(200).json({ requests, reminders });
+  });
+
+  router.post("/me/reminders/:reminderId/dismiss", async (request, response) => {
+    const payer = authenticatePayer(request, database);
+    if (!payer) {
+      return response.status(401).json({ error: "payer authentication failed" });
+    }
+    const reminderId = request.params.reminderId;
+    const dismissed = typeof reminderId === "string" && /^[A-Za-z0-9_-]{24,64}$/.test(reminderId)
+      && await database.dismissPayerReminder(reminderId, payer.id);
+    return dismissed
+      ? response.status(200).json({ dismissed: true })
+      : response.status(404).json({ error: "reminder not found" });
   });
 
   router.post("/payment-requests", resolverLimiter, async (request, response) => {

@@ -67,10 +67,14 @@ function createConfig() {
         6 * 60 * 60,
       ),
       maxActive: Number.parseInt(process.env.SCHEDULED_MAX_ACTIVE || "10", 10),
+      maxAutoPayments: Number.parseInt(process.env.SCHEDULED_MAX_AUTO_PAYMENTS || "3", 10),
       maxHorizonDays: Number.parseInt(process.env.SCHEDULED_MAX_HORIZON_DAYS || "30", 10),
       lateToleranceSeconds: Number.parseInt(process.env.SCHEDULED_LATE_TOLERANCE_SECONDS || "7200", 10),
       proposalTtlSeconds: Number.parseInt(process.env.ASSISTANT_PROPOSAL_TTL_SECONDS || "120", 10),
       intervalMs: Number.parseInt(process.env.SCHEDULER_INTERVAL_MS || "60000", 10),
+    },
+    reminders: {
+      maxPerDay: Number.parseInt(process.env.REMINDERS_MAX_PER_DAY || "2", 10),
     },
     databasePath: path.resolve(process.env.DATABASE_PATH || ".data/glasspay.db"),
   };

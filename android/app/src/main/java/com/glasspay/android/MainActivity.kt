@@ -73,6 +73,10 @@ fun GlassPayRoot() {
         CollectorSessionStore(SharedPreferencesStore(context), KeystoreSecretCipher())
     }
     var session by remember { mutableStateOf<CollectorSession?>(null) }
+    // Con sesión, revisión periódica de programaciones que esperan confirmación (WorkManager, C3).
+    LaunchedEffect(session != null) {
+        if (session != null) scheduleConfirmationChecks(context)
+    }
     var loaded by remember { mutableStateOf(false) }
     var welcomeMessage by remember { mutableStateOf<String?>(null) }
     var pendingContactResolution by remember { mutableStateOf<PayerResolution?>(null) }
@@ -85,6 +89,7 @@ fun GlassPayRoot() {
     var showPayoutEmail by remember { mutableStateOf(false) }
     var showAssistant by remember { mutableStateOf(false) }
     var showScheduled by remember { mutableStateOf(false) }
+    var showStats by remember { mutableStateOf(false) }
     // Conversación del asistente: solo en memoria; se descarta al salir del asistente.
     val assistantChat = remember { mutableStateOf(ChatState()) }
     var flowResolve by remember { mutableStateOf<ResolveState>(ResolveState.Scanning) }
@@ -109,6 +114,7 @@ fun GlassPayRoot() {
         showAssistant = false
         showScheduled = false
         assistantChat.value = ChatState()
+        cancelConfirmationChecks(context)
         tab = AppTab.HOME
         flowResolve = ResolveState.Scanning
         flowCharge = ChargeState.Ready()
@@ -128,6 +134,7 @@ fun GlassPayRoot() {
         showPayoutEmail = false
         showAssistant = false
         showScheduled = false
+        showStats = false
         assistantChat.value = ChatState()
         tab = next
     }
@@ -310,6 +317,13 @@ fun GlassPayRoot() {
                                     onBack = { showMyQr = false },
                                     locked = lockActive,
                                 )
+                            } else if (showStats) {
+                                StatsScreen(
+                                    session = current,
+                                    api = api,
+                                    onSessionInvalid = ::invalidateSession,
+                                    onBack = { showStats = false },
+                                )
                             } else if (showScheduled) {
                                 ScheduledScreen(
                                     session = current,
@@ -362,6 +376,7 @@ fun GlassPayRoot() {
                                 onPayoutEmail = { showPayoutEmail = true },
                                 onOpenAssistant = { showAssistant = true },
                                 onOpenScheduled = { showScheduled = true },
+                                onOpenStats = { showStats = true },
                                 locked = lockActive,
                                 amountsVisible = amountsVisible,
                                 onToggleAmounts = { amountsVisible = !amountsVisible },

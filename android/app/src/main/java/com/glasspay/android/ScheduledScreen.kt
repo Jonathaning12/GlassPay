@@ -29,6 +29,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -70,6 +71,8 @@ fun ScheduledScreen(
         }
     }
 
+    val context = LocalContext.current
+
     fun act(item: ScheduledItem, run: Boolean) {
         if (busyId != null) return
         busyId = item.scheduledId
@@ -78,7 +81,9 @@ fun ScheduledScreen(
             try {
                 if (run) {
                     val result = api.runScheduled(session, item.scheduledId)
-                    message = if (result.state == "completado") {
+                    message = if (result.state == "completado" && item.kind == "payment") {
+                        "Envío creado a ${item.contactName}. Revisa su estado en Movimientos."
+                    } else if (result.state == "completado") {
                         "Cobro creado. ${item.contactName} debe aprobarlo en PayPal."
                     } else {
                         scheduledFailureMessage(result.failure) ?: "No se pudo crear el cobro."
@@ -108,15 +113,42 @@ fun ScheduledScreen(
         }
     }
 
+    // Enviar dinero ahora: siempre vista previa (la tarjeta) + huella o bloqueo del teléfono.
+    fun runWithAuth(item: ScheduledItem) {
+        if (busyId != null) return
+        if (item.kind != "payment") {
+            act(item, run = true)
+            return
+        }
+        val activity = context.findActivity() ?: return
+        if (DeviceAuthenticator.availability(context) != DeviceAuthAvailability.AVAILABLE) {
+            message = "Configura un bloqueo de pantalla para enviar dinero."
+            return
+        }
+        requireDeviceAuth(
+            activity,
+            onSuccess = { act(item, run = true) },
+            onFailure = { message = "Necesitamos confirmar que eres tú para enviar el pago." },
+        )
+    }
+
     pendingCancel?.let { item ->
         AlertDialog(
             onDismissRequest = { pendingCancel = null },
-            text = { Text("¿Cancelar el cobro a ${item.contactName} por ${formatMoney(item.amount, item.currency)}?") },
+            text = {
+                Text(
+                    if (item.kind == "reminder") {
+                        "¿Cancelar el recordatorio a ${item.contactName}?"
+                    } else {
+                        "¿Cancelar el cobro a ${item.contactName} por ${formatMoney(item.amount, item.currency)}?"
+                    },
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     pendingCancel = null
                     act(item, run = false)
-                }) { Text("Cancelar cobro") }
+                }) { Text(if (item.kind == "reminder") "Cancelar recordatorio" else "Cancelar cobro") }
             },
             dismissButton = { TextButton(onClick = { pendingCancel = null }) { Text("No") } },
         )
@@ -155,7 +187,7 @@ fun ScheduledScreen(
                                 item = item,
                                 busy = busyId == item.scheduledId,
                                 enabled = busyId == null,
-                                onRun = { act(item, run = true) },
+                                onRun = { runWithAuth(item) },
                                 onCancel = { pendingCancel = item },
                             )
                         }
@@ -196,24 +228,37 @@ private fun ScheduledCard(
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Avatar(item.contactName)
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("Cobrar a ${item.contactName}", style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
-                Text(item.concept, style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
+                Text(
+                    when (item.kind) {
+                        "reminder" -> "Recordar a "
+                        "payment" -> "Pagar a "
+                        else -> "Cobrar a "
+                    } + item.contactName,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = GlassPayColors.Text,
+                )
+                if (item.concept.isNotBlank()) {
+                    Text(item.concept, style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
+                }
             }
-            Text(
-                formatMoney(item.amount, item.currency).substringBeforeLast(" "),
-                style = MaterialTheme.typography.titleMedium,
-                color = GlassPayColors.Text,
-            )
+            if (item.amount.isNotBlank()) {
+                Text(
+                    formatMoney(item.amount, item.currency).substringBeforeLast(" "),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = GlassPayColors.Text,
+                )
+            }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(painterResource(R.drawable.ic_clock), contentDescription = null, tint = GlassPayColors.MutedText, modifier = Modifier.size(18.dp))
             Text(
-                item.runAtLabel + if (item.autoExecute) " · automático" else " · con tu confirmación",
+                item.runAtLabel + (if (item.autoExecute) " · automático" else " · con tu confirmación") +
+                    (recurrenceLabel(item.recurrence, null)?.let { " · $it (${item.occurrencesDone} de ${item.occurrencesTotal})" } ?: ""),
                 style = MaterialTheme.typography.bodySmall,
                 color = GlassPayColors.MutedText,
                 modifier = Modifier.weight(1f),
             )
-            StatusPill(scheduledStateLabel(item.state), scheduledStateKind(item.state))
+            StatusPill(scheduledStateLabel(item.state, item.kind), scheduledStateKind(item.state))
         }
         scheduledFailureMessage(item.failure)?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = GlassPayColors.Error)
@@ -221,7 +266,17 @@ private fun ScheduledCard(
         if (busy) {
             Text("Procesando…", style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
         } else if (item.state == "esperando_confirmacion") {
-            GpButton("Crear el cobro ahora", onClick = onRun, enabled = enabled, icon = R.drawable.ic_check, modifier = Modifier.fillMaxWidth())
+            GpButton(
+                when (item.kind) {
+                    "payment" -> "Enviar con huella"
+                    "reminder" -> "Enviar recordatorio ahora"
+                    else -> "Crear el cobro ahora"
+                },
+                onClick = onRun,
+                enabled = enabled,
+                icon = if (item.kind == "payment") R.drawable.ic_lock else R.drawable.ic_check,
+                modifier = Modifier.fillMaxWidth(),
+            )
             GpButton("Cancelar", onClick = onCancel, enabled = enabled, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
         } else if (item.state == "programado") {
             GpButton("Cancelar", onClick = onCancel, enabled = enabled, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())

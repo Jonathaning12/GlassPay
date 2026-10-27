@@ -2,6 +2,7 @@ package com.glasspay.android
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Build
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -130,22 +131,25 @@ fun AssistantScreen(
         }
     }
 
-    fun confirmProposal(proposal: AssistantProposal, autoExecute: Boolean) {
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    // Para que el aviso de "esperando tu confirmación" llegue con la app cerrada (Android 13+).
+    fun askNotificationsIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    fun sendConfirmation(proposal: AssistantProposal, autoExecute: Boolean) {
         if (!chat.canConfirm(proposal.proposalId)) return
+        if (proposal.runAt != null && !autoExecute) askNotificationsIfNeeded()
         chat = chat.proposalConfirming(proposal.proposalId)
         scope.launch {
             chat = try {
-                val scheduled = api.confirmAssistantProposal(session, proposal.proposalId, autoExecute)
-                chat.proposalConfirmed(
-                    proposal.proposalId,
-                    if (scheduled == null) {
-                        "Listo, cancelé el cobro a ${proposal.contactName}."
-                    } else if (autoExecute) {
-                        "Listo. El ${scheduled.runAtLabel} crearé el cobro a ${scheduled.contactName}; luego debe aprobarlo en PayPal."
-                    } else {
-                        "Listo. El ${scheduled.runAtLabel} te pediré confirmar el cobro a ${scheduled.contactName}."
-                    },
-                )
+                val outcome = api.confirmAssistantProposal(session, proposal.proposalId, autoExecute)
+                chat.proposalConfirmed(proposal.proposalId, proposalOutcomeMessage(outcome, autoExecute))
             } catch (exception: CancellationException) {
                 throw exception
             } catch (exception: ApiException) {
@@ -159,6 +163,25 @@ fun AssistantScreen(
                 chat.proposalFailed(proposal.proposalId, proposalErrorMessage(ApiFailureType.INVALID_RESPONSE))
             }
         }
+    }
+
+    fun confirmProposal(proposal: AssistantProposal, autoExecute: Boolean) {
+        if (!chat.canConfirm(proposal.proposalId)) return
+        if (proposal.action == "schedule_payment") {
+            // Sale dinero: siempre vista previa (la tarjeta) + huella o bloqueo del teléfono.
+            val activity = context.findActivity() ?: return
+            if (DeviceAuthenticator.availability(context) != DeviceAuthAvailability.AVAILABLE) {
+                chat = chat.proposalFailed(proposal.proposalId, "Configura un bloqueo de pantalla para programar pagos.")
+                return
+            }
+            requireDeviceAuth(
+                activity,
+                onSuccess = { sendConfirmation(proposal, autoExecute) },
+                onFailure = { voiceMessage = "Necesitamos confirmar que eres tú para programar el pago." },
+            )
+            return
+        }
+        sendConfirmation(proposal, autoExecute)
     }
 
     LaunchedEffect(chat.messages.size, chat.sending) {
@@ -404,7 +427,13 @@ private fun ProposalCard(
     onOpenScheduled: () -> Unit,
 ) {
     val cancelling = proposal.action == "cancel_scheduled"
-    var autoExecute by remember(proposal.proposalId) { mutableStateOf(true) }
+    val splitting = proposal.action == "split_bill"
+    val reminding = proposal.action == "reminder"
+    val paying = proposal.action == "schedule_payment"
+    // El interruptor solo aplica a lo que se ejecuta en el futuro.
+    val scheduledForLater = !cancelling && proposal.runAt != null
+    // En pagos lo automático va apagado por defecto (sale tu dinero); en cobros, encendido.
+    var autoExecute by remember(proposal.proposalId) { mutableStateOf(!paying) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -412,25 +441,94 @@ private fun ProposalCard(
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Overline(if (cancelling) "Cancelar programación" else "Cobro programado")
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Avatar(proposal.contactName, size = 32.dp)
-            Text(proposal.contactName, style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text, modifier = Modifier.weight(1f))
+        Overline(
+            when (proposal.action) {
+                "cancel_scheduled" -> "Cancelar programación"
+                "split_bill" -> "Dividir cuenta"
+                "recurring_charge" -> "Cobro recurrente"
+                "reminder" -> "Recordatorio"
+                "schedule_payment" -> "Pago programado"
+                else -> "Cobro programado"
+            },
+        )
+        if (!splitting) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Avatar(proposal.contactName, size = 32.dp)
+                Text(proposal.contactName, style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text, modifier = Modifier.weight(1f))
+            }
         }
-        MoneyText(formatMoney(proposal.amount, proposal.currency), style = MaterialTheme.typography.headlineLarge)
-        Text(proposal.concept, style = MaterialTheme.typography.bodyMedium, color = GlassPayColors.Text)
+        if (splitting) Text("Total", style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
+        proposal.amount?.let { MoneyText(formatMoney(it, proposal.currency), style = MaterialTheme.typography.headlineLarge) }
+        if (proposal.concept.isNotBlank()) {
+            Text(proposal.concept, style = MaterialTheme.typography.bodyMedium, color = GlassPayColors.Text)
+        }
+        if (paying && proposal.balanceWarning) {
+            InlineNotice(
+                "Hoy tu saldo no alcanza para este pago. Se volverá a revisar a la hora; si no alcanza, no se envía.",
+                kind = StatusKind.PENDING,
+            )
+        }
+        if (reminding) {
+            Text(
+                "Le llega como aviso en su sección «Por pagar». No crea ningún cobro.",
+                style = MaterialTheme.typography.bodySmall,
+                color = GlassPayColors.MutedText,
+            )
+        }
+        if (splitting) {
+            proposal.participants.forEach { share ->
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Avatar(share.contactName, size = 28.dp)
+                    Text(share.contactName, style = MaterialTheme.typography.labelLarge, color = GlassPayColors.Text, modifier = Modifier.weight(1f))
+                    Text(formatMoney(share.amount, proposal.currency).substringBeforeLast(" "), style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
+                }
+            }
+            proposal.myShare?.let {
+                Text(
+                    "Tu parte: ${formatMoney(it, proposal.currency).substringBeforeLast(" ")} (no se cobra)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = GlassPayColors.MutedText,
+                )
+            }
+        }
+        recurrenceLabel(proposal.recurrence, proposal.occurrencesTotal)?.let {
+            Text(it, style = MaterialTheme.typography.labelLarge, color = GlassPayColors.Accent)
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(painterResource(R.drawable.ic_clock), contentDescription = null, tint = GlassPayColors.Warning, modifier = Modifier.size(18.dp))
-            Text(proposal.runAtLabel, style = MaterialTheme.typography.labelLarge, color = GlassPayColors.Warning)
+            Text(
+                when {
+                    proposal.runAtLabel == null && reminding -> "Se envía al confirmar"
+                    proposal.runAtLabel == null -> "Se cobra al confirmar"
+                    proposal.recurrence != null -> "Primero: ${proposal.runAtLabel}"
+                    else -> proposal.runAtLabel
+                },
+                style = MaterialTheme.typography.labelLarge,
+                color = GlassPayColors.Warning,
+            )
         }
         when (status) {
             ProposalStatus.PENDING -> {
-                if (!cancelling) {
+                if (scheduledForLater) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("Crear automáticamente a la hora", style = MaterialTheme.typography.labelLarge, color = GlassPayColors.Text)
                             Text(
-                                if (autoExecute) "Se crea solo; tu contacto lo aprueba en PayPal." else "A la hora te pediré confirmarlo.",
+                                when {
+                                    paying -> "Enviar automáticamente a la hora (bajo tu riesgo)"
+                                    reminding -> "Enviar automáticamente a la hora"
+                                    else -> "Crear automáticamente a la hora"
+                                },
+                                style = MaterialTheme.typography.labelLarge,
+                                color = GlassPayColors.Text,
+                            )
+                            Text(
+                                when {
+                                    paying && autoExecute -> "Se enviará sin volver a pedirte la huella."
+                                    paying -> "A la hora te pediré vista previa y huella para enviarlo."
+                                    !autoExecute -> "A la hora te pediré confirmarlo."
+                                    reminding -> "Se envía solo a la hora."
+                                    else -> "Se crea solo; tu contacto lo aprueba en PayPal."
+                                },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = GlassPayColors.MutedText,
                             )
@@ -447,7 +545,13 @@ private fun ProposalCard(
                     }
                 }
                 GpButton(
-                    if (cancelling) "Sí, cancelar" else "Confirmar",
+                    when {
+                        cancelling -> "Sí, cancelar"
+                        splitting && !scheduledForLater -> "Crear ${proposal.participants.size} cobros"
+                        reminding && !scheduledForLater -> "Enviar recordatorio"
+                        paying -> "Confirmar con huella"
+                        else -> "Confirmar"
+                    },
                     onClick = { onConfirm(proposal, autoExecute) },
                     kind = if (cancelling) GpButtonKind.DANGER else GpButtonKind.PRIMARY,
                     icon = R.drawable.ic_check,
@@ -460,8 +564,18 @@ private fun ProposalCard(
                 Text("Confirmando…", style = MaterialTheme.typography.bodyMedium, color = GlassPayColors.MutedText)
             }
             ProposalStatus.CONFIRMED -> {
-                StatusPill(if (cancelling) "Cancelado" else "Programado", if (cancelling) StatusKind.NEUTRAL else StatusKind.SUCCESS)
-                GpButton("Ver programados", onClick = onOpenScheduled, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
+                StatusPill(
+                    when {
+                        cancelling -> "Cancelado"
+                        scheduledForLater -> "Programado"
+                        reminding -> "Enviado"
+                        else -> "Cobros creados"
+                    },
+                    if (cancelling) StatusKind.NEUTRAL else StatusKind.SUCCESS,
+                )
+                if (scheduledForLater || cancelling) {
+                    GpButton("Ver programados", onClick = onOpenScheduled, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
+                }
             }
             ProposalStatus.DISCARDED -> StatusPill("Descartado", StatusKind.NEUTRAL)
             ProposalStatus.FAILED -> StatusPill("No se aplicó", StatusKind.FAILURE)

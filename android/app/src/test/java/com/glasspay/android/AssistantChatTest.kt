@@ -188,4 +188,122 @@ class AssistantChatTest {
     fun expiredProposalAsksToRequestItAgain() {
         assertTrue(proposalErrorMessage(ApiFailureType.NOT_FOUND).contains("de nuevo"))
     }
+
+    // Dividir y recurrentes (C2b)
+
+    private fun item(recurrence: String? = null, total: Int = 1) = ScheduledItem(
+        scheduledId = "s", contactName = "Ana", amount = "50.00", currency = "MXN", concept = "gym",
+        runAt = "2026-10-31T00:00:00Z", runAtLabel = "vie 30 oct, 18:00", autoExecute = true,
+        state = "programado", failure = null, recurrence = recurrence, occurrencesTotal = total,
+    )
+
+    @Test
+    fun recurrenceLabelsAreInSpanish() {
+        assertEquals("Cada semana · 4 veces", recurrenceLabel("weekly", 4))
+        assertEquals("Cada mes", recurrenceLabel("monthly", null))
+        assertEquals(null, recurrenceLabel(null, 3))
+    }
+
+    @Test
+    fun splitMessageListsCreatedChargesAndNeverSaysPaid() {
+        val message = proposalOutcomeMessage(
+            ProposalOutcome.Split(listOf(SplitResult("Ana", "33.35", true, null), SplitResult("Luis", "33.33", true, null))),
+            autoExecute = true,
+        )
+        assertTrue(message.startsWith("Creé 2 cobros: Ana \$33.35, Luis \$33.33."))
+        assertFalse(message.contains("pagad"))
+    }
+
+    @Test
+    fun splitMessageNamesThoseThatFailed() {
+        val message = proposalOutcomeMessage(
+            ProposalOutcome.Split(listOf(SplitResult("Ana", "50.00", true, null), SplitResult("Luis", "50.00", false, "demasiados_pendientes"))),
+            autoExecute = true,
+        )
+        assertTrue(message.contains("No se creó para: Luis."))
+    }
+
+    @Test
+    fun splitMessageWhenNothingWasCreated() {
+        val message = proposalOutcomeMessage(
+            ProposalOutcome.Split(listOf(SplitResult("Ana", "50.00", false, "error"))),
+            autoExecute = true,
+        )
+        assertTrue(message.startsWith("No pude crear ningún cobro."))
+    }
+
+    @Test
+    fun recurringMessageMentionsTheSeries() {
+        val message = proposalOutcomeMessage(ProposalOutcome.Scheduled(listOf(item("weekly", 4))), autoExecute = true)
+        assertTrue(message.contains("(Cada semana · 4 veces)"))
+    }
+
+    @Test
+    fun manualScheduleMessageSaysItWillAskFirst() {
+        val message = proposalOutcomeMessage(ProposalOutcome.Scheduled(listOf(item())), autoExecute = false)
+        assertTrue(message.contains("te pediré confirmar"))
+    }
+
+    @Test
+    fun scheduledSplitMessageCountsPeople() {
+        val message = proposalOutcomeMessage(ProposalOutcome.Scheduled(listOf(item(), item())), autoExecute = true)
+        assertTrue(message.contains("2 personas"))
+    }
+
+    @Test
+    fun cancelledMessage() {
+        assertEquals("Listo, cancelé la programación.", proposalOutcomeMessage(ProposalOutcome.Cancelled, autoExecute = true))
+    }
+
+    // Recordatorios (C2c)
+
+    @Test
+    fun reminderSentMessagePointsToPorPagar() {
+        val message = proposalOutcomeMessage(ProposalOutcome.ReminderSent("Sara"), autoExecute = true)
+        assertTrue(message.contains("Sara"))
+        assertTrue(message.contains("Por pagar"))
+    }
+
+    @Test
+    fun reminderLimitHasASpanishExplanation() {
+        assertTrue(scheduledFailureMessage("limite_recordatorios")!!.contains("2 recordatorios"))
+    }
+
+    @Test
+    fun conflictMentionsTheReminderLimit() {
+        assertTrue(proposalErrorMessage(ApiFailureType.CONFLICT).contains("recordatorios"))
+    }
+
+    // Pagos programados y avisos (C3)
+
+    @Test
+    fun notifiesOnlyWhenSomethingNewIsWaiting() {
+        assertTrue(shouldNotify(previousCount = 0, currentCount = 1))
+        assertTrue(shouldNotify(previousCount = 1, currentCount = 2))
+        assertFalse(shouldNotify(previousCount = 1, currentCount = 1))
+        assertFalse(shouldNotify(previousCount = 2, currentCount = 1))
+        assertFalse(shouldNotify(previousCount = 0, currentCount = 0))
+    }
+
+    @Test
+    fun notificationTextHasNoAmountsOrNames() {
+        val text = confirmationNotificationText(2)
+        assertEquals("Tienes 2 programaciones esperando tu confirmación.", text)
+        assertFalse(text.contains("$"))
+        assertEquals("Tienes 1 programación esperando tu confirmación.", confirmationNotificationText(1))
+    }
+
+    @Test
+    fun completedLabelsDependOnTheKind() {
+        assertEquals("Envío creado", scheduledStateLabel("completado", "payment"))
+        assertEquals("Enviado", scheduledStateLabel("completado", "reminder"))
+        assertEquals("Cobro creado", scheduledStateLabel("completado", "charge"))
+        assertEquals("Programado", scheduledStateLabel("programado", "payment"))
+    }
+
+    @Test
+    fun paymentFailuresAreExplained() {
+        assertTrue(scheduledFailureMessage("saldo_insuficiente")!!.contains("saldo"))
+        assertTrue(scheduledFailureMessage("sin_correo")!!.contains("correo"))
+    }
 }

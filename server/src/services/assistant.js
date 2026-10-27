@@ -20,6 +20,8 @@ const INTENTS = [
 const PERIODS = ["week", "month", "year", "none"];
 const WHEN_TYPES = ["relative", "absolute", "none"];
 const EMPTY_WHEN = { whenType: "none", minutesFromNow: 0, date: "", time: "" };
+const EMPTY_GROUP = { contactNames: [], includesMe: false, recurrence: "none", occurrences: 0 };
+const MAX_NAMES = 10;
 const MAX_CONTACT_NAME_LENGTH = 60;
 
 const ASSISTANT_SCHEMA = {
@@ -34,8 +36,15 @@ const ASSISTANT_SCHEMA = {
     minutesFromNow: { type: "number" },
     date: { type: "string" },
     time: { type: "string" },
+    contactNames: { type: "array", items: { type: "string" } },
+    includesMe: { type: "boolean" },
+    recurrence: { type: "string", enum: ["weekly", "monthly", "none"] },
+    occurrences: { type: "number" },
   },
-  required: ["intent", "period", "contactName", "amount", "concept", "whenType", "minutesFromNow", "date", "time"],
+  required: [
+    "intent", "period", "contactName", "amount", "concept", "whenType", "minutesFromNow", "date", "time",
+    "contactNames", "includesMe", "recurrence", "occurrences",
+  ],
 };
 
 function normalize(text) {
@@ -72,6 +81,7 @@ function deterministicIntent(text) {
     amount: 0,
     concept: "",
     ...EMPTY_WHEN,
+    ...EMPTY_GROUP,
     method: "deterministic",
   };
 }
@@ -107,6 +117,14 @@ function normalizeAssistantResult(value) {
     // El formato se valida al calcular la fecha; aquí solo se limita el tamaño.
     date: clean(value.date, 10),
     time: clean(value.time, 5),
+    contactNames: Array.isArray(value.contactNames)
+      ? value.contactNames.map((name) => clean(name, MAX_CONTACT_NAME_LENGTH)).filter(Boolean).slice(0, MAX_NAMES)
+      : [],
+    includesMe: value.includesMe === true,
+    recurrence: ["weekly", "monthly"].includes(value.recurrence) ? value.recurrence : "none",
+    occurrences: typeof value.occurrences === "number" && Number.isInteger(value.occurrences) && value.occurrences > 0
+      ? value.occurrences
+      : 0,
     method: "gemini",
   };
 }
@@ -137,6 +155,8 @@ function createAssistantService(config) {
       "Para cuándo: whenType=relative con minutesFromNow si dice 'en 2 horas' o 'dentro de 3 días';",
       "whenType=absolute con date AAAA-MM-DD y/o time HH:MM (24 h) si dice un día u hora ('mañana a las 6 de la tarde' => time 18:00);",
       "whenType=none si no dice cuándo.",
+      "Para dividir una cuenta: contactNames con cada persona nombrada (sin incluir al usuario) e includesMe=true si dice 'y yo' o 'conmigo'.",
+      "Para cobros recurrentes: recurrence weekly o monthly, occurrences si dice cuántas veces (si no, 0), y la primera fecha en whenType/date/time.",
       "No inventes datos.",
       "<message>",
       text,

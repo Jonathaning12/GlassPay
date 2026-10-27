@@ -9,6 +9,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.res.painterResource
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Icon
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.BorderStroke
@@ -90,6 +91,7 @@ fun HomeScreen(
     onPayoutEmail: () -> Unit,
     onOpenAssistant: () -> Unit,
     onOpenScheduled: () -> Unit,
+    onOpenStats: () -> Unit,
     locked: Boolean,
     amountsVisible: Boolean,
     onToggleAmounts: () -> Unit,
@@ -106,6 +108,7 @@ fun HomeScreen(
     var pendingReject by remember { mutableStateOf<IncomingRequest?>(null) }
     var rejecting by remember { mutableStateOf(false) }
     var awaitingConfirmation by remember { mutableStateOf(0) }
+    var reminders by remember { mutableStateOf<List<Reminder>>(emptyList()) }
 
     // Cobros programados que esperan la confirmación del cobrador (sin notificaciones del sistema en C2).
     LaunchedEffect(reload, locked) {
@@ -126,6 +129,15 @@ fun HomeScreen(
         if (locked) return@LaunchedEffect
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
+                try {
+                    reminders = api.getReminders(session)
+                } catch (exception: CancellationException) {
+                    throw exception
+                } catch (exception: ApiException) {
+                    Log.i("GlassPay", "reminders failure type=${exception.type} httpCode=${exception.httpCode}")
+                } catch (_: Exception) {
+                    Log.i("GlassPay", "reminders failure type=UNKNOWN httpCode=none")
+                }
                 try {
                     incoming = api.incomingRequests(session)
                 } catch (exception: CancellationException) {
@@ -312,6 +324,21 @@ fun HomeScreen(
                     }
                 }
             }
+            if (state is LoadState.Loaded) {
+                HorizontalDivider(color = GlassPayColors.Line)
+                Surface(
+                    onClick = onOpenStats,
+                    color = Color.Transparent,
+                    contentColor = GlassPayColors.Accent,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(painterResource(R.drawable.ic_chart), contentDescription = null, modifier = Modifier.size(20.dp))
+                        Text("Ver estadísticas", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                        Icon(painterResource(R.drawable.ic_chevron_right), contentDescription = null, modifier = Modifier.size(20.dp))
+                    }
+                }
+            }
         }
         if (awaitingConfirmation > 0) {
             GpCard(modifier = Modifier.fillMaxWidth(), spacing = 12.dp) {
@@ -335,6 +362,37 @@ fun HomeScreen(
             QuickAction("Cobrar", R.drawable.ic_charge, onCharge, primary = true, modifier = Modifier.weight(1f))
             QuickAction("Enviar", R.drawable.ic_send, onSend, modifier = Modifier.weight(1f))
             QuickAction("Mi QR", R.drawable.ic_qr, onOpenMyQr, modifier = Modifier.weight(1f))
+        }
+        if (reminders.isNotEmpty()) {
+            Text("Recordatorios", style = MaterialTheme.typography.headlineSmall, color = GlassPayColors.Text)
+            reminders.forEach { reminder ->
+                GpCard(modifier = Modifier.fillMaxWidth(), spacing = 12.dp) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        IconBadge(R.drawable.ic_clock, tint = GlassPayColors.Warning, size = 40.dp, background = GlassPayColors.WarningSoft)
+                        Text(reminder.text, style = MaterialTheme.typography.bodyLarge, color = GlassPayColors.Text, modifier = Modifier.weight(1f))
+                    }
+                    GpButton(
+                        "Descartar",
+                        onClick = {
+                            scope.launch {
+                                try {
+                                    api.dismissReminder(session, reminder.reminderId)
+                                } catch (exception: CancellationException) {
+                                    throw exception
+                                } catch (exception: ApiException) {
+                                    Log.i("GlassPay", "dismiss reminder failure type=${exception.type} httpCode=${exception.httpCode}")
+                                    if (isSessionInvalid(exception.type)) onSessionInvalid(SESSION_INVALID_MESSAGE)
+                                } catch (_: Exception) {
+                                    Log.i("GlassPay", "dismiss reminder failure type=UNKNOWN httpCode=none")
+                                }
+                                reminders = reminders.filterNot { it.reminderId == reminder.reminderId }
+                            }
+                        },
+                        kind = GpButtonKind.GHOST,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
         }
         val visibleIncoming = incoming.filter {
             it.state == "pendiente_de_pagador" || it.state == "aprobada"

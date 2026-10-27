@@ -98,6 +98,17 @@ async function createDatabase(databasePath) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS payer_reminders (
+      id TEXT PRIMARY KEY,
+      collector_id TEXT NOT NULL,
+      payer_id TEXT NOT NULL,
+      amount TEXT,
+      currency TEXT NOT NULL,
+      concept TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      dismissed_at TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS transfers (
       id TEXT PRIMARY KEY,
       sender_collector_id TEXT NOT NULL,
@@ -186,6 +197,13 @@ async function createDatabase(databasePath) {
   if (!transferColumns.some(([, column]) => column === "payout_attempts")) {
     database.run("ALTER TABLE transfers ADD COLUMN payout_attempts INTEGER NOT NULL DEFAULT 0");
   }
+  const scheduledColumns = database.exec("PRAGMA table_info(scheduled_actions)")[0]?.values || [];
+  if (!scheduledColumns.some(([, column]) => column === "recurrence")) {
+    database.run("ALTER TABLE scheduled_actions ADD COLUMN recurrence TEXT");
+    database.run("ALTER TABLE scheduled_actions ADD COLUMN occurrences_total INTEGER NOT NULL DEFAULT 1");
+    database.run("ALTER TABLE scheduled_actions ADD COLUMN occurrences_done INTEGER NOT NULL DEFAULT 0");
+    database.run("ALTER TABLE scheduled_actions ADD COLUMN anchor_day INTEGER");
+  }
   const resolutionColumns = database.exec("PRAGMA table_info(payer_resolutions)")[0]?.values || [];
   if (!resolutionColumns.some(([, column]) => column === "collector_id")) {
     database.run("ALTER TABLE payer_resolutions ADD COLUMN collector_id TEXT");
@@ -226,6 +244,18 @@ async function createDatabase(databasePath) {
     });
     writeQueue = result.catch(() => undefined);
     return result;
+  };
+
+  // Una serie avanza a la siguiente fecha mientras queden repeticiones; si no, queda en su estado final.
+  const closeOccurrence = (row, { state, paymentRequestId = null, failure = null }, nextRunAt, timestamp) => {
+    const done = row.occurrences_done + 1;
+    const next = row.recurrence && done < row.occurrences_total ? nextRunAt(row) : null;
+    database.run(`
+      UPDATE scheduled_actions
+      SET state = ?, run_at = ?, occurrences_done = ?, payment_request_id = COALESCE(?, payment_request_id),
+        failure = ?, updated_at = ?
+      WHERE id = ?
+    `, [next ? "programado" : state, next || row.run_at, done, paymentRequestId, failure, timestamp, row.id]);
   };
 
   save();
@@ -917,34 +947,55 @@ async function createDatabase(databasePath) {
       });
     },
 
-    // Crea la programación solo si no supera el tope de activas (verificado dentro de la escritura).
-    createScheduledAction(action, maxActive) {
+    // Crea una o varias programaciones (todas o ninguna) sin superar el tope de activas
+    // ni el de pagos automáticos activos.
+    createScheduledActions(actions, maxActive, { maxAutoPayments = Infinity } = {}) {
       return enqueueWrite(() => {
         const active = get(`
           SELECT COUNT(*) AS total FROM scheduled_actions
           WHERE collector_id = ? AND state IN ('programado', 'esperando_confirmacion', 'ejecutando')
-        `, [action.collectorId]).total;
-        if (active >= maxActive) {
+        `, [actions[0].collectorId]).total;
+        if (active + actions.length > maxActive) {
           return false;
         }
+        const newAutoPayments = actions.filter((action) => action.kind === "payment" && action.autoExecute).length;
+        if (newAutoPayments > 0) {
+          const autoPayments = get(`
+            SELECT COUNT(*) AS total FROM scheduled_actions
+            WHERE collector_id = ? AND kind = 'payment' AND auto_execute = 1
+              AND state IN ('programado', 'esperando_confirmacion', 'ejecutando')
+          `, [actions[0].collectorId]).total;
+          if (autoPayments + newAutoPayments > maxAutoPayments) {
+            return false;
+          }
+        }
         const timestamp = now();
-        database.run(`
-          INSERT INTO scheduled_actions
-            (id, collector_id, kind, contact_id, payer_id, amount, currency, concept, run_at,
-             auto_execute, state, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'programado', ?, ?)
-        `, [
-          action.id, action.collectorId, action.kind, action.contactId, action.payerId, action.amount,
-          action.currency, action.concept, action.runAt, action.autoExecute ? 1 : 0, timestamp, timestamp,
-        ]);
+        for (const action of actions) {
+          database.run(`
+            INSERT INTO scheduled_actions
+              (id, collector_id, kind, contact_id, payer_id, amount, currency, concept, run_at,
+               auto_execute, state, recurrence, occurrences_total, occurrences_done, anchor_day,
+               created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'programado', ?, ?, 0, ?, ?, ?)
+          `, [
+            action.id, action.collectorId, action.kind, action.contactId, action.payerId, action.amount,
+            action.currency, action.concept, action.runAt, action.autoExecute ? 1 : 0,
+            action.recurrence || null, action.occurrencesTotal || 1, action.anchorDay ?? null, timestamp, timestamp,
+          ]);
+        }
         return true;
       });
+    },
+
+    createScheduledAction(action, maxActive) {
+      return this.createScheduledActions([action], maxActive);
     },
 
     listScheduledActions(collectorId, limit = 30) {
       return all(`
         SELECT s.id, s.kind, s.amount, s.currency, s.concept, s.run_at, s.auto_execute, s.state,
-          s.failure, s.created_at, s.updated_at, p.display_name
+          s.failure, s.recurrence, s.occurrences_total, s.occurrences_done, s.created_at, s.updated_at,
+          p.display_name
         FROM scheduled_actions s
         JOIN payer_profiles p ON p.id = s.payer_id
         WHERE s.collector_id = ?
@@ -962,6 +1013,9 @@ async function createDatabase(databasePath) {
         autoExecute: row.auto_execute === 1,
         state: row.state,
         failure: row.failure,
+        recurrence: row.recurrence || null,
+        occurrencesTotal: row.occurrences_total,
+        occurrencesDone: row.occurrences_done,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       }));
@@ -978,36 +1032,37 @@ async function createDatabase(databasePath) {
     },
 
     /**
-     * Reclama lo vencido de forma atómica: lo automático pasa a "ejecutando" (se devuelve para
-     * ejecutarlo), lo manual a "esperando_confirmacion" y lo muy atrasado a "omitido".
+     * Reclama lo vencido de forma atómica. Lo automático pasa a "ejecutando" (se devuelve para
+     * ejecutarlo), lo manual a "esperando_confirmacion" y lo atrasado más allá del límite se omite.
+     * En una serie recurrente, cerrar una ocurrencia programa la siguiente con `nextRunAt(row)`.
      */
-    claimDueScheduledActions(nowIso, lateLimitIso) {
+    claimDueScheduledActions(nowIso, lateLimitIso, nextRunAt = () => null) {
       return enqueueWrite(() => {
         const timestamp = now();
-        database.run(`
-          UPDATE scheduled_actions SET state = 'omitido', failure = 'atrasado', updated_at = ?
-          WHERE state = 'programado' AND run_at < ?
-        `, [timestamp, lateLimitIso]);
-        // Lo que esperaba confirmación tampoco se puede crear días después por descuido.
-        database.run(`
-          UPDATE scheduled_actions SET state = 'omitido', failure = 'sin_confirmar', updated_at = ?
-          WHERE state = 'esperando_confirmacion' AND run_at < ?
-        `, [timestamp, lateLimitIso]);
-        database.run(`
-          UPDATE scheduled_actions SET state = 'esperando_confirmacion', updated_at = ?
-          WHERE state = 'programado' AND auto_execute = 0 AND run_at <= ?
-        `, [timestamp, nowIso]);
-        const due = all(`
-          SELECT id, collector_id, kind, contact_id, payer_id, amount, currency, concept
-          FROM scheduled_actions
-          WHERE state = 'programado' AND auto_execute = 1 AND run_at <= ?
+        const rows = all(`
+          SELECT * FROM scheduled_actions
+          WHERE state IN ('programado', 'esperando_confirmacion') AND run_at <= ?
           ORDER BY run_at
         `, [nowIso]);
-        for (const action of due) {
-          database.run("UPDATE scheduled_actions SET state = 'ejecutando', updated_at = ? WHERE id = ?", [
-            timestamp,
-            action.id,
-          ]);
+        const due = [];
+        for (const row of rows) {
+          if (row.run_at < lateLimitIso) {
+            closeOccurrence(row, {
+              state: "omitido",
+              failure: row.state === "programado" ? "atrasado" : "sin_confirmar",
+            }, nextRunAt, timestamp);
+          } else if (row.state === "programado" && row.auto_execute === 0) {
+            database.run(
+              "UPDATE scheduled_actions SET state = 'esperando_confirmacion', updated_at = ? WHERE id = ?",
+              [timestamp, row.id],
+            );
+          } else if (row.state === "programado") {
+            database.run("UPDATE scheduled_actions SET state = 'ejecutando', updated_at = ? WHERE id = ?", [
+              timestamp,
+              row.id,
+            ]);
+            due.push(row);
+          }
         }
         return due;
       });
@@ -1023,20 +1078,69 @@ async function createDatabase(databasePath) {
         if (database.getRowsModified() !== 1) {
           return null;
         }
-        return get(`
-          SELECT id, collector_id, kind, contact_id, payer_id, amount, currency, concept
-          FROM scheduled_actions WHERE id = ?
-        `, [scheduledId]);
+        return get("SELECT * FROM scheduled_actions WHERE id = ?", [scheduledId]);
       });
     },
 
-    finishScheduledAction(scheduledId, { state, paymentRequestId = null, failure = null }) {
+    /** Cierra la ocurrencia en curso; `terminal` termina también la serie (p. ej. contacto borrado). */
+    finishScheduledAction(scheduledId, { state, paymentRequestId = null, failure = null, terminal = false }, nextRunAt = () => null) {
+      return enqueueWrite(() => {
+        const row = get("SELECT * FROM scheduled_actions WHERE id = ? AND state = 'ejecutando'", [scheduledId]);
+        if (!row) {
+          return;
+        }
+        closeOccurrence(row, { state, paymentRequestId, failure }, terminal ? () => null : nextRunAt, now());
+      });
+    },
+
+    /** Crea un recordatorio si el cobrador no superó el tope diario para ese pagador (atómico). */
+    createPayerReminder(reminder, { maxPerDay, dayStartIso }) {
+      return enqueueWrite(() => {
+        const sentToday = get(`
+          SELECT COUNT(*) AS total FROM payer_reminders
+          WHERE collector_id = ? AND payer_id = ? AND created_at >= ?
+        `, [reminder.collectorId, reminder.payerId, dayStartIso]).total;
+        if (sentToday >= maxPerDay) {
+          return false;
+        }
+        database.run(`
+          INSERT INTO payer_reminders (id, collector_id, payer_id, amount, currency, concept, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `, [
+          reminder.id, reminder.collectorId, reminder.payerId, reminder.amount || null, reminder.currency,
+          reminder.concept, now(),
+        ]);
+        return true;
+      });
+    },
+
+    // Recordatorios visibles para el pagador: sin descartar y de los últimos 7 días.
+    listPayerReminders(payerId) {
+      const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      return all(`
+        SELECT r.id, r.amount, r.currency, r.concept, r.created_at, c.display_name AS collector_name
+        FROM payer_reminders r
+        JOIN collector_profiles c ON c.id = r.collector_id
+        WHERE r.payer_id = ? AND r.dismissed_at IS NULL AND r.created_at >= ?
+        ORDER BY r.created_at DESC
+        LIMIT 20
+      `, [payerId, since]).map((row) => ({
+        reminderId: row.id,
+        amount: row.amount,
+        currency: row.currency,
+        concept: row.concept,
+        createdAt: row.created_at,
+        fromName: row.collector_name,
+      }));
+    },
+
+    dismissPayerReminder(reminderId, payerId) {
       return enqueueWrite(() => {
         database.run(`
-          UPDATE scheduled_actions
-          SET state = ?, payment_request_id = ?, failure = ?, updated_at = ?
-          WHERE id = ? AND state = 'ejecutando'
-        `, [state, paymentRequestId, failure, now(), scheduledId]);
+          UPDATE payer_reminders SET dismissed_at = ?
+          WHERE id = ? AND payer_id = ? AND dismissed_at IS NULL
+        `, [now(), reminderId, payerId]);
+        return database.getRowsModified() === 1;
       });
     },
 

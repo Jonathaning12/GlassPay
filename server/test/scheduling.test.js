@@ -142,3 +142,69 @@ test("cancel proposes the single matching active item", () => {
   assert.equal(prepareCancel({ interpretation: fallback(), text: "cancela lo programado", scheduled }).type, "scheduled");
   assert.equal(prepareCancel({ interpretation: fallback(), text: "cancela", scheduled: [] }).type, "text");
 });
+
+test("day-of-month dates resolve to this or next month", () => {
+  assert.equal(runAtOf("el 15 a las 10"), "2026-11-15T16:00:00.000Z");
+  assert.equal(runAtOf("el 30 a las 10"), "2026-10-30T16:00:00.000Z");
+  assert.equal(runAtOf("el 1 de noviembre a las 9"), "2026-11-01T15:00:00.000Z");
+  assert.equal(runAtOf("el 5 de enero"), "2027-01-05T16:00:00.000Z");
+  assert.equal(parseWhenFallback("el 31 de febrero", NOW), null);
+});
+
+test("a weekday series starts on that weekday", () => {
+  assert.equal(runAtOf("cada viernes a las 6"), "2026-10-31T00:00:00.000Z");
+});
+
+test("monthly series keep their day and fall back to the last day of short months", () => {
+  const { nextOccurrence } = require("../src/services/scheduling");
+  assert.equal(
+    nextOccurrence({ recurrence: "monthly", run_at: "2027-01-31T16:00:00.000Z", anchor_day: 31 }),
+    "2027-02-28T16:00:00.000Z",
+  );
+  assert.equal(
+    nextOccurrence({ recurrence: "monthly", run_at: "2027-02-28T16:00:00.000Z", anchor_day: 31 }),
+    "2027-03-31T16:00:00.000Z",
+  );
+  assert.equal(
+    nextOccurrence({ recurrence: "weekly", run_at: "2026-10-31T00:00:00.000Z" }),
+    "2026-11-07T00:00:00.000Z",
+  );
+  assert.equal(nextOccurrence({ recurrence: null, run_at: "2026-10-31T00:00:00.000Z" }), null);
+});
+
+test("amounts are not taken from the time or the number of occurrences", () => {
+  const { amountFallback } = require("../src/services/scheduling");
+  assert.equal(amountFallback("cóbrale a Ana 600 mañana a las 6"), 600);
+  assert.equal(amountFallback("cada semana por 4 semanas cóbrale a Luis 50"), 50);
+  assert.equal(amountFallback("cóbrale a Ana 250 el 15 a las 10"), 250);
+});
+
+test("names match even with punctuation next to them", () => {
+  assert.equal(matchContact("", "divide 900 entre Luis, y yo", CONTACTS).contact.contactId, "c-luis");
+});
+
+test("reminder text is a fixed template", () => {
+  const { reminderText } = require("../src/services/reminders");
+  assert.equal(reminderText({ fromName: "Rodrigo", amount: "1200", concept: "la renta" }), "Rodrigo te recuerda pagar $1,200.00 por la renta.");
+  assert.equal(reminderText({ fromName: "Rodrigo", amount: "50", concept: "" }), "Rodrigo te recuerda pagar $50.00.");
+  assert.equal(reminderText({ fromName: "Rodrigo", amount: null, concept: "la cena" }), "Rodrigo te recuerda un pago pendiente: la cena.");
+  assert.equal(reminderText({ fromName: null, amount: null, concept: "" }), "Un contacto te recuerda un pago pendiente.");
+});
+
+test("the reminder day starts at midnight Mexico time", () => {
+  const { mexicoDayStart } = require("../src/services/reminders");
+  // 29 oct 21:00 en México (30 oct 03:00 UTC) sigue siendo el 29.
+  assert.equal(mexicoDayStart(new Date("2026-10-30T03:00:00.000Z")), "2026-10-29T06:00:00.000Z");
+});
+
+test("a reminder needs a saved contact; amount, concept and date are optional", () => {
+  const { prepareReminder } = require("../src/services/assistant-actions");
+  const ask = (text) => prepareReminder({ interpretation: fallback({ intent: "reminder" }), text, contacts: CONTACTS, config: CONFIG, now: NOW });
+  assert.deepEqual(ask("recuérdale a Luis que me pague 200 por la cena").payload, {
+    contactId: "c-luis", contactName: "Luis", amount: "200.00", currency: "MXN", concept: "la cena", runAt: null,
+  });
+  assert.equal(ask("recuérdale a Luis que me pague").payload.amount, null);
+  assert.equal(ask("recuérdale a Luis que me pague mañana a las 10").payload.runAt, "2026-10-30T16:00:00.000Z");
+  assert.equal(ask("recuérdale a Pedro que me pague").type, "clarification");
+  assert.equal(ask("recuérdale a Luis que me pague 5000").type, "clarification");
+});

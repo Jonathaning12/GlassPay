@@ -27,11 +27,13 @@ async function createTestEnvironment() {
     scheduling: {
       chargeTtlSeconds: 18000,
       maxActive: 10,
+      maxAutoPayments: 3,
       maxHorizonDays: 30,
       lateToleranceSeconds: 7200,
       proposalTtlSeconds: 120,
       intervalMs: 60000,
     },
+    reminders: { maxPerDay: 2 },
     paypal: { returnUrl: "http://localhost/return", cancelUrl: "http://localhost/cancel" },
   };
   const orderIds = [];
@@ -1766,6 +1768,478 @@ test("charges waiting for confirmation are skipped after two hours", async () =>
     );
     assert.equal(run.status, 404);
     assert.equal(environment.orderIds.length, 0);
+  } finally {
+    await environment.close();
+  }
+});
+
+// ---------- C2b: cobros recurrentes y dividir cuenta ----------
+
+async function addContact(environment, collector, payerName) {
+  const resolution = await resolvePayer(environment.baseUrl, collector.headers, payerName);
+  const saved = await saveContact(environment.baseUrl, collector.headers, resolution.resolutionId);
+  assert.equal(saved.status, 201);
+  return saved.json();
+}
+
+const weeksAhead = (weeks, extraMinutes = 1) =>
+  new Date(Date.now() + weeks * 7 * 24 * 60 * 60 * 1000 + extraMinutes * 60 * 1000);
+
+test("a weekly recurring charge runs once per occurrence and ends after its total", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector } = await createCollectorWithContact(environment);
+    const reply = await proposeScheduledCharge(
+      environment,
+      collector,
+      "cóbrale a Ana 50 por el gym cada semana empezando en 2 horas por 3 semanas",
+    );
+    assert.equal(reply.kind, "proposal");
+    assert.equal(reply.proposal.action, "recurring_charge");
+    assert.equal(reply.proposal.recurrence, "weekly");
+    assert.equal(reply.proposal.occurrencesTotal, 3);
+    const confirmed = await (await confirmProposal(environment, collector.headers, reply.proposal.proposalId)).json();
+    assert.equal(confirmed.scheduled.recurrence, "weekly");
+    const firstRunAt = Date.parse(confirmed.scheduled.runAt);
+
+    await environment.scheduler.tick(new Date(firstRunAt + 60_000));
+    let [item] = await listScheduled(environment, collector.headers);
+    assert.deepEqual([item.state, item.occurrencesDone], ["programado", 1]);
+    assert.equal(Date.parse(item.runAt) - firstRunAt, 7 * 24 * 60 * 60 * 1000);
+    assert.equal(environment.orderIds.length, 1);
+
+    await environment.scheduler.tick(new Date(Date.parse(item.runAt) + 60_000));
+    [item] = await listScheduled(environment, collector.headers);
+    await environment.scheduler.tick(new Date(Date.parse(item.runAt) + 60_000));
+    [item] = await listScheduled(environment, collector.headers);
+    assert.deepEqual([item.state, item.occurrencesDone], ["completado", 3]);
+    assert.equal(environment.orderIds.length, 3);
+    assert.equal(await environment.scheduler.tick(weeksAhead(10)), 0);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a late occurrence of a series is skipped but the series continues", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector } = await createCollectorWithContact(environment);
+    const reply = await proposeScheduledCharge(
+      environment,
+      collector,
+      "cóbrale a Ana 50 por el gym cada semana empezando en 2 horas por 3 semanas",
+    );
+    const { scheduled } = await (await confirmProposal(environment, collector.headers, reply.proposal.proposalId)).json();
+    await environment.scheduler.tick(new Date(Date.parse(scheduled.runAt) + 5 * 60 * 60 * 1000));
+    const [item] = await listScheduled(environment, collector.headers);
+    assert.deepEqual([item.state, item.occurrencesDone, item.failure], ["programado", 1, "atrasado"]);
+    assert.equal(environment.orderIds.length, 0);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("cancelling a series stops all future occurrences", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector } = await createCollectorWithContact(environment);
+    const reply = await proposeScheduledCharge(
+      environment,
+      collector,
+      "cóbrale a Ana 50 por el gym cada semana empezando en 2 horas",
+    );
+    assert.equal(reply.proposal.occurrencesTotal, 12);
+    const { scheduled } = await (await confirmProposal(environment, collector.headers, reply.proposal.proposalId)).json();
+    await environment.scheduler.tick(new Date(Date.parse(scheduled.runAt) + 60_000));
+    const cancel = await postJson(
+      `${environment.baseUrl}/api/collectors/me/scheduled/${scheduled.scheduledId}/cancel`,
+      {},
+      collector.headers,
+    );
+    assert.equal(cancel.status, 200);
+    await environment.scheduler.tick(weeksAhead(3));
+    assert.equal(environment.orderIds.length, 1);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a recurring charge needs an explicit start and at most twelve occurrences", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector } = await createCollectorWithContact(environment);
+    const noStart = await proposeScheduledCharge(environment, collector, "cóbrale a Ana 50 cada mes");
+    assert.equal(noStart.kind, "text");
+    const tooMany = await proposeScheduledCharge(
+      environment,
+      collector,
+      "cóbrale a Ana 50 cada semana empezando en 2 horas por 20 semanas",
+    );
+    assert.equal(tooMany.kind, "text");
+  } finally {
+    await environment.close();
+  }
+});
+
+test("splitting a bill now creates one charge per contact with the remainder on the first", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector } = await createCollectorWithContact(environment, "Ana");
+    await addContact(environment, collector, "Luis");
+    const reply = await proposeScheduledCharge(environment, collector, "divide 100.01 entre Ana, Luis y yo por la cena");
+    assert.equal(reply.kind, "proposal");
+    assert.equal(reply.proposal.action, "split_bill");
+    assert.equal(reply.proposal.amount, "100.01");
+    assert.equal(reply.proposal.myShare, "33.33");
+    assert.deepEqual(reply.proposal.participants, [
+      { contactName: "Ana", amount: "33.35" },
+      { contactName: "Luis", amount: "33.33" },
+    ]);
+    assert.equal(JSON.stringify(reply).includes("contactId"), false);
+    assert.equal(environment.orderIds.length, 0);
+
+    const confirmed = await confirmProposal(environment, collector.headers, reply.proposal.proposalId);
+    assert.equal(confirmed.status, 201);
+    const { split } = await confirmed.json();
+    assert.deepEqual(split.map((entry) => [entry.contactName, entry.amount, entry.ok]), [
+      ["Ana", "33.35", true],
+      ["Luis", "33.33", true],
+    ]);
+    assert.equal(environment.orderIds.length, 2);
+    assert.equal((await confirmProposal(environment, collector.headers, reply.proposal.proposalId)).status, 404);
+    assert.equal(environment.orderIds.length, 2);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a split with a date schedules every part, all or nothing", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector, contact } = await createCollectorWithContact(environment, "Ana");
+    await addContact(environment, collector, "Luis");
+    const reply = await proposeScheduledCharge(environment, collector, "divide 300 entre Ana y Luis por la renta en 2 horas");
+    assert.equal(typeof reply.proposal.runAtLabel, "string");
+    const confirmed = await (await confirmProposal(environment, collector.headers, reply.proposal.proposalId)).json();
+    assert.equal(confirmed.scheduledItems.length, 2);
+    assert.equal(environment.orderIds.length, 0);
+    await environment.scheduler.tick(inThreeHours());
+    assert.equal(environment.orderIds.length, 2);
+
+    // Con 9 activas, una división de 2 no cabe: no se crea ninguna parte.
+    const stored = environment.database.getCollectorContact(contact.contactId, collector.collectorId);
+    for (let index = 0; index < 9; index += 1) {
+      await environment.database.createScheduledAction({
+        id: `seeded-split-action-${String(index).padStart(2, "0")}`,
+        collectorId: collector.collectorId,
+        kind: "charge",
+        contactId: stored.id,
+        payerId: stored.payer_id,
+        amount: "10.00",
+        currency: "MXN",
+        concept: "prueba",
+        runAt: weeksAhead(1).toISOString(),
+        autoExecute: true,
+      }, 10);
+    }
+    const second = await proposeScheduledCharge(environment, collector, "divide 300 entre Ana y Luis por la renta en 2 horas");
+    const rejected = await confirmProposal(environment, collector.headers, second.proposal.proposalId);
+    assert.equal(rejected.status, 409);
+    const active = (await listScheduled(environment, collector.headers)).filter((item) => item.state === "programado");
+    assert.equal(active.length, 9);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a split needs at least two people and contacts that exist", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector } = await createCollectorWithContact(environment, "Ana");
+    assert.equal((await proposeScheduledCharge(environment, collector, "divide 300 entre Ana")).kind, "text");
+    // Pedro no es contacto: con una sola persona válida no hay división.
+    assert.equal((await proposeScheduledCharge(environment, collector, "divide 300 entre Ana y Pedro")).kind, "text");
+    const tooBig = await proposeScheduledCharge(environment, collector, "divide 3000 entre Ana y yo");
+    assert.equal(tooBig.kind, "text");
+  } finally {
+    await environment.close();
+  }
+});
+
+// ---------- C2c: recordatorios ----------
+
+// Crea un pagador con su sesión (para ver lo que él recibe) y lo guarda como contacto del cobrador.
+async function addPayerWithSession(environment, collector, displayName = "Ana") {
+  const payer = await (await postJson(`${environment.baseUrl}/api/payers`, { displayName })).json();
+  const payerHeaders = { "X-Payer-Id": payer.payerId, "X-Payer-Session": payer.sessionSecret };
+  const qr = await (await fetch(`${environment.baseUrl}/api/payers/${payer.payerId}/qr`, {
+    method: "POST",
+    headers: payerHeaders,
+  })).json();
+  const resolution = await (await postJson(
+    `${environment.baseUrl}/api/payers/resolve`,
+    { token: qr.token },
+    collector.headers,
+  )).json();
+  const saved = await saveContact(environment.baseUrl, collector.headers, resolution.resolutionId);
+  assert.equal(saved.status, 201);
+  return { payerHeaders, contact: await saved.json() };
+}
+
+async function payerView(environment, payerHeaders) {
+  const response = await fetch(`${environment.baseUrl}/api/payers/me/payment-requests`, { headers: payerHeaders });
+  assert.equal(response.status, 200);
+  return response.json();
+}
+
+async function remind(environment, collector, text) {
+  const reply = await proposeScheduledCharge(environment, collector, text);
+  assert.equal(reply.kind, "proposal");
+  assert.equal(reply.proposal.action, "reminder");
+  return confirmProposal(environment, collector.headers, reply.proposal.proposalId);
+}
+
+test("a reminder reaches the payer with a fixed template and creates no charge", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const collector = await createCollector(environment.baseUrl, "Rodrigo");
+    const { payerHeaders } = await addPayerWithSession(environment, collector);
+
+    const before = await proposeScheduledCharge(environment, collector, "recuérdale a Ana que me pague 150 por la renta");
+    assert.equal((await payerView(environment, payerHeaders)).reminders.length, 0);
+    const sent = await confirmProposal(environment, collector.headers, before.proposal.proposalId);
+    assert.equal(sent.status, 201);
+    assert.deepEqual((await sent.json()).reminder, { sent: true, contactName: "Ana" });
+
+    const view = await payerView(environment, payerHeaders);
+    assert.equal(view.reminders.length, 1);
+    assert.equal(view.reminders[0].text, "Rodrigo te recuerda pagar $150.00 por la renta.");
+    assert.equal(view.requests.length, 0);
+    assert.equal(environment.orderIds.length, 0);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("no more than two reminders per contact per day", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const collector = await createCollector(environment.baseUrl, "Rodrigo");
+    await addPayerWithSession(environment, collector);
+    assert.equal((await remind(environment, collector, "recuérdale a Ana que me pague")).status, 201);
+    assert.equal((await remind(environment, collector, "recuérdale a Ana que me pague 20")).status, 201);
+    assert.equal((await remind(environment, collector, "recuérdale a Ana que me pague 30")).status, 409);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("only the payer can dismiss their reminder", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const collector = await createCollector(environment.baseUrl, "Rodrigo");
+    const { payerHeaders } = await addPayerWithSession(environment, collector, "Ana");
+    const other = await addPayerWithSession(environment, collector, "Luis");
+    await remind(environment, collector, "recuérdale a Ana que me pague");
+    const [reminder] = (await payerView(environment, payerHeaders)).reminders;
+    const dismissUrl = `${environment.baseUrl}/api/payers/me/reminders/${reminder.reminderId}/dismiss`;
+
+    assert.equal((await postJson(dismissUrl, {}, other.payerHeaders)).status, 404);
+    assert.equal((await postJson(dismissUrl, {}, payerHeaders)).status, 200);
+    assert.equal((await payerView(environment, payerHeaders)).reminders.length, 0);
+    assert.equal((await postJson(dismissUrl, {}, payerHeaders)).status, 404);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a reminder with a date is sent by the scheduler", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const collector = await createCollector(environment.baseUrl, "Rodrigo");
+    const { payerHeaders } = await addPayerWithSession(environment, collector);
+    const response = await remind(environment, collector, "recuérdale a Ana que me pague 80 en 2 horas");
+    assert.equal(response.status, 201);
+    assert.equal((await payerView(environment, payerHeaders)).reminders.length, 0);
+    await environment.scheduler.tick(inThreeHours());
+    const view = await payerView(environment, payerHeaders);
+    assert.equal(view.reminders[0].text, "Rodrigo te recuerda pagar $80.00.");
+    assert.equal((await listScheduled(environment, collector.headers))[0].state, "completado");
+    assert.equal(environment.orderIds.length, 0);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a collector sees reminders sent to their own payer profile", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const me = await createCollector(environment.baseUrl, "Rodrigo");
+    const friend = await createCollector(environment.baseUrl, "Luis");
+    const qr = await (await issueCollectorQr(environment.baseUrl, friend.headers)).json();
+    const resolution = await (await postJson(`${environment.baseUrl}/api/payers/resolve`, { token: qr.token }, me.headers)).json();
+    assert.equal((await saveContact(environment.baseUrl, me.headers, resolution.resolutionId)).status, 201);
+    assert.equal((await remind(environment, me, "recuérdale a Luis que me pague 40 por los tacos")).status, 201);
+
+    const response = await fetch(`${environment.baseUrl}/api/collectors/me/reminders`, { headers: friend.headers });
+    const { reminders } = await response.json();
+    assert.equal(reminders[0].text, "Rodrigo te recuerda pagar $40.00 por los tacos.");
+    const dismiss = await postJson(
+      `${environment.baseUrl}/api/collectors/me/reminders/${reminders[0].reminderId}/dismiss`,
+      {},
+      me.headers,
+    );
+    assert.equal(dismiss.status, 404);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("debtors who are contacts get a reminder suggestion", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector } = await createCollectorWithContact(environment, "Ana");
+    const { proposal } = await proposeScheduledCharge(environment, collector);
+    await confirmProposal(environment, collector.headers, proposal.proposalId);
+    await environment.scheduler.tick(inThreeHours());
+    const response = await sendAssistantMessage(environment.baseUrl, collector.headers, "¿Quién me debe?");
+    const body = await response.json();
+    assert.equal(body.reply.kind, "debtors");
+    assert.equal(body.suggestions[0], "Recuérdale a Ana que me pague 150.00");
+  } finally {
+    await environment.close();
+  }
+});
+
+// ---------- C3: pagos programados ----------
+
+async function proposePayment(environment, me, text = "págale a Luis 100 por la renta en 2 horas") {
+  const reply = await proposeScheduledCharge(environment, me, text);
+  return reply;
+}
+
+test("a scheduled payment needs explicit opt-in to run automatically", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me } = await createTransferScenario(environment);
+    const reply = await proposePayment(environment, me);
+    assert.equal(reply.kind, "proposal");
+    assert.equal(reply.proposal.action, "schedule_payment");
+    assert.equal(reply.proposal.amount, "100.00");
+    assert.equal(reply.proposal.balanceWarning, false);
+    assert.equal(environment.payouts.calls.length, 0);
+
+    // Sin autoExecute explícito, un pago NO es automático.
+    const { scheduled } = await (await confirmProposal(environment, me.headers, reply.proposal.proposalId)).json();
+    assert.equal(scheduled.autoExecute, false);
+    await environment.scheduler.tick(inThreeHours());
+    assert.equal(environment.payouts.calls.length, 0);
+    assert.equal((await listScheduled(environment, me.headers))[0].state, "esperando_confirmacion");
+
+    const ran = await postJson(
+      `${environment.baseUrl}/api/collectors/me/scheduled/${scheduled.scheduledId}/run`,
+      {},
+      me.headers,
+    );
+    assert.equal(ran.status, 200);
+    assert.equal((await ran.json()).scheduled.state, "completado");
+    assert.equal(environment.payouts.calls.length, 1);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("an automatic scheduled payment is sent by the scheduler through the transfer flow", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me } = await createTransferScenario(environment);
+    const reply = await proposePayment(environment, me);
+    const { scheduled } = await (await confirmProposal(
+      environment,
+      me.headers,
+      reply.proposal.proposalId,
+      { autoExecute: true },
+    )).json();
+    assert.equal(scheduled.autoExecute, true);
+    await environment.scheduler.tick(inThreeHours());
+    assert.equal(environment.payouts.calls.length, 1);
+    assert.equal((await listScheduled(environment, me.headers))[0].state, "completado");
+    const profile = await (await getMe(environment.baseUrl, me.headers)).json();
+    assert.equal(profile.activity[0].availableTotal, "50.00");
+    // Una segunda revisión no vuelve a enviar.
+    await environment.scheduler.tick(inThreeHours());
+    assert.equal(environment.payouts.calls.length, 1);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a scheduled payment without enough balance is not sent and not retried", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me } = await createTransferScenario(environment);
+    const reply = await proposePayment(environment, me, "págale a Luis 500 por la renta en 2 horas");
+    assert.equal(reply.proposal.balanceWarning, true);
+    await confirmProposal(environment, me.headers, reply.proposal.proposalId, { autoExecute: true });
+    await environment.scheduler.tick(inThreeHours());
+    const [item] = await listScheduled(environment, me.headers);
+    assert.deepEqual([item.state, item.failure], ["fallido", "saldo_insuficiente"]);
+    assert.equal(environment.payouts.calls.length, 0);
+    await environment.scheduler.tick(inThreeHours());
+    assert.equal(environment.payouts.calls.length, 0);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("payments to contacts without a payout email are not proposed", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me } = await createTransferScenario(environment, { friendEmail: null });
+    const reply = await proposePayment(environment, me);
+    assert.equal(reply.kind, "text");
+    assert.match(reply.text, /correo/);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("no more than three automatic payments can be active", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me } = await createTransferScenario(environment);
+    for (let index = 0; index < 3; index += 1) {
+      const reply = await proposePayment(environment, me, `págale a Luis ${10 + index} por la renta en 2 horas`);
+      assert.equal((await confirmProposal(environment, me.headers, reply.proposal.proposalId, { autoExecute: true })).status, 201);
+    }
+    const fourth = await proposePayment(environment, me, "págale a Luis 20 por la renta en 2 horas");
+    assert.equal((await confirmProposal(environment, me.headers, fourth.proposal.proposalId, { autoExecute: true })).status, 409);
+    const manual = await proposePayment(environment, me, "págale a Luis 21 por la renta en 2 horas");
+    assert.equal((await confirmProposal(environment, me.headers, manual.proposal.proposalId)).status, 201);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a scheduled payment can be cancelled before it runs", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { me } = await createTransferScenario(environment);
+    const reply = await proposePayment(environment, me);
+    const { scheduled } = await (await confirmProposal(
+      environment,
+      me.headers,
+      reply.proposal.proposalId,
+      { autoExecute: true },
+    )).json();
+    const cancel = await postJson(
+      `${environment.baseUrl}/api/collectors/me/scheduled/${scheduled.scheduledId}/cancel`,
+      {},
+      me.headers,
+    );
+    assert.equal(cancel.status, 200);
+    await environment.scheduler.tick(inThreeHours());
+    assert.equal(environment.payouts.calls.length, 0);
   } finally {
     await environment.close();
   }

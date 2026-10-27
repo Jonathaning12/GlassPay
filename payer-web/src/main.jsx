@@ -70,6 +70,7 @@ function App() {
   const [qrToken, setQrToken] = useState("");
   const [qrExpiresAt, setQrExpiresAt] = useState(null);
   const [requests, setRequests] = useState([]);
+  const [reminders, setReminders] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [approvalStartedAt, setApprovalStartedAt] = useState(null);
@@ -141,7 +142,27 @@ function App() {
         },
       });
       setRequests(result.requests);
+      setReminders(result.reminders || []);
       setError("");
+    } catch (requestError) {
+      if (handleSessionError(requestError)) {
+        return;
+      }
+      setError(requestError.message);
+    }
+  }
+
+  async function dismissReminder(reminderId) {
+    setError("");
+    try {
+      await apiRequest(`/api/payers/me/reminders/${reminderId}/dismiss`, {
+        method: "POST",
+        headers: {
+          "X-Payer-Id": session.payerId,
+          "X-Payer-Session": session.sessionSecret,
+        },
+      });
+      await loadRequests();
     } catch (requestError) {
       if (handleSessionError(requestError)) {
         return;
@@ -258,6 +279,27 @@ function App() {
           </p>
         )}
       </section>
+      {reminders.length > 0 && (
+        <section className="card">
+          <h2>Recordatorios</h2>
+          <div className="stack">
+            {reminders.map((reminder) => (
+              <article className="request" key={reminder.reminderId}>
+                <div>
+                  {/* El texto viene de una plantilla fija del servidor; React lo escapa. */}
+                  <p>{reminder.text}</p>
+                  <p className="muted small">{new Date(reminder.createdAt).toLocaleString()}</p>
+                </div>
+                <div className="actions">
+                  <button type="button" className="secondary" onClick={() => dismissReminder(reminder.reminderId)}>
+                    Descartar
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
       <section className="card">
         <h2>Por aprobar</h2>
         {pendingRequests.length === 0 && <p className="muted">No tienes solicitudes pendientes.</p>}

@@ -430,20 +430,55 @@ class PaymentApi(
     }
 
     /** Confirma una propuesta del asistente; el servidor usa lo que guardó, no datos de la app. */
-    suspend fun confirmAssistantProposal(session: CollectorSession, proposalId: String, autoExecute: Boolean): ScheduledItem? {
+    suspend fun confirmAssistantProposal(session: CollectorSession, proposalId: String, autoExecute: Boolean): ProposalOutcome {
         val body = JSONObject().put("autoExecute", autoExecute).toString().toRequestBody("application/json".toMediaType())
         val responseBody = execute(
             "POST",
             "/api/collectors/me/assistant/proposals/$proposalId/confirm",
             body,
-            15_000,
+            // Dividir crea hasta 10 órdenes de PayPal seguidas: margen amplio para no mostrar un error
+            // mientras el servidor sí está creando los cobros.
+            60_000,
             session.headers(),
         )
         return try {
-            JSONObject(responseBody).optJSONObject("scheduled")?.let(::parseScheduledItem)
+            parseProposalOutcome(responseBody)
         } catch (_: Exception) {
             throw ApiException(ApiFailureType.INVALID_RESPONSE)
         }
+    }
+
+    suspend fun getStats(session: CollectorSession, period: StatsPeriod): Stats {
+        val responseBody = execute(
+            "GET",
+            "/api/collectors/me/stats?period=${period.apiValue}",
+            null,
+            20_000,
+            session.headers(),
+        )
+        return try {
+            parseStats(responseBody)
+        } catch (_: Exception) {
+            throw ApiException(ApiFailureType.INVALID_RESPONSE)
+        }
+    }
+
+    suspend fun getReminders(session: CollectorSession): List<Reminder> {
+        val responseBody = execute("GET", "/api/collectors/me/reminders", null, 15_000, session.headers())
+        return try {
+            val items = JSONObject(responseBody).getJSONArray("reminders")
+            (0 until items.length()).map { index ->
+                val item = items.getJSONObject(index)
+                Reminder(item.getString("reminderId"), item.getString("text"), item.getString("createdAt"))
+            }
+        } catch (_: Exception) {
+            throw ApiException(ApiFailureType.INVALID_RESPONSE)
+        }
+    }
+
+    suspend fun dismissReminder(session: CollectorSession, reminderId: String) {
+        val body = "{}".toRequestBody("application/json".toMediaType())
+        execute("POST", "/api/collectors/me/reminders/$reminderId/dismiss", body, 15_000, session.headers())
     }
 
     suspend fun getScheduled(session: CollectorSession): List<ScheduledItem> {
