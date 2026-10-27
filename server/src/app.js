@@ -1,13 +1,21 @@
 const express = require("express");
 const { createAgentRouter } = require("./routes/agent");
 const { createAssistantService } = require("./services/assistant");
+const { createScheduler } = require("./services/scheduler");
 const { createCollectorsRouter } = require("./routes/collectors");
 const { createPayPalPagesRouter } = require("./routes/paypal-pages");
 const { createPaymentsRouter } = require("./routes/payments");
 const { createPayersRouter } = require("./routes/payers");
 const { createPayPalWebhooksRouter } = require("./routes/paypal-webhooks");
 
-function createApp({ config, database, paypal, agent, assistant = createAssistantService({ provider: "none" }) }) {
+function createApp({
+  config,
+  database,
+  paypal,
+  agent,
+  assistant = createAssistantService({ provider: "none" }),
+  scheduler = createScheduler({ database, paypal, config }),
+}) {
   const app = express();
   const payerConfig = config.payers || { corsOrigin: "" };
 
@@ -39,7 +47,7 @@ function createApp({ config, database, paypal, agent, assistant = createAssistan
   );
   app.use(express.json({ limit: "100kb" }));
   app.use("/api/payers", createPayersRouter({ database, paypal, config }));
-  app.use("/api/collectors", createCollectorsRouter({ database, config, paypal, assistant }));
+  app.use("/api/collectors", createCollectorsRouter({ database, config, paypal, assistant, scheduler }));
   app.use("/api/agent", createAgentRouter({ database, agent, paypal, config }));
   app.use("/api/payments", createPaymentsRouter({ database, paypal, config }));
   app.use("/paypal", createPayPalPagesRouter());

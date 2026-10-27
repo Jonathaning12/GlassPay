@@ -3,14 +3,12 @@ const { computeStats } = require("./stats");
 
 const DEBT_STATES = new Set(["pendiente_de_pagador", "aprobada"]);
 const PERIOD_PHRASES = { week: "esta semana", month: "este mes", year: "este año" };
-const SUGGESTIONS = ["¿Cuánto cobré esta semana?", "¿Quién me debe?", "¿Qué puedes hacer?"];
+const SUGGESTIONS = ["¿Cuánto cobré esta semana?", "¿Quién me debe?", "¿Qué tengo programado?", "¿Qué puedes hacer?"];
 const COMING_SOON = {
-  schedule_charge: "programar cobros",
   schedule_payment: "programar pagos",
   reminder: "enviar recordatorios",
   split_bill: "dividir cuentas",
   recurring_charge: "hacer cobros recurrentes",
-  cancel_scheduled: "cancelar lo programado",
 };
 
 function formatMoney(value) {
@@ -81,8 +79,9 @@ function buildAssistantReply({ database, collectorId, interpretation, currency }
   if (intent === "help") {
     return {
       kind: "text",
-      text: "Puedo decirte cuánto cobraste o enviaste por semana, mes o año, y quién te debe. "
-        + "Muy pronto también podré programar cobros y pagos, dividir cuentas y enviar recordatorios.",
+      text: "Puedo decirte cuánto cobraste o enviaste por semana, mes o año y quién te debe. "
+        + "También programo cobros a tus contactos («cóbrale a Ana 300 por la renta mañana a las 6») "
+        + "y los cancelo. Muy pronto podré programar pagos, dividir cuentas y enviar recordatorios.",
     };
   }
   if (COMING_SOON[intent]) {

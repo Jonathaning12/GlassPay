@@ -84,6 +84,9 @@ fun GlassPayRoot() {
     var sendContact by remember { mutableStateOf<Contact?>(null) }
     var showPayoutEmail by remember { mutableStateOf(false) }
     var showAssistant by remember { mutableStateOf(false) }
+    var showScheduled by remember { mutableStateOf(false) }
+    // Conversación del asistente: solo en memoria; se descarta al salir del asistente.
+    val assistantChat = remember { mutableStateOf(ChatState()) }
     var flowResolve by remember { mutableStateOf<ResolveState>(ResolveState.Scanning) }
     var flowCharge by remember { mutableStateOf<ChargeState>(ChargeState.Ready()) }
 
@@ -104,6 +107,8 @@ fun GlassPayRoot() {
         session = null
         pendingContactResolution = null
         showAssistant = false
+        showScheduled = false
+        assistantChat.value = ChatState()
         tab = AppTab.HOME
         flowResolve = ResolveState.Scanning
         flowCharge = ChargeState.Ready()
@@ -122,6 +127,8 @@ fun GlassPayRoot() {
         sendContact = null
         showPayoutEmail = false
         showAssistant = false
+        showScheduled = false
+        assistantChat.value = ChatState()
         tab = next
     }
 
@@ -303,12 +310,24 @@ fun GlassPayRoot() {
                                     onBack = { showMyQr = false },
                                     locked = lockActive,
                                 )
+                            } else if (showScheduled) {
+                                ScheduledScreen(
+                                    session = current,
+                                    api = api,
+                                    onSessionInvalid = ::invalidateSession,
+                                    onBack = { showScheduled = false },
+                                )
                             } else if (showAssistant) {
                                 AssistantScreen(
                                     session = current,
                                     api = api,
+                                    chatState = assistantChat,
                                     onSessionInvalid = ::invalidateSession,
-                                    onBack = { showAssistant = false },
+                                    onBack = {
+                                        showAssistant = false
+                                        assistantChat.value = ChatState()
+                                    },
+                                    onOpenScheduled = { showScheduled = true },
                                 )
                             } else if (showPayoutEmail) {
                                 PayoutEmailScreen(
@@ -342,6 +361,7 @@ fun GlassPayRoot() {
                                 },
                                 onPayoutEmail = { showPayoutEmail = true },
                                 onOpenAssistant = { showAssistant = true },
+                                onOpenScheduled = { showScheduled = true },
                                 locked = lockActive,
                                 amountsVisible = amountsVisible,
                                 onToggleAmounts = { amountsVisible = !amountsVisible },

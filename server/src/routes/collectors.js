@@ -2,6 +2,8 @@ const { randomBytes, randomUUID } = require("node:crypto");
 const { logRef, syncTransfer } = require("../services/transfers");
 const { computeStats, isPeriod } = require("../services/stats");
 const { SUGGESTIONS, buildAssistantReply } = require("../services/assistant-replies");
+const { prepareCancel, prepareScheduleCharge } = require("../services/assistant-actions");
+const { formatRunAt } = require("../services/scheduling");
 const express = require("express");
 const {
   createOpaqueToken,
@@ -119,7 +121,37 @@ function sanitizeAssistantText(value) {
   return text.length > 0 && text.length <= MAX_ASSISTANT_MESSAGE_LENGTH ? text : null;
 }
 
-function createCollectorsRouter({ database, config, paypal, assistant }) {
+const ACTIVE_SCHEDULED_STATES = new Set(["programado", "esperando_confirmacion", "ejecutando"]);
+
+function isProposalId(value) {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{43,128}$/.test(value);
+}
+
+function isScheduledId(value) {
+  return typeof value === "string" && /^[A-Za-z0-9_-]{24,64}$/.test(value);
+}
+
+function toScheduledItem(item) {
+  return {
+    scheduledId: item.scheduledId,
+    kind: item.kind,
+    contactName: item.contactName,
+    amount: item.amount,
+    currency: item.currency,
+    concept: item.concept,
+    runAt: item.runAt,
+    runAtLabel: formatRunAt(new Date(item.runAt)),
+    autoExecute: item.autoExecute,
+    state: item.state,
+    failure: item.failure,
+  };
+}
+
+function activeScheduled(items) {
+  return items.filter((item) => ACTIVE_SCHEDULED_STATES.has(item.state)).map(toScheduledItem);
+}
+
+function createCollectorsRouter({ database, config, paypal, assistant, scheduler }) {
   const router = express.Router();
   const profileLimiter = createRateLimiter({ maxRequests: 5, windowMs: 60_000 });
   const readLimiter = createRateLimiter({ maxRequests: 60, windowMs: 60_000 });
@@ -128,6 +160,11 @@ function createCollectorsRouter({ database, config, paypal, assistant }) {
   const qrLimiter = createRateLimiter({ maxRequests: 20, windowMs: 60_000 });
   const transferLimiter = createRateLimiter({ maxRequests: 10, windowMs: 60_000 });
   const settingsLimiter = createRateLimiter({ maxRequests: 10, windowMs: 60_000 });
+  const scheduledWriteLimiter = createRateLimiter({
+    maxRequests: 20,
+    windowMs: 60_000,
+    key: (request) => request.get("X-Collector-Id") || request.ip || "unknown",
+  });
   // Por cobrador (y por IP si no hay id) para que un usuario no agote el cupo diario de IA de otros.
   const assistantLimiter = createRateLimiter({
     maxRequests: 15,
@@ -225,7 +262,8 @@ function createCollectorsRouter({ database, config, paypal, assistant }) {
     );
   });
 
-  // Chat del asistente: solo consulta datos propios; ningún mensaje crea cobros ni envíos.
+  // Chat del asistente. Un mensaje nunca ejecuta nada: a lo sumo deja una propuesta que el
+  // cobrador debe confirmar en otro endpoint.
   router.post("/me/assistant/messages", assistantLimiter, async (request, response) => {
     const collector = authenticateCollector(request, database);
     if (!collector) {
@@ -237,21 +275,175 @@ function createCollectorsRouter({ database, config, paypal, assistant }) {
     }
 
     const startedAt = Date.now();
-    const interpretation = await assistant.interpret(text);
+    const now = new Date();
+    const interpretation = await assistant.interpret(text, now);
     await database.expirePaymentRequests();
-    const reply = buildAssistantReply({
-      database,
-      collectorId: collector.id,
-      interpretation,
-      currency: config.payments.defaultCurrency,
-    });
+    let reply;
+    if (interpretation.intent === "schedule_charge") {
+      const prepared = prepareScheduleCharge({
+        interpretation,
+        text,
+        contacts: database.listCollectorContacts(collector.id),
+        config,
+        now,
+      });
+      reply = prepared.type === "proposal"
+        ? await storeProposal(collector.id, prepared, now)
+        : { kind: "text", text: prepared.text };
+    } else if (interpretation.intent === "cancel_scheduled") {
+      const scheduled = database.listScheduledActions(collector.id);
+      const prepared = prepareCancel({ interpretation, text, scheduled });
+      if (prepared.type === "proposal") {
+        reply = await storeProposal(collector.id, prepared, now);
+      } else if (prepared.type === "scheduled") {
+        reply = { kind: "scheduled", text: prepared.text, scheduled: activeScheduled(scheduled) };
+      } else {
+        reply = { kind: "text", text: prepared.text };
+      }
+    } else if (interpretation.intent === "scheduled") {
+      const active = activeScheduled(database.listScheduledActions(collector.id));
+      reply = active.length === 0
+        ? { kind: "text", text: "Aún no tienes nada programado." }
+        : {
+          kind: "scheduled",
+          text: active.length === 1 ? "Tienes 1 programación activa." : `Tienes ${active.length} programaciones activas.`,
+          scheduled: active,
+        };
+    } else {
+      reply = buildAssistantReply({
+        database,
+        collectorId: collector.id,
+        interpretation,
+        currency: config.payments.defaultCurrency,
+      });
+    }
     // Sin texto del usuario ni datos personales en el log.
     console.info("assistant message", {
       intent: interpretation.intent,
       method: interpretation.method,
+      reply: reply.kind,
       elapsedMs: Date.now() - startedAt,
     });
     return response.status(200).json({ reply, suggestions: SUGGESTIONS, method: interpretation.method });
+  });
+
+  async function storeProposal(collectorId, prepared, now) {
+    const proposalId = createOpaqueToken(32);
+    const expiresAt = new Date(now.getTime() + config.scheduling.proposalTtlSeconds * 1000).toISOString();
+    await database.createAssistantProposal({
+      id: proposalId,
+      collectorId,
+      kind: prepared.kind,
+      payload: prepared.payload,
+      expiresAt,
+    });
+    const { payload } = prepared;
+    return {
+      kind: "proposal",
+      text: prepared.kind === "cancel_scheduled"
+        ? "¿Cancelo esta programación?"
+        : "Revisa el cobro programado y confírmalo.",
+      proposal: {
+        proposalId,
+        action: prepared.kind,
+        contactName: payload.contactName,
+        amount: payload.amount,
+        currency: payload.currency,
+        concept: payload.concept,
+        runAt: payload.runAt,
+        runAtLabel: formatRunAt(new Date(payload.runAt)),
+        expiresAt,
+      },
+    };
+  }
+
+  router.post("/me/assistant/proposals/:proposalId/confirm", scheduledWriteLimiter, async (request, response) => {
+    const collector = authenticateCollector(request, database);
+    if (!collector) {
+      return response.status(401).json({ error: "collector authentication failed" });
+    }
+    const proposal = isProposalId(request.params.proposalId)
+      ? await database.consumeAssistantProposal(request.params.proposalId, collector.id)
+      : null;
+    if (!proposal) {
+      return response.status(404).json({ error: "proposal not found" });
+    }
+
+    if (proposal.kind === "cancel_scheduled") {
+      const cancelled = await database.cancelScheduledAction(proposal.payload.scheduledId, collector.id);
+      return cancelled
+        ? response.status(200).json({ cancelled: true })
+        : response.status(404).json({ error: "scheduled action not found" });
+    }
+
+    // Se vuelve a validar todo con lo guardado; nada viene del cliente salvo autoExecute.
+    const { payload } = proposal;
+    const contact = database.getCollectorContact(payload.contactId, collector.id);
+    if (!contact) {
+      return response.status(404).json({ error: "proposal not found" });
+    }
+    if (Date.parse(payload.runAt) <= Date.now()) {
+      return response.status(409).json({ error: "run time already passed" });
+    }
+    const scheduledId = createOpaqueToken(18);
+    const created = await database.createScheduledAction({
+      id: scheduledId,
+      collectorId: collector.id,
+      kind: "charge",
+      contactId: contact.id,
+      payerId: contact.payer_id,
+      amount: payload.amount,
+      currency: payload.currency,
+      concept: payload.concept,
+      runAt: payload.runAt,
+      autoExecute: request.body?.autoExecute !== false,
+    }, config.scheduling.maxActive);
+    if (!created) {
+      return response.status(409).json({ error: "scheduled limit reached" });
+    }
+    console.info("scheduled action created", { ref: scheduledId.slice(0, 8) });
+    const item = database.listScheduledActions(collector.id).find((entry) => entry.scheduledId === scheduledId);
+    return response.status(201).json({ scheduled: toScheduledItem(item) });
+  });
+
+  router.get("/me/scheduled", readLimiter, (request, response) => {
+    const collector = authenticateCollector(request, database);
+    if (!collector) {
+      return response.status(401).json({ error: "collector authentication failed" });
+    }
+    return response.status(200).json({
+      scheduled: database.listScheduledActions(collector.id).map(toScheduledItem),
+      maxActive: config.scheduling.maxActive,
+    });
+  });
+
+  router.post("/me/scheduled/:scheduledId/cancel", scheduledWriteLimiter, async (request, response) => {
+    const collector = authenticateCollector(request, database);
+    if (!collector) {
+      return response.status(401).json({ error: "collector authentication failed" });
+    }
+    const cancelled = isScheduledId(request.params.scheduledId)
+      && await database.cancelScheduledAction(request.params.scheduledId, collector.id);
+    return cancelled
+      ? response.status(200).json({ cancelled: true })
+      : response.status(404).json({ error: "scheduled action not found" });
+  });
+
+  // "Confirmar a la hora": el cobrador ejecuta algo que quedó esperando su confirmación.
+  router.post("/me/scheduled/:scheduledId/run", scheduledWriteLimiter, async (request, response) => {
+    const collector = authenticateCollector(request, database);
+    if (!collector) {
+      return response.status(401).json({ error: "collector authentication failed" });
+    }
+    const action = isScheduledId(request.params.scheduledId)
+      ? await database.claimScheduledActionForRun(request.params.scheduledId, collector.id)
+      : null;
+    if (!action) {
+      return response.status(404).json({ error: "scheduled action not found" });
+    }
+    await scheduler.executeAction(action);
+    const item = database.listScheduledActions(collector.id).find((entry) => entry.scheduledId === action.id);
+    return response.status(200).json({ scheduled: toScheduledItem(item) });
   });
 
   router.put("/me/payout-email", settingsLimiter, async (request, response) => {

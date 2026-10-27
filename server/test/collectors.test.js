@@ -7,6 +7,7 @@ const initSqlJs = require("sql.js");
 const { createApp } = require("../src/app");
 const { createDatabase } = require("../src/db/database");
 const { hashOpaqueToken } = require("../src/services/payers");
+const { createScheduler } = require("../src/services/scheduler");
 
 async function createTestEnvironment() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "glasspay-collectors-"));
@@ -23,6 +24,14 @@ async function createTestEnvironment() {
     },
     agent: { proposalTtlSeconds: 120 },
     payouts: { refreshIntervalSeconds: 0 },
+    scheduling: {
+      chargeTtlSeconds: 18000,
+      maxActive: 10,
+      maxHorizonDays: 30,
+      lateToleranceSeconds: 7200,
+      proposalTtlSeconds: 120,
+      intervalMs: 60000,
+    },
     paypal: { returnUrl: "http://localhost/return", cancelUrl: "http://localhost/cancel" },
   };
   const orderIds = [];
@@ -69,13 +78,15 @@ async function createTestEnvironment() {
       };
     },
   };
-  const server = createApp({ config, database, paypal, agent }).listen(0);
+  const scheduler = createScheduler({ database, paypal, config });
+  const server = createApp({ config, database, paypal, agent, scheduler }).listen(0);
   return {
     baseUrl: `http://127.0.0.1:${server.address().port}`,
     database,
     orderIds,
     payouts,
     paypal,
+    scheduler,
     close: async () => {
       await new Promise((resolve) => server.close(resolve));
       await database.close();
@@ -1439,6 +1450,322 @@ test("assistant is rate limited per collector", async () => {
     }
     assert.equal(statuses.filter((status) => status === 200).length, 15);
     assert.equal(statuses.at(-1), 429);
+  } finally {
+    await environment.close();
+  }
+});
+
+// ---------- C2a: cobros programados desde el chat ----------
+
+async function createCollectorWithContact(environment, payerName = "Ana") {
+  const collector = await createCollector(environment.baseUrl);
+  const resolution = await resolvePayer(environment.baseUrl, collector.headers, payerName);
+  const saved = await saveContact(environment.baseUrl, collector.headers, resolution.resolutionId);
+  assert.equal(saved.status, 201);
+  return { collector, contact: await saved.json() };
+}
+
+async function proposeScheduledCharge(environment, collector, text = "cóbrale a Ana 150 por la renta en 2 horas") {
+  const response = await sendAssistantMessage(environment.baseUrl, collector.headers, text);
+  assert.equal(response.status, 200);
+  return (await response.json()).reply;
+}
+
+async function confirmProposal(environment, headers, proposalId, body = {}) {
+  return postJson(
+    `${environment.baseUrl}/api/collectors/me/assistant/proposals/${proposalId}/confirm`,
+    body,
+    headers,
+  );
+}
+
+async function listScheduled(environment, headers) {
+  const response = await fetch(`${environment.baseUrl}/api/collectors/me/scheduled`, { headers });
+  assert.equal(response.status, 200);
+  return (await response.json()).scheduled;
+}
+
+const inThreeHours = () => new Date(Date.now() + 3 * 60 * 60 * 1000);
+
+test("a scheduled-charge message only creates a proposal, never a charge", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector } = await createCollectorWithContact(environment);
+    const reply = await proposeScheduledCharge(environment, collector);
+    assert.equal(reply.kind, "proposal");
+    assert.equal(reply.proposal.action, "schedule_charge");
+    assert.equal(reply.proposal.contactName, "Ana");
+    assert.equal(reply.proposal.amount, "150.00");
+    assert.equal(reply.proposal.concept, "la renta");
+    assert.equal(typeof reply.proposal.runAtLabel, "string");
+    assert.equal(environment.orderIds.length, 0);
+    assert.deepEqual(await listScheduled(environment, collector.headers), []);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("unknown contacts and missing data get a clarification instead of a proposal", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector } = await createCollectorWithContact(environment);
+    const unknown = await proposeScheduledCharge(environment, collector, "cóbrale a Pedro 150 por la renta en 2 horas");
+    assert.equal(unknown.kind, "text");
+    assert.match(unknown.text, /contactos/);
+    const noTime = await proposeScheduledCharge(environment, collector, "cóbrale a Ana 150 por la renta mañana");
+    assert.equal(noTime.kind, "proposal");
+    const tooMuch = await proposeScheduledCharge(environment, collector, "cóbrale a Ana 5000 por la renta en 2 horas");
+    assert.equal(tooMuch.kind, "text");
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a proposal is single-use and only its owner can confirm it", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector } = await createCollectorWithContact(environment);
+    const other = await createCollector(environment.baseUrl, "Otro");
+    const { proposal } = await proposeScheduledCharge(environment, collector);
+
+    assert.equal((await confirmProposal(environment, other.headers, proposal.proposalId)).status, 404);
+    const confirmed = await confirmProposal(environment, collector.headers, proposal.proposalId);
+    assert.equal(confirmed.status, 201);
+    const { scheduled } = await confirmed.json();
+    assert.equal(scheduled.state, "programado");
+    assert.equal(scheduled.autoExecute, true);
+    assert.equal(scheduled.amount, "150.00");
+    assert.equal((await confirmProposal(environment, collector.headers, proposal.proposalId)).status, 404);
+    assert.equal((await confirmProposal(environment, collector.headers, "bad")).status, 404);
+    assert.equal(environment.orderIds.length, 0);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("the scheduler creates the charge automatically when it is due", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector } = await createCollectorWithContact(environment);
+    const { proposal } = await proposeScheduledCharge(environment, collector);
+    await confirmProposal(environment, collector.headers, proposal.proposalId);
+
+    assert.equal(await environment.scheduler.tick(new Date()), 0);
+    assert.equal(environment.orderIds.length, 0);
+
+    assert.equal(await environment.scheduler.tick(inThreeHours()), 1);
+    assert.equal(environment.orderIds.length, 1);
+    const [item] = await listScheduled(environment, collector.headers);
+    assert.equal(item.state, "completado");
+    const movements = await (await getMe(environment.baseUrl, collector.headers, "/movements")).json();
+    assert.equal(movements.movements[0].state, "pendiente_de_pagador");
+    assert.equal(movements.movements[0].amount, "150.00");
+
+    // Volver a revisar no duplica el cobro.
+    assert.equal(await environment.scheduler.tick(inThreeHours()), 0);
+    assert.equal(environment.orderIds.length, 1);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("scheduled charges last five hours instead of ten minutes", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector, contact } = await createCollectorWithContact(environment);
+    const { proposal } = await proposeScheduledCharge(environment, collector);
+    await confirmProposal(environment, collector.headers, proposal.proposalId);
+    const before = Date.now();
+    await environment.scheduler.tick(inThreeHours());
+    const stored = environment.database.getCollectorContact(contact.contactId, collector.collectorId);
+    const [request] = environment.database.listPayerRequests(stored.payer_id);
+    const lifetimeSeconds = (Date.parse(request.expiresAt) - before) / 1000;
+    assert.equal(lifetimeSeconds > 18000 - 60 && lifetimeSeconds <= 18000 + 60, true);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("charges set to confirm at the time wait for the collector and then run on demand", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector } = await createCollectorWithContact(environment);
+    const other = await createCollector(environment.baseUrl, "Otro");
+    const { proposal } = await proposeScheduledCharge(environment, collector);
+    const { scheduled } = await (await confirmProposal(
+      environment,
+      collector.headers,
+      proposal.proposalId,
+      { autoExecute: false },
+    )).json();
+    assert.equal(scheduled.autoExecute, false);
+
+    await environment.scheduler.tick(inThreeHours());
+    assert.equal(environment.orderIds.length, 0);
+    assert.equal((await listScheduled(environment, collector.headers))[0].state, "esperando_confirmacion");
+
+    const runUrl = `${environment.baseUrl}/api/collectors/me/scheduled/${scheduled.scheduledId}/run`;
+    assert.equal((await postJson(runUrl, {}, other.headers)).status, 404);
+    const ran = await postJson(runUrl, {}, collector.headers);
+    assert.equal(ran.status, 200);
+    assert.equal((await ran.json()).scheduled.state, "completado");
+    assert.equal(environment.orderIds.length, 1);
+    assert.equal((await postJson(runUrl, {}, collector.headers)).status, 404);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("charges more than two hours late are skipped, not executed", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector } = await createCollectorWithContact(environment);
+    const { proposal } = await proposeScheduledCharge(environment, collector);
+    await confirmProposal(environment, collector.headers, proposal.proposalId);
+    await environment.scheduler.tick(new Date(Date.now() + 5 * 60 * 60 * 1000));
+    const [item] = await listScheduled(environment, collector.headers);
+    assert.equal(item.state, "omitido");
+    assert.equal(item.failure, "atrasado");
+    assert.equal(environment.orderIds.length, 0);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("scheduled charges can be cancelled only by their owner and only while pending", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector } = await createCollectorWithContact(environment);
+    const other = await createCollector(environment.baseUrl, "Otro");
+    const { proposal } = await proposeScheduledCharge(environment, collector);
+    const { scheduled } = await (await confirmProposal(environment, collector.headers, proposal.proposalId)).json();
+    const cancelUrl = `${environment.baseUrl}/api/collectors/me/scheduled/${scheduled.scheduledId}/cancel`;
+
+    assert.equal((await postJson(cancelUrl, {}, other.headers)).status, 404);
+    assert.equal((await postJson(cancelUrl, {}, collector.headers)).status, 200);
+    assert.equal((await postJson(cancelUrl, {}, collector.headers)).status, 404);
+    await environment.scheduler.tick(inThreeHours());
+    assert.equal(environment.orderIds.length, 0);
+    assert.equal((await listScheduled(environment, collector.headers))[0].state, "cancelado");
+  } finally {
+    await environment.close();
+  }
+});
+
+test("cancelling from the chat goes through a confirmed proposal", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector } = await createCollectorWithContact(environment);
+    const { proposal } = await proposeScheduledCharge(environment, collector);
+    await confirmProposal(environment, collector.headers, proposal.proposalId);
+
+    const reply = await proposeScheduledCharge(environment, collector, "cancela el cobro a Ana");
+    assert.equal(reply.kind, "proposal");
+    assert.equal(reply.proposal.action, "cancel_scheduled");
+    assert.equal((await listScheduled(environment, collector.headers))[0].state, "programado");
+    const confirmed = await confirmProposal(environment, collector.headers, reply.proposal.proposalId);
+    assert.equal(confirmed.status, 200);
+    assert.equal((await listScheduled(environment, collector.headers))[0].state, "cancelado");
+
+    const list = await proposeScheduledCharge(environment, collector, "¿Qué tengo programado?");
+    assert.equal(list.text, "Aún no tienes nada programado.");
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a deleted contact makes the scheduled charge fail safely", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector, contact } = await createCollectorWithContact(environment);
+    const { proposal } = await proposeScheduledCharge(environment, collector);
+    await confirmProposal(environment, collector.headers, proposal.proposalId);
+    const deleted = await fetch(`${environment.baseUrl}/api/collectors/me/contacts/${contact.contactId}`, {
+      method: "DELETE",
+      headers: collector.headers,
+    });
+    assert.equal(deleted.status, 204);
+    await environment.scheduler.tick(inThreeHours());
+    const [item] = await listScheduled(environment, collector.headers);
+    assert.equal(item.state, "fallido");
+    assert.equal(item.failure, "contacto_eliminado");
+    assert.equal(environment.orderIds.length, 0);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("no more than ten active scheduled charges", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector, contact } = await createCollectorWithContact(environment);
+    const stored = environment.database.getCollectorContact(contact.contactId, collector.collectorId);
+    for (let index = 0; index < 10; index += 1) {
+      assert.equal(await environment.database.createScheduledAction({
+        id: `seeded-scheduled-action-${String(index).padStart(2, "0")}`,
+        collectorId: collector.collectorId,
+        kind: "charge",
+        contactId: stored.id,
+        payerId: stored.payer_id,
+        amount: "10.00",
+        currency: "MXN",
+        concept: "prueba",
+        runAt: inThreeHours().toISOString(),
+        autoExecute: true,
+      }, 10), true);
+    }
+    const { proposal } = await proposeScheduledCharge(environment, collector);
+    const response = await confirmProposal(environment, collector.headers, proposal.proposalId);
+    assert.equal(response.status, 409);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("interrupted executions are marked failed on startup and never retried", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector } = await createCollectorWithContact(environment);
+    const { proposal } = await proposeScheduledCharge(environment, collector);
+    await confirmProposal(environment, collector.headers, proposal.proposalId);
+    const claimed = await environment.database.claimDueScheduledActions(
+      inThreeHours().toISOString(),
+      new Date(0).toISOString(),
+    );
+    assert.equal(claimed.length, 1);
+    assert.equal(await environment.database.failInterruptedScheduledActions(), 1);
+    await environment.scheduler.tick(inThreeHours());
+    const [item] = await listScheduled(environment, collector.headers);
+    assert.deepEqual([item.state, item.failure], ["fallido", "interrumpido"]);
+    assert.equal(environment.orderIds.length, 0);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("charges waiting for confirmation are skipped after two hours", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const { collector } = await createCollectorWithContact(environment);
+    const { proposal } = await proposeScheduledCharge(environment, collector);
+    const { scheduled } = await (await confirmProposal(
+      environment,
+      collector.headers,
+      proposal.proposalId,
+      { autoExecute: false },
+    )).json();
+    await environment.scheduler.tick(inThreeHours());
+    assert.equal((await listScheduled(environment, collector.headers))[0].state, "esperando_confirmacion");
+    await environment.scheduler.tick(new Date(Date.now() + 5 * 60 * 60 * 1000));
+    const [item] = await listScheduled(environment, collector.headers);
+    assert.deepEqual([item.state, item.failure], ["omitido", "sin_confirmar"]);
+    const run = await postJson(
+      `${environment.baseUrl}/api/collectors/me/scheduled/${scheduled.scheduledId}/run`,
+      {},
+      collector.headers,
+    );
+    assert.equal(run.status, 404);
+    assert.equal(environment.orderIds.length, 0);
   } finally {
     await environment.close();
   }

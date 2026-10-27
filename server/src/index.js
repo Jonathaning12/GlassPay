@@ -5,6 +5,7 @@ const { createDatabase } = require("./db/database");
 const { createAgentService } = require("./services/agent");
 const { createAssistantService } = require("./services/assistant");
 const { createDailyBudget } = require("./services/gemini");
+const { createScheduler } = require("./services/scheduler");
 const { PayPalService } = require("./services/paypal");
 
 dotenv.config();
@@ -17,7 +18,11 @@ async function start() {
   const budget = createDailyBudget(config.agent.dailyCallLimit);
   const agent = createAgentService({ ...config.agent, budget });
   const assistant = createAssistantService({ ...config.agent, budget });
-  const app = createApp({ config, database, paypal, agent, assistant });
+  const scheduler = createScheduler({ database, paypal, config });
+  const app = createApp({ config, database, paypal, agent, assistant, scheduler });
+  // Lo que quedó "ejecutando" al caer el proceso no se reintenta: el cobro pudo crearse.
+  await database.failInterruptedScheduledActions();
+  scheduler.start();
 
   app.listen(config.port, () => {
     console.log(`GlassPay server listening on port ${config.port}`);

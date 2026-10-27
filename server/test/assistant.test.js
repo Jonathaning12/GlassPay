@@ -33,7 +33,18 @@ test("fallback recognizes future actions without executing them", () => {
 test("model output is validated by code, never trusted", () => {
   assert.deepEqual(
     normalizeAssistantResult({ intent: "transfer_all_money", period: "decade", contactName: 5, amount: -3 }),
-    { intent: "unknown", period: "none", contactName: "", amount: 0, method: "gemini" },
+    {
+      intent: "unknown",
+      period: "none",
+      contactName: "",
+      amount: 0,
+      concept: "",
+      whenType: "none",
+      minutesFromNow: 0,
+      date: "",
+      time: "",
+      method: "gemini",
+    },
   );
   const cleaned = normalizeAssistantResult({
     intent: "summary",

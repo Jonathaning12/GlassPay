@@ -429,6 +429,49 @@ class PaymentApi(
         }
     }
 
+    /** Confirma una propuesta del asistente; el servidor usa lo que guardó, no datos de la app. */
+    suspend fun confirmAssistantProposal(session: CollectorSession, proposalId: String, autoExecute: Boolean): ScheduledItem? {
+        val body = JSONObject().put("autoExecute", autoExecute).toString().toRequestBody("application/json".toMediaType())
+        val responseBody = execute(
+            "POST",
+            "/api/collectors/me/assistant/proposals/$proposalId/confirm",
+            body,
+            15_000,
+            session.headers(),
+        )
+        return try {
+            JSONObject(responseBody).optJSONObject("scheduled")?.let(::parseScheduledItem)
+        } catch (_: Exception) {
+            throw ApiException(ApiFailureType.INVALID_RESPONSE)
+        }
+    }
+
+    suspend fun getScheduled(session: CollectorSession): List<ScheduledItem> {
+        val responseBody = execute("GET", "/api/collectors/me/scheduled", null, 15_000, session.headers())
+        return try {
+            val items = JSONObject(responseBody).getJSONArray("scheduled")
+            (0 until items.length()).map { parseScheduledItem(items.getJSONObject(it)) }
+        } catch (_: Exception) {
+            throw ApiException(ApiFailureType.INVALID_RESPONSE)
+        }
+    }
+
+    suspend fun cancelScheduled(session: CollectorSession, scheduledId: String) {
+        val body = "{}".toRequestBody("application/json".toMediaType())
+        execute("POST", "/api/collectors/me/scheduled/$scheduledId/cancel", body, 15_000, session.headers())
+    }
+
+    suspend fun runScheduled(session: CollectorSession, scheduledId: String): ScheduledItem {
+        val body = "{}".toRequestBody("application/json".toMediaType())
+        // Crea la orden en PayPal: margen como el de un cobro normal.
+        val responseBody = execute("POST", "/api/collectors/me/scheduled/$scheduledId/run", body, 30_000, session.headers())
+        return try {
+            parseScheduledItem(JSONObject(responseBody).getJSONObject("scheduled"))
+        } catch (_: Exception) {
+            throw ApiException(ApiFailureType.INVALID_RESPONSE)
+        }
+    }
+
     suspend fun getPaymentStatus(requestId: String, statusToken: String): PaymentStatus {
         val responseBody = execute(
             method = "GET",

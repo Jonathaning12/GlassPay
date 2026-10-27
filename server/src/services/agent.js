@@ -265,8 +265,10 @@ function createAgentService(config) {
 }
 
 module.exports = {
+  NUMBER_WORDS,
   createAgentService,
   deterministicParse,
+  parseSpanishNumber,
   normalizeModelResult,
   validateModelResultAgainstText,
 };

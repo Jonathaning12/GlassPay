@@ -17,6 +17,7 @@ async function createPaymentRequestFromResolutionHash({
   amount,
   currency,
   concept,
+  ttlSeconds = config.payers.paymentRequestTtlSeconds,
 }) {
   await database.expirePaymentRequests();
   const resolution = await database.consumePayerResolution(resolutionHash, collectorId);
@@ -31,7 +32,7 @@ async function createPaymentRequestFromResolutionHash({
   const requestId = randomUUID();
   const statusToken = createOpaqueToken(32);
   const referenceId = `glasspay-${transactionId}`;
-  const expiresAt = new Date(Date.now() + config.payers.paymentRequestTtlSeconds * 1000).toISOString();
+  const expiresAt = new Date(Date.now() + ttlSeconds * 1000).toISOString();
   const statusTokenExpiresAt = new Date(
     Date.parse(expiresAt) + config.payers.statusTokenFinalMarginSeconds * 1000,
   ).toISOString();

@@ -70,6 +70,34 @@ async function createDatabase(databasePath) {
       UNIQUE (collector_id, payer_id)
     );
 
+    CREATE TABLE IF NOT EXISTS assistant_proposals (
+      id TEXT PRIMARY KEY,
+      collector_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS scheduled_actions (
+      id TEXT PRIMARY KEY,
+      collector_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      contact_id TEXT NOT NULL,
+      payer_id TEXT NOT NULL,
+      amount TEXT NOT NULL,
+      currency TEXT NOT NULL,
+      concept TEXT NOT NULL,
+      run_at TEXT NOT NULL,
+      auto_execute INTEGER NOT NULL,
+      state TEXT NOT NULL,
+      payment_request_id TEXT,
+      failure TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS transfers (
       id TEXT PRIMARY KEY,
       sender_collector_id TEXT NOT NULL,
@@ -860,6 +888,166 @@ async function createDatabase(databasePath) {
           proposal.expiresAt,
           now(),
         ]);
+      });
+    },
+
+    createAssistantProposal({ id, collectorId, kind, payload, expiresAt }) {
+      return enqueueWrite(() => {
+        database.run(`
+          INSERT INTO assistant_proposals (id, collector_id, kind, payload, expires_at, created_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `, [id, collectorId, kind, JSON.stringify(payload), expiresAt, now()]);
+      });
+    },
+
+    // Un solo uso, solo el dueño y solo vigente; cualquier otro caso devuelve null.
+    consumeAssistantProposal(proposalId, collectorId) {
+      return enqueueWrite(() => {
+        const timestamp = now();
+        database.run(`
+          UPDATE assistant_proposals
+          SET used_at = ?
+          WHERE id = ? AND collector_id = ? AND used_at IS NULL AND expires_at > ?
+        `, [timestamp, proposalId, collectorId, timestamp]);
+        if (database.getRowsModified() !== 1) {
+          return null;
+        }
+        const row = get("SELECT kind, payload FROM assistant_proposals WHERE id = ?", [proposalId]);
+        return { kind: row.kind, payload: JSON.parse(row.payload) };
+      });
+    },
+
+    // Crea la programación solo si no supera el tope de activas (verificado dentro de la escritura).
+    createScheduledAction(action, maxActive) {
+      return enqueueWrite(() => {
+        const active = get(`
+          SELECT COUNT(*) AS total FROM scheduled_actions
+          WHERE collector_id = ? AND state IN ('programado', 'esperando_confirmacion', 'ejecutando')
+        `, [action.collectorId]).total;
+        if (active >= maxActive) {
+          return false;
+        }
+        const timestamp = now();
+        database.run(`
+          INSERT INTO scheduled_actions
+            (id, collector_id, kind, contact_id, payer_id, amount, currency, concept, run_at,
+             auto_execute, state, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'programado', ?, ?)
+        `, [
+          action.id, action.collectorId, action.kind, action.contactId, action.payerId, action.amount,
+          action.currency, action.concept, action.runAt, action.autoExecute ? 1 : 0, timestamp, timestamp,
+        ]);
+        return true;
+      });
+    },
+
+    listScheduledActions(collectorId, limit = 30) {
+      return all(`
+        SELECT s.id, s.kind, s.amount, s.currency, s.concept, s.run_at, s.auto_execute, s.state,
+          s.failure, s.created_at, s.updated_at, p.display_name
+        FROM scheduled_actions s
+        JOIN payer_profiles p ON p.id = s.payer_id
+        WHERE s.collector_id = ?
+        ORDER BY CASE WHEN s.state IN ('programado', 'esperando_confirmacion', 'ejecutando') THEN 0 ELSE 1 END,
+          s.run_at
+        LIMIT ?
+      `, [collectorId, limit]).map((row) => ({
+        scheduledId: row.id,
+        kind: row.kind,
+        contactName: row.display_name,
+        amount: row.amount,
+        currency: row.currency,
+        concept: row.concept,
+        runAt: row.run_at,
+        autoExecute: row.auto_execute === 1,
+        state: row.state,
+        failure: row.failure,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+      }));
+    },
+
+    cancelScheduledAction(scheduledId, collectorId) {
+      return enqueueWrite(() => {
+        database.run(`
+          UPDATE scheduled_actions SET state = 'cancelado', updated_at = ?
+          WHERE id = ? AND collector_id = ? AND state IN ('programado', 'esperando_confirmacion')
+        `, [now(), scheduledId, collectorId]);
+        return database.getRowsModified() === 1;
+      });
+    },
+
+    /**
+     * Reclama lo vencido de forma atómica: lo automático pasa a "ejecutando" (se devuelve para
+     * ejecutarlo), lo manual a "esperando_confirmacion" y lo muy atrasado a "omitido".
+     */
+    claimDueScheduledActions(nowIso, lateLimitIso) {
+      return enqueueWrite(() => {
+        const timestamp = now();
+        database.run(`
+          UPDATE scheduled_actions SET state = 'omitido', failure = 'atrasado', updated_at = ?
+          WHERE state = 'programado' AND run_at < ?
+        `, [timestamp, lateLimitIso]);
+        // Lo que esperaba confirmación tampoco se puede crear días después por descuido.
+        database.run(`
+          UPDATE scheduled_actions SET state = 'omitido', failure = 'sin_confirmar', updated_at = ?
+          WHERE state = 'esperando_confirmacion' AND run_at < ?
+        `, [timestamp, lateLimitIso]);
+        database.run(`
+          UPDATE scheduled_actions SET state = 'esperando_confirmacion', updated_at = ?
+          WHERE state = 'programado' AND auto_execute = 0 AND run_at <= ?
+        `, [timestamp, nowIso]);
+        const due = all(`
+          SELECT id, collector_id, kind, contact_id, payer_id, amount, currency, concept
+          FROM scheduled_actions
+          WHERE state = 'programado' AND auto_execute = 1 AND run_at <= ?
+          ORDER BY run_at
+        `, [nowIso]);
+        for (const action of due) {
+          database.run("UPDATE scheduled_actions SET state = 'ejecutando', updated_at = ? WHERE id = ?", [
+            timestamp,
+            action.id,
+          ]);
+        }
+        return due;
+      });
+    },
+
+    // Ejecución manual de algo que espera la confirmación del cobrador.
+    claimScheduledActionForRun(scheduledId, collectorId) {
+      return enqueueWrite(() => {
+        database.run(`
+          UPDATE scheduled_actions SET state = 'ejecutando', updated_at = ?
+          WHERE id = ? AND collector_id = ? AND state = 'esperando_confirmacion'
+        `, [now(), scheduledId, collectorId]);
+        if (database.getRowsModified() !== 1) {
+          return null;
+        }
+        return get(`
+          SELECT id, collector_id, kind, contact_id, payer_id, amount, currency, concept
+          FROM scheduled_actions WHERE id = ?
+        `, [scheduledId]);
+      });
+    },
+
+    finishScheduledAction(scheduledId, { state, paymentRequestId = null, failure = null }) {
+      return enqueueWrite(() => {
+        database.run(`
+          UPDATE scheduled_actions
+          SET state = ?, payment_request_id = ?, failure = ?, updated_at = ?
+          WHERE id = ? AND state = 'ejecutando'
+        `, [state, paymentRequestId, failure, now(), scheduledId]);
+      });
+    },
+
+    // Tras un reinicio, lo que quedó a medias no se reintenta: el cobro pudo haberse creado.
+    failInterruptedScheduledActions() {
+      return enqueueWrite(() => {
+        database.run(`
+          UPDATE scheduled_actions SET state = 'fallido', failure = 'interrumpido', updated_at = ?
+          WHERE state = 'ejecutando'
+        `, [now()]);
+        return database.getRowsModified();
       });
     },
 

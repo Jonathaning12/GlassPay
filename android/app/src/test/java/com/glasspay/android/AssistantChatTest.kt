@@ -102,4 +102,90 @@ class AssistantChatTest {
         assertEquals("Este mes", assistantPeriodLabel("month"))
         assertEquals("Este año", assistantPeriodLabel("year"))
     }
+
+    // Propuestas (C2a)
+
+    @Test
+    fun proposalStartsPendingAndConfirmable() {
+        assertEquals(ProposalStatus.PENDING, ChatState().proposalStatus("p1"))
+        assertTrue(ChatState().canConfirm("p1"))
+    }
+
+    @Test
+    fun confirmingAProposalBlocksASecondConfirmation() {
+        val state = ChatState().proposalConfirming("p1")
+        assertEquals(ProposalStatus.CONFIRMING, state.proposalStatus("p1"))
+        assertFalse(state.canConfirm("p1"))
+    }
+
+    @Test
+    fun confirmedProposalAddsAMessageAndCannotBeConfirmedAgain() {
+        val state = ChatState().proposalConfirming("p1").proposalConfirmed("p1", "Listo.")
+        assertEquals(ProposalStatus.CONFIRMED, state.proposalStatus("p1"))
+        assertEquals("Listo.", state.messages.last().text)
+        assertFalse(state.canConfirm("p1"))
+    }
+
+    @Test
+    fun discardedProposalCannotBeConfirmed() {
+        val state = ChatState().proposalDiscarded("p1")
+        assertEquals(ProposalStatus.DISCARDED, state.proposalStatus("p1"))
+        assertFalse(state.canConfirm("p1"))
+    }
+
+    @Test
+    fun discardDoesNothingWhileConfirming() {
+        val state = ChatState().proposalConfirming("p1").proposalDiscarded("p1")
+        assertEquals(ProposalStatus.CONFIRMING, state.proposalStatus("p1"))
+    }
+
+    @Test
+    fun failedProposalShowsAnErrorMessage() {
+        val state = ChatState().proposalConfirming("p1").proposalFailed("p1", "Venció.")
+        assertEquals(ProposalStatus.FAILED, state.proposalStatus("p1"))
+        assertTrue(state.messages.last().isError)
+    }
+
+    @Test
+    fun proposalsAreTrackedIndependently() {
+        val state = ChatState().proposalDiscarded("p1")
+        assertTrue(state.canConfirm("p2"))
+    }
+
+    @Test
+    fun completedScheduledChargeIsNeverCalledPaid() {
+        assertEquals("Cobro creado", scheduledStateLabel("completado"))
+        assertFalse(scheduledStateLabel("completado").contains("ag"))
+    }
+
+    @Test
+    fun scheduledStatesMapToStatusKinds() {
+        assertEquals(StatusKind.PENDING, scheduledStateKind("programado"))
+        assertEquals(StatusKind.PENDING, scheduledStateKind("esperando_confirmacion"))
+        assertEquals(StatusKind.SUCCESS, scheduledStateKind("completado"))
+        assertEquals(StatusKind.FAILURE, scheduledStateKind("fallido"))
+        assertEquals(StatusKind.NEUTRAL, scheduledStateKind("cancelado"))
+        assertEquals(StatusKind.NEUTRAL, scheduledStateKind("omitido"))
+    }
+
+    @Test
+    fun onlyPendingStatesAreActive() {
+        assertTrue(isScheduledActive("programado"))
+        assertTrue(isScheduledActive("esperando_confirmacion"))
+        assertFalse(isScheduledActive("completado"))
+        assertFalse(isScheduledActive("cancelado"))
+    }
+
+    @Test
+    fun knownFailuresHaveSpanishExplanations() {
+        assertEquals(null, scheduledFailureMessage(null))
+        assertTrue(scheduledFailureMessage("atrasado")!!.contains("inactivo"))
+        assertTrue(scheduledFailureMessage("interrumpido")!!.contains("Movimientos"))
+        assertEquals("No se pudo crear el cobro.", scheduledFailureMessage("otra_cosa"))
+    }
+
+    @Test
+    fun expiredProposalAsksToRequestItAgain() {
+        assertTrue(proposalErrorMessage(ApiFailureType.NOT_FOUND).contains("de nuevo"))
+    }
 }

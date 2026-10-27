@@ -89,6 +89,7 @@ fun HomeScreen(
     onSend: () -> Unit,
     onPayoutEmail: () -> Unit,
     onOpenAssistant: () -> Unit,
+    onOpenScheduled: () -> Unit,
     locked: Boolean,
     amountsVisible: Boolean,
     onToggleAmounts: () -> Unit,
@@ -104,6 +105,21 @@ fun HomeScreen(
     var incomingMessage by remember { mutableStateOf<String?>(null) }
     var pendingReject by remember { mutableStateOf<IncomingRequest?>(null) }
     var rejecting by remember { mutableStateOf(false) }
+    var awaitingConfirmation by remember { mutableStateOf(0) }
+
+    // Cobros programados que esperan la confirmación del cobrador (sin notificaciones del sistema en C2).
+    LaunchedEffect(reload, locked) {
+        if (locked) return@LaunchedEffect
+        try {
+            awaitingConfirmation = api.getScheduled(session).count { it.state == "esperando_confirmacion" }
+        } catch (exception: CancellationException) {
+            throw exception
+        } catch (exception: ApiException) {
+            Log.i("GlassPay", "scheduled summary failure type=${exception.type} httpCode=${exception.httpCode}")
+        } catch (_: Exception) {
+            Log.i("GlassPay", "scheduled summary failure type=UNKNOWN httpCode=none")
+        }
+    }
 
     // "Por pagar": se recarga al mostrarse y cada 5 s mientras Inicio está visible.
     LaunchedEffect(reload, locked) {
@@ -295,6 +311,24 @@ fun HomeScreen(
                         }
                     }
                 }
+            }
+        }
+        if (awaitingConfirmation > 0) {
+            GpCard(modifier = Modifier.fillMaxWidth(), spacing = 12.dp) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconBadge(R.drawable.ic_clock, tint = GlassPayColors.Warning, size = 40.dp, background = GlassPayColors.WarningSoft)
+                    Text(
+                        if (awaitingConfirmation == 1) {
+                            "1 cobro programado espera tu confirmación"
+                        } else {
+                            "$awaitingConfirmation cobros programados esperan tu confirmación"
+                        },
+                        style = MaterialTheme.typography.titleMedium,
+                        color = GlassPayColors.Text,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                GpButton("Revisar", onClick = onOpenScheduled, modifier = Modifier.fillMaxWidth())
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {

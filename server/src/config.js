@@ -59,6 +59,19 @@ function createConfig() {
       dailyCallLimit: Number.parseInt(process.env.AI_DAILY_CALL_LIMIT || "100", 10),
       proposalTtlSeconds: Number.parseInt(process.env.CHARGE_PROPOSAL_TTL_SECONDS || "120", 10),
     },
+    scheduling: {
+      // PayPal da por defecto 6 h para mandar al pagador a aprobar una orden recién creada:
+      // la vigencia de un cobro programado nunca supera ese límite.
+      chargeTtlSeconds: Math.min(
+        Number.parseInt(process.env.SCHEDULED_CHARGE_TTL_SECONDS || "18000", 10),
+        6 * 60 * 60,
+      ),
+      maxActive: Number.parseInt(process.env.SCHEDULED_MAX_ACTIVE || "10", 10),
+      maxHorizonDays: Number.parseInt(process.env.SCHEDULED_MAX_HORIZON_DAYS || "30", 10),
+      lateToleranceSeconds: Number.parseInt(process.env.SCHEDULED_LATE_TOLERANCE_SECONDS || "7200", 10),
+      proposalTtlSeconds: Number.parseInt(process.env.ASSISTANT_PROPOSAL_TTL_SECONDS || "120", 10),
+      intervalMs: Number.parseInt(process.env.SCHEDULER_INTERVAL_MS || "60000", 10),
+    },
     databasePath: path.resolve(process.env.DATABASE_PATH || ".data/glasspay.db"),
   };
 }

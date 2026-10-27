@@ -33,10 +33,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,12 +58,15 @@ import kotlinx.coroutines.launch
 fun AssistantScreen(
     session: CollectorSession,
     api: PaymentApi,
+    chatState: MutableState<ChatState>,
     onSessionInvalid: (message: String) -> Unit,
     onBack: () -> Unit,
+    onOpenScheduled: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var chat by remember { mutableStateOf(ChatState()) }
+    // Lo guarda MainActivity solo en memoria para sobrevivir a la visita a Programados.
+    var chat by chatState
     var input by remember { mutableStateOf("") }
     var listening by remember { mutableStateOf(false) }
     var voiceMessage by remember { mutableStateOf<String?>(null) }
@@ -124,6 +130,37 @@ fun AssistantScreen(
         }
     }
 
+    fun confirmProposal(proposal: AssistantProposal, autoExecute: Boolean) {
+        if (!chat.canConfirm(proposal.proposalId)) return
+        chat = chat.proposalConfirming(proposal.proposalId)
+        scope.launch {
+            chat = try {
+                val scheduled = api.confirmAssistantProposal(session, proposal.proposalId, autoExecute)
+                chat.proposalConfirmed(
+                    proposal.proposalId,
+                    if (scheduled == null) {
+                        "Listo, cancelé el cobro a ${proposal.contactName}."
+                    } else if (autoExecute) {
+                        "Listo. El ${scheduled.runAtLabel} crearé el cobro a ${scheduled.contactName}; luego debe aprobarlo en PayPal."
+                    } else {
+                        "Listo. El ${scheduled.runAtLabel} te pediré confirmar el cobro a ${scheduled.contactName}."
+                    },
+                )
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (exception: ApiException) {
+                Log.i("GlassPay", "proposal failure type=${exception.type} httpCode=${exception.httpCode}")
+                if (isSessionInvalid(exception.type)) {
+                    onSessionInvalid(SESSION_INVALID_MESSAGE)
+                    return@launch
+                }
+                chat.proposalFailed(proposal.proposalId, proposalErrorMessage(exception.type))
+            } catch (_: Exception) {
+                chat.proposalFailed(proposal.proposalId, proposalErrorMessage(ApiFailureType.INVALID_RESPONSE))
+            }
+        }
+    }
+
     LaunchedEffect(chat.messages.size, chat.sending) {
         val count = chat.messages.size + if (chat.sending) 1 else 0
         if (count > 0) listState.animateScrollToItem(count)
@@ -131,7 +168,7 @@ fun AssistantScreen(
 
     Column(modifier = Modifier.fillMaxSize().imePadding()) {
         ScreenHeader("Asistente", onBack = onBack) {
-            IconBadge(R.drawable.ic_assistant, tint = GlassPayColors.Accent, size = 40.dp, background = GlassPayColors.AccentSoft)
+            CircleIconButton(R.drawable.ic_clock, "Ver programados", onOpenScheduled, tint = GlassPayColors.Accent)
         }
         LazyColumn(
             state = listState,
@@ -141,7 +178,17 @@ fun AssistantScreen(
         ) {
             item(key = "intro") { AssistantIntro() }
             items(chat.messages, key = { it.id }) { message ->
-                if (message.fromUser) UserBubble(message.text) else AssistantBubble(message)
+                if (message.fromUser) {
+                    UserBubble(message.text)
+                } else {
+                    AssistantBubble(
+                        message = message,
+                        proposalStatus = { chat.proposalStatus(it) },
+                        onConfirm = ::confirmProposal,
+                        onDiscard = { chat = chat.proposalDiscarded(it.proposalId) },
+                        onOpenScheduled = onOpenScheduled,
+                    )
+                }
             }
             item(key = "typing") {
                 if (chat.sending) TypingBubble()
@@ -211,7 +258,8 @@ private fun AssistantIntro() {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 4.dp)) {
         Text("¿En qué te ayudo?", style = MaterialTheme.typography.headlineSmall, color = GlassPayColors.Text)
         Text(
-            "Pregúntame cuánto cobraste o enviaste y quién te debe. Respondo con tu actividad en GlassPay (Sandbox).",
+            "Pregúntame cuánto cobraste o enviaste y quién te debe, o pídeme programar un cobro a un contacto. "
+                + "Respondo con tu actividad en GlassPay (Sandbox).",
             style = MaterialTheme.typography.bodyMedium,
             color = GlassPayColors.MutedText,
         )
@@ -241,7 +289,13 @@ private fun UserBubble(text: String) {
 }
 
 @Composable
-private fun AssistantBubble(message: ChatMessage) {
+private fun AssistantBubble(
+    message: ChatMessage,
+    proposalStatus: (String) -> ProposalStatus,
+    onConfirm: (AssistantProposal, Boolean) -> Unit,
+    onDiscard: (AssistantProposal) -> Unit,
+    onOpenScheduled: () -> Unit,
+) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
         IconBadge(R.drawable.ic_assistant, tint = GlassPayColors.Accent, size = 32.dp, background = GlassPayColors.AccentSoft)
         Column(
@@ -259,6 +313,13 @@ private fun AssistantBubble(message: ChatMessage) {
             )
             message.reply?.summary?.let { SummaryCard(it) }
             message.reply?.debtors?.takeIf { it.isNotEmpty() }?.let { DebtorsCard(it) }
+            message.reply?.proposal?.let { proposal ->
+                ProposalCard(proposal, proposalStatus(proposal.proposalId), onConfirm, onDiscard, onOpenScheduled)
+            }
+            message.reply?.scheduled?.takeIf { it.isNotEmpty() }?.let { items ->
+                items.forEach { ScheduledLine(it) }
+                GpButton("Ver programados", onClick = onOpenScheduled, kind = GpButtonKind.SECONDARY, icon = R.drawable.ic_clock, modifier = Modifier.fillMaxWidth())
+            }
         }
     }
 }
@@ -330,5 +391,92 @@ private fun SuggestionChip(text: String, enabled: Boolean, onClick: () -> Unit) 
         border = BorderStroke(1.dp, GlassPayColors.Line),
     ) {
         Text(text, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
+    }
+}
+
+/** Tarjeta de confirmación: lo que el servidor guardó, con el interruptor de ejecución automática. */
+@Composable
+private fun ProposalCard(
+    proposal: AssistantProposal,
+    status: ProposalStatus,
+    onConfirm: (AssistantProposal, Boolean) -> Unit,
+    onDiscard: (AssistantProposal) -> Unit,
+    onOpenScheduled: () -> Unit,
+) {
+    val cancelling = proposal.action == "cancel_scheduled"
+    var autoExecute by remember(proposal.proposalId) { mutableStateOf(true) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(GlassPayColors.Raised, MaterialTheme.shapes.medium)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Overline(if (cancelling) "Cancelar programación" else "Cobro programado")
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Avatar(proposal.contactName, size = 32.dp)
+            Text(proposal.contactName, style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text, modifier = Modifier.weight(1f))
+        }
+        MoneyText(formatMoney(proposal.amount, proposal.currency), style = MaterialTheme.typography.headlineLarge)
+        Text(proposal.concept, style = MaterialTheme.typography.bodyMedium, color = GlassPayColors.Text)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(painterResource(R.drawable.ic_clock), contentDescription = null, tint = GlassPayColors.Warning, modifier = Modifier.size(18.dp))
+            Text(proposal.runAtLabel, style = MaterialTheme.typography.labelLarge, color = GlassPayColors.Warning)
+        }
+        when (status) {
+            ProposalStatus.PENDING -> {
+                if (!cancelling) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Crear automáticamente a la hora", style = MaterialTheme.typography.labelLarge, color = GlassPayColors.Text)
+                            Text(
+                                if (autoExecute) "Se crea solo; tu contacto lo aprueba en PayPal." else "A la hora te pediré confirmarlo.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = GlassPayColors.MutedText,
+                            )
+                        }
+                        Switch(
+                            checked = autoExecute,
+                            onCheckedChange = { autoExecute = it },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = GlassPayColors.OnAccent,
+                                checkedTrackColor = GlassPayColors.Accent,
+                                uncheckedTrackColor = GlassPayColors.Card,
+                            ),
+                        )
+                    }
+                }
+                GpButton(
+                    if (cancelling) "Sí, cancelar" else "Confirmar",
+                    onClick = { onConfirm(proposal, autoExecute) },
+                    kind = if (cancelling) GpButtonKind.DANGER else GpButtonKind.PRIMARY,
+                    icon = R.drawable.ic_check,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                GpButton("Descartar", onClick = { onDiscard(proposal) }, kind = GpButtonKind.GHOST, modifier = Modifier.fillMaxWidth())
+            }
+            ProposalStatus.CONFIRMING -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = GlassPayColors.Accent)
+                Text("Confirmando…", style = MaterialTheme.typography.bodyMedium, color = GlassPayColors.MutedText)
+            }
+            ProposalStatus.CONFIRMED -> {
+                StatusPill(if (cancelling) "Cancelado" else "Programado", if (cancelling) StatusKind.NEUTRAL else StatusKind.SUCCESS)
+                GpButton("Ver programados", onClick = onOpenScheduled, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
+            }
+            ProposalStatus.DISCARDED -> StatusPill("Descartado", StatusKind.NEUTRAL)
+            ProposalStatus.FAILED -> StatusPill("No se aplicó", StatusKind.FAILURE)
+        }
+    }
+}
+
+@Composable
+private fun ScheduledLine(item: ScheduledItem) {
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Avatar(item.contactName, size = 32.dp)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(item.contactName, style = MaterialTheme.typography.labelLarge, color = GlassPayColors.Text)
+            Text(item.runAtLabel, style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
+        }
+        Text(formatMoney(item.amount, item.currency).substringBeforeLast(" "), style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
     }
 }
