@@ -178,4 +178,24 @@ class AppStateTest {
 
     @Test
     fun invalidDateReturnsOriginalText() = assertEquals("no-fecha", formatMovementDate("no-fecha"))
+
+    @Test
+    fun failedChargesCanBeHidden() {
+        assertTrue(canHideMovement("expirada"))
+        assertTrue(canHideMovement("rechazada"))
+        assertTrue(canHideMovement("fallida"))
+    }
+
+    @Test
+    fun paidOrInProgressChargesCannotBeHidden() {
+        listOf("pagada", "aprobada", "enviada", "pendiente_de_pagador", "creada").forEach {
+            assertFalse(it, canHideMovement(it))
+        }
+    }
+
+    @Test
+    fun onlyFailedTransfersCanBeHidden() {
+        assertTrue(canHideMovement("fallida", "envio"))
+        listOf("procesando", "completada", "no_reclamada").forEach { assertFalse(it, canHideMovement(it, "envio")) }
+    }
 }

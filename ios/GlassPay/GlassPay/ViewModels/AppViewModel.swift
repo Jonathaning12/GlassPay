@@ -20,7 +20,7 @@ enum LoadState<Value> {
 }
 
 enum Route: Hashable {
-    case myQr, stats, scheduled, assistant, payoutEmail, addContact
+    case profile, myQr, stats, scheduled, payoutEmail, addContact
     case send(Contact?)
 }
 
@@ -33,7 +33,8 @@ final class AppViewModel {
     private(set) var welcomeMessage: String?
     private(set) var saveNotice: String?
     private(set) var tab: AppTab = .home
-    var homePath: [Route] = [] { didSet { discardAssistantIfClosed() } }
+    var homePath: [Route] = []
+    var assistantPath: [Route] = []
     var contactsPath: [Route] = []
 
     private(set) var locked = true
@@ -48,8 +49,9 @@ final class AppViewModel {
 
     /// Bloqueada solo si hay sesión y el teléfono tiene un bloqueo configurado (si no, Inicio lo avisa).
     var lockActive: Bool { session != nil && locked && authAvailability == .available }
-    var showsTabBar: Bool {
-        guard tab == .charge, let charge else { return true }
+    /// Cobrar es una pantalla completa sobre las pestañas: solo se sale si no se pierde un cobro en curso.
+    var canLeaveCharge: Bool {
+        guard let charge else { return true }
         return allowsTabSwitch(resolve: charge.resolveState, charge: charge.chargeState)
     }
 
@@ -86,6 +88,7 @@ final class AppViewModel {
         charge = nil
         assistant = nil
         homePath = []
+        assistantPath = []
         contactsPath = []
         tab = .home
         ScheduledCheck.cancel()
@@ -98,36 +101,45 @@ final class AppViewModel {
         Binding(get: { self.tab }, set: { self.selectTab($0) })
     }
 
+    /// Tocar una pestaña también cierra sus subpantallas; volver a tocar la actual regresa a su raíz.
     func selectTab(_ next: AppTab) {
-        guard showsTabBar || next == tab else { return }
-        if next != .charge, charge != nil {
-            charge?.tearDown()
-            charge = nil
-        }
+        guard canLeaveCharge else { return }
+        closeCharge()
         saveNotice = nil
         homePath = []
+        assistantPath = []
         contactsPath = []
+        // La conversación solo vive mientras se está en la pestaña Asistente (o en Programados desde ella).
+        if tab == .assistant && next != .assistant { assistant = nil }
         tab = next
-        if next == .charge, charge == nil, let context {
-            charge = ChargeViewModel(context: context, onOpenMovements: { [weak self] in self?.selectTab(.movements) })
-            charge?.locked = lockActive
-        }
+        if next == .assistant, assistant == nil, let context { assistant = AssistantViewModel(context: context) }
     }
 
     func open(_ route: Route) {
-        if route == .assistant, assistant == nil, let context { assistant = AssistantViewModel(context: context) }
-        if tab == .contacts { contactsPath.append(route) } else { homePath.append(route) }
+        switch tab {
+        case .contacts: contactsPath.append(route)
+        case .assistant: assistantPath.append(route)
+        case .home, .movements: homePath.append(route)
+        }
     }
 
-    /// Cobrar a un contacto: pestaña Cobrar con el pagador ya identificado (mismo flujo de confirmación).
+    /// Abre Cobrar encima de la pantalla actual; al cerrarlo se vuelve a la que lo abrió.
+    func openCharge() {
+        guard charge == nil, let context else { return }
+        charge = ChargeViewModel(context: context, onOpenMovements: { [weak self] in self?.selectTab(.movements) })
+        charge?.locked = lockActive
+    }
+
+    func closeCharge() {
+        guard canLeaveCharge, let charge else { return }
+        charge.tearDown()
+        self.charge = nil
+    }
+
+    /// Cobrar a un contacto: pantalla Cobrar con el pagador ya identificado (mismo flujo de confirmación).
     func chargeContact(_ resolution: PayerResolution) {
-        selectTab(.charge)
+        openCharge()
         charge?.applyContactResolution(resolution)
-    }
-
-    private func discardAssistantIfClosed() {
-        // La conversación solo vive mientras el asistente está abierto.
-        if !homePath.contains(.assistant) { assistant = nil }
     }
 
     // MARK: - Bloqueo

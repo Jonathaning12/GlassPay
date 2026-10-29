@@ -2,12 +2,8 @@ package com.glasspay.android
 
 import android.util.Log
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,17 +32,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.drawText
-import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
@@ -212,10 +201,6 @@ private fun LegendItem(label: String, color: Color) {
 @Composable
 private fun ChartCard(stats: Stats, period: StatsPeriod) {
     var selected by remember(stats) { mutableIntStateOf(defaultSelectedBucket(stats.buckets)) }
-    val animate = animationsEnabled()
-    // Al cambiar de datos las barras crecen desde la base (≤250 ms, salida suave).
-    val growth = remember(stats) { Animatable(if (animate) 0f else 1f) }
-    LaunchedEffect(stats) { if (animate) growth.animateTo(1f, tween(250)) }
     val bucket = stats.buckets.getOrNull(selected)
     GpCard(modifier = Modifier.fillMaxWidth(), spacing = 14.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -239,14 +224,17 @@ private fun ChartCard(stats: Stats, period: StatsPeriod) {
                 Text(formatGroupedMoney(bucket.sentTotal), style = MaterialTheme.typography.labelLarge, color = GlassPayColors.Text)
             }
         }
-        BarChart(
-            buckets = stats.buckets,
+        DotLineChart(
+            labels = stats.buckets.map { it.label },
+            series = listOf(
+                DotSeries(stats.buckets.map { it.sentTotal }, GlassPayColors.ChartSent),
+                DotSeries(stats.buckets.map { it.paidTotal }, GlassPayColors.ChartPaid),
+            ),
             selected = selected,
-            growth = growth.value,
             onSelect = { selected = it },
             modifier = Modifier
                 .fillMaxWidth()
-                .height(200.dp)
+                .height(220.dp)
                 .semantics {
                     contentDescription = "Gráfica de cobrado y enviado por ${period.bucketNoun}. " +
                         stats.buckets.joinToString(". ") {
@@ -254,79 +242,8 @@ private fun ChartCard(stats: Stats, period: StatsPeriod) {
                         }
                 },
         )
-        Text("Toca un ${period.bucketNoun} para ver el detalle.", style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
+        Text("Toca o desliza sobre la gráfica para ver cada ${period.bucketNoun}.", style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
     }
-}
-
-@Composable
-private fun BarChart(
-    buckets: List<StatsBucket>,
-    selected: Int,
-    growth: Float,
-    onSelect: (Int) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val measurer = rememberTextMeasurer()
-    val labelStyle = MaterialTheme.typography.bodySmall
-    val axisMax = niceAxisMax(buckets.maxOfOrNull { maxOf(it.paidTotal, it.sentTotal) } ?: 0.0)
-    val ticks = listOf(0.0, axisMax / 2, axisMax)
-    Canvas(
-        modifier = modifier.pointerInput(buckets) {
-            detectTapGestures { offset ->
-                val axisWidth = 40.dp.toPx()
-                val groupWidth = (size.width - axisWidth) / buckets.size
-                val index = ((offset.x - axisWidth) / groupWidth).toInt()
-                if (index in buckets.indices) onSelect(index)
-            }
-        },
-    ) {
-        val axisWidth = 40.dp.toPx()
-        val labelHeight = 24.dp.toPx()
-        val top = 8.dp.toPx()
-        val plotHeight = size.height - labelHeight - top
-        val groupWidth = (size.width - axisWidth) / buckets.size
-        val barWidth = (groupWidth * 0.32f).coerceIn(4.dp.toPx(), 14.dp.toPx())
-        val gap = 2.dp.toPx()
-        fun y(value: Double) = top + plotHeight - (value / axisMax * plotHeight).toFloat()
-
-        // Banda del periodo seleccionado (detrás de todo).
-        drawRoundRect(
-            color = GlassPayColors.Raised,
-            topLeft = Offset(axisWidth + selected * groupWidth + 2.dp.toPx(), top - 4.dp.toPx()),
-            size = Size(groupWidth - 4.dp.toPx(), plotHeight + labelHeight),
-            cornerRadius = CornerRadius(8.dp.toPx()),
-        )
-        // Guías recesivas y etiquetas del eje (un solo eje).
-        ticks.forEach { tick ->
-            val lineY = y(tick)
-            drawLine(GlassPayColors.Line.copy(alpha = if (tick == 0.0) 1f else 0.55f), Offset(axisWidth, lineY), Offset(size.width, lineY), 1.dp.toPx())
-            val text = measurer.measure(axisLabel(tick), labelStyle.copy(color = GlassPayColors.MutedText))
-            drawText(text, topLeft = Offset(axisWidth - 8.dp.toPx() - text.size.width, lineY - text.size.height / 2f))
-        }
-        buckets.forEachIndexed { index, bucket ->
-            val center = axisWidth + index * groupWidth + groupWidth / 2f
-            val dim = if (index == selected) 1f else 0.45f
-            bar(bucket.paidTotal * growth, center - gap / 2 - barWidth, barWidth, GlassPayColors.ChartPaid.copy(alpha = dim), ::y)
-            bar(bucket.sentTotal * growth, center + gap / 2, barWidth, GlassPayColors.ChartSent.copy(alpha = dim), ::y)
-            val label = measurer.measure(
-                bucket.label,
-                labelStyle.copy(color = if (index == selected) GlassPayColors.Text else GlassPayColors.MutedText),
-            )
-            drawText(label, topLeft = Offset(center - label.size.width / 2f, top + plotHeight + 6.dp.toPx()))
-        }
-    }
-}
-
-/** Barra con esquinas superiores de 4 dp, anclada a la base. */
-private fun DrawScope.bar(value: Double, left: Float, width: Float, color: Color, y: (Double) -> Float) {
-    if (value <= 0) return
-    val baseline = y(0.0)
-    val topY = y(value)
-    val height = baseline - topY
-    val radius = minOf(4.dp.toPx(), width / 2, height)
-    drawRoundRect(color, Offset(left, topY), Size(width, height + radius), CornerRadius(radius))
-    // Tapa la parte redondeada de abajo para que la base quede recta.
-    drawRect(color, Offset(left, baseline - radius), Size(width, radius))
 }
 
 @Composable
@@ -340,27 +257,26 @@ private fun StatusCard(stats: Stats) {
     if (total == 0) return
     GpCard(modifier = Modifier.fillMaxWidth(), spacing = 14.dp) {
         Text("Cobros por estado", style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
-        Row(modifier = Modifier.fillMaxWidth().height(12.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            parts.filter { it.second > 0 }.forEach { (_, count, kind) ->
-                Box(Modifier.weight(count.toFloat()).fillMaxSize().background(statusColor(kind), RoundedCornerShape(4.dp)))
-            }
-        }
-        parts.forEach { (label, count, kind) ->
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    painterResource(
-                        when (kind) {
-                            StatusKind.SUCCESS -> R.drawable.ic_check
-                            StatusKind.PENDING -> R.drawable.ic_clock
-                            else -> R.drawable.ic_close
-                        },
-                    ),
-                    contentDescription = null,
-                    tint = statusColor(kind),
-                    modifier = Modifier.size(18.dp),
-                )
-                Text(label, style = MaterialTheme.typography.labelLarge, color = GlassPayColors.Text, modifier = Modifier.weight(1f))
-                Text(count.toString(), style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
+        val max = parts.maxOf { it.second }.coerceAtLeast(1)
+        parts.forEachIndexed { order, (label, count, kind) ->
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        painterResource(
+                            when (kind) {
+                                StatusKind.SUCCESS -> R.drawable.ic_check
+                                StatusKind.PENDING -> R.drawable.ic_clock
+                                else -> R.drawable.ic_close
+                            },
+                        ),
+                        contentDescription = null,
+                        tint = statusColor(kind),
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text(label, style = MaterialTheme.typography.labelLarge, color = GlassPayColors.Text, modifier = Modifier.weight(1f))
+                    Text(count.toString(), style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
+                }
+                DotTrack(count.toFloat() / max, statusColor(kind), order = order)
             }
         }
         Text("No completados = rechazados, expirados o fallidos.", style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
@@ -372,7 +288,7 @@ private fun TopPayersCard(payers: List<StatsPayer>) {
     val max = payers.maxOf { it.total }.coerceAtLeast(0.01)
     GpCard(modifier = Modifier.fillMaxWidth(), spacing = 16.dp) {
         Text("Quién te pagó más", style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
-        payers.forEach { payer ->
+        payers.forEachIndexed { order, payer ->
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Avatar(payer.name, size = 36.dp)
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -385,14 +301,7 @@ private fun TopPayersCard(payers: List<StatsPayer>) {
                         )
                         Text(formatGroupedMoney(payer.total), style = MaterialTheme.typography.labelLarge, color = GlassPayColors.Text)
                     }
-                    Box(Modifier.fillMaxWidth().height(6.dp).background(GlassPayColors.Raised, RoundedCornerShape(50))) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth((payer.total / max).toFloat())
-                                .height(6.dp)
-                                .background(GlassPayColors.ChartPaid, RoundedCornerShape(50)),
-                        )
-                    }
+                    DotTrack((payer.total / max).toFloat(), GlassPayColors.ChartPaid, order = order)
                 }
             }
         }

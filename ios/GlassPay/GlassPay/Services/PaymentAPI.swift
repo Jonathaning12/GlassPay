@@ -63,6 +63,11 @@ final class PaymentAPI: Sendable {
         return body.movements
     }
 
+    /// "Eliminar de mi lista": ocultado lógico en el servidor. 409 = el movimiento no se puede ocultar.
+    func hideMovement(_ session: CollectorSession, movementId: String) async throws {
+        _ = try await execute("POST", "/api/collectors/me/movements/\(try pathSegment(movementId))/hide", json: [:], headers: session.headers)
+    }
+
     func setPayoutEmail(_ session: CollectorSession, email: String?) async throws -> String? {
         struct Body: Decodable { let payoutEmail: String? }
         let payload: [String: Any] = ["email": email ?? NSNull()]

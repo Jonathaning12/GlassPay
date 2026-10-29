@@ -1,8 +1,7 @@
-import Charts
 import SwiftUI
 
-// Estadísticas (StatsScreen.kt) con Swift Charts: barras agrupadas cobrado/enviado, un solo eje
-// con guías recesivas, lectura del periodo seleccionado y descripción completa para VoiceOver.
+// Estadísticas (StatsScreen.kt) con Swift Charts: curva de puntos cobrado/enviado, un solo eje con
+// guías recesivas, lectura del periodo seleccionado y descripción completa para VoiceOver.
 
 struct StatsView: View {
     @State private var model: StatsViewModel
@@ -75,120 +74,88 @@ struct StatsView: View {
     private func chart(_ stats: Stats) -> some View {
         let buckets = stats.buckets
         let selected = buckets.indices.contains(model.selectedBucket) ? buckets[model.selectedBucket] : nil
-        let axisMax = niceAxisMax(buckets.map { max($0.paidTotal, $0.sentTotal) }.max() ?? 0)
-        return GPCard(spacing: 12) {
+        return GPCard(spacing: 14) {
             HStack {
                 Text("Por \(model.period.bucketNoun)").font(.gpBodyStrong).foregroundStyle(GP.text)
                 Spacer()
                 legend("Cobrado", GP.chartPaid)
                 legend("Enviado", GP.chartSent)
             }
+            // Lectura del periodo seleccionado: arriba de la gráfica para que el dedo no la tape.
             if let selected {
-                HStack(spacing: 16) {
-                    Text(selected.label).font(.gpLabel).foregroundStyle(GP.text)
-                    Text(formatGroupedMoney(selected.paidTotal)).font(.gpLabel).foregroundStyle(GP.chartPaid)
-                    Text(formatGroupedMoney(selected.sentTotal)).font(.gpLabel).foregroundStyle(GP.chartSent)
+                HStack(spacing: 12) {
+                    Text(selected.label).font(.gpLabel).foregroundStyle(GP.text).frame(maxWidth: .infinity, alignment: .leading)
+                    Circle().fill(GP.chartPaid).frame(width: 8, height: 8)
+                    Text(formatGroupedMoney(selected.paidTotal)).font(.gpLabel).foregroundStyle(GP.text)
+                    Circle().fill(GP.chartSent).frame(width: 8, height: 8)
+                    Text(formatGroupedMoney(selected.sentTotal)).font(.gpLabel).foregroundStyle(GP.text)
                 }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(GP.raised, in: RoundedRectangle(cornerRadius: GP.radiusSmall, style: .continuous))
+                .accessibilityElement(children: .combine)
             }
-            Chart {
-                ForEach(Array(buckets.enumerated()), id: \.offset) { index, bucket in
-                    BarMark(x: .value("Periodo", bucket.label), y: .value("Monto", bucket.paidTotal))
-                        .foregroundStyle(GP.chartPaid)
-                        .position(by: .value("Serie", "Cobrado"))
-                        .cornerRadius(4)
-                        .opacity(index == model.selectedBucket ? 1 : 0.55)
-                    BarMark(x: .value("Periodo", bucket.label), y: .value("Monto", bucket.sentTotal))
-                        .foregroundStyle(GP.chartSent)
-                        .position(by: .value("Serie", "Enviado"))
-                        .cornerRadius(4)
-                        .opacity(index == model.selectedBucket ? 1 : 0.55)
-                }
-            }
-            .chartYScale(domain: 0...axisMax)
-            .chartYAxis {
-                AxisMarks(values: [0, axisMax / 2, axisMax]) { value in
-                    AxisGridLine().foregroundStyle(GP.line)
-                    AxisValueLabel { Text(axisLabel(value.as(Double.self) ?? 0)).font(.gpNote).foregroundStyle(GP.muted) }
-                }
-            }
-            .chartXAxis {
-                AxisMarks { _ in AxisValueLabel().font(.gpNote).foregroundStyle(GP.muted) }
-            }
-            .chartLegend(.hidden)
-            .chartOverlay { proxy in
-                GeometryReader { _ in
-                    Rectangle().fill(.clear).contentShape(Rectangle())
-                        .onTapGesture { location in
-                            if let label: String = proxy.value(atX: location.x),
-                               let index = buckets.firstIndex(where: { $0.label == label }) {
-                                model.selectedBucket = index
-                            }
-                        }
-                }
-            }
-            .frame(height: 220)
-            .accessibilityElement()
-            .accessibilityLabel("Gráfica de cobrado y enviado por \(model.period.bucketNoun). " + buckets.map {
-                "\($0.label): cobrado \(formatGroupedMoney($0.paidTotal)), enviado \(formatGroupedMoney($0.sentTotal))"
-            }.joined(separator: ". "))
-            Text("Toca un \(model.period.bucketNoun) para ver el detalle.").font(.gpNote).foregroundStyle(GP.muted)
+            DotLineChart(buckets: buckets, selected: $model.selectedBucket)
+                .frame(height: 220)
+                .accessibilityElement()
+                .accessibilityLabel("Gráfica de cobrado y enviado por \(model.period.bucketNoun). " + buckets.map {
+                    "\($0.label): cobrado \(formatGroupedMoney($0.paidTotal)), enviado \(formatGroupedMoney($0.sentTotal))"
+                }.joined(separator: ". "))
+            Text("Toca o desliza sobre la gráfica para ver cada \(model.period.bucketNoun).").font(.gpNote).foregroundStyle(GP.muted)
         }
     }
 
     private func legend(_ label: String, _ color: Color) -> some View {
         HStack(spacing: 6) {
-            RoundedRectangle(cornerRadius: 2).fill(color).frame(width: 10, height: 10)
+            Circle().fill(color).frame(width: 8, height: 8)
             Text(label).font(.gpNote).foregroundStyle(GP.muted)
         }
     }
 
+    @ViewBuilder
     private func statusCard(_ stats: Stats) -> some View {
-        let rows: [(String, Int, StatusKind)] = [
-            ("Pagados", stats.paidByStatus, .success),
-            ("Pendientes", stats.pendingByStatus, .pending),
-            ("No completados", stats.notCompletedByStatus, .failure),
+        let rows: [(String, Int, StatusKind, String)] = [
+            ("Pagados", stats.paidByStatus, .success, GPIcon.check),
+            ("Pendientes", stats.pendingByStatus, .pending, GPIcon.clock),
+            ("No completados", stats.notCompletedByStatus, .failure, GPIcon.close),
         ]
-        let total = max(1, rows.map(\.1).reduce(0, +))
-        return GPCard(spacing: 12) {
-            Text("Cobros por estado").font(.gpBodyStrong).foregroundStyle(GP.text)
-            GeometryReader { geometry in
-                HStack(spacing: 2) {
-                    ForEach(rows, id: \.0) { row in
-                        if row.1 > 0 {
-                            Rectangle().fill(GP.status(row.2)).frame(width: geometry.size.width * CGFloat(row.1) / CGFloat(total))
+        let maxCount = max(1, rows.map(\.1).max() ?? 0)
+        if rows.contains(where: { $0.1 > 0 }) {
+            GPCard(spacing: 14) {
+                Text("Cobros por estado").font(.gpBodyStrong).foregroundStyle(GP.text)
+                ForEach(Array(rows.enumerated()), id: \.offset) { order, row in
+                    VStack(spacing: 4) {
+                        HStack(spacing: 10) {
+                            Image(systemName: row.3).font(.system(size: 14, weight: .semibold)).foregroundStyle(GP.status(row.2))
+                            Text(row.0).font(.gpLabel).foregroundStyle(GP.text)
+                            Spacer()
+                            Text("\(row.1)").font(.gpBodyStrong).foregroundStyle(GP.text)
                         }
+                        .accessibilityElement(children: .combine)
+                        DotTrack(fraction: Double(row.1) / Double(maxCount), color: GP.status(row.2), order: order)
                     }
                 }
-                .clipShape(Capsule())
+                Text("No completados = rechazados, expirados o fallidos.").font(.gpNote).foregroundStyle(GP.muted)
             }
-            .frame(height: 10)
-            .background(GP.raised, in: Capsule())
-            .accessibilityHidden(true)
-            ForEach(rows, id: \.0) { row in
-                HStack {
-                    Circle().fill(GP.status(row.2)).frame(width: 8, height: 8)
-                    Text(row.0).font(.gpBody).foregroundStyle(GP.text)
-                    Spacer()
-                    Text("\(row.1)").font(.gpBodyStrong).foregroundStyle(GP.text)
-                }
-                .accessibilityElement(children: .combine)
-            }
-            Text("No completados = rechazados, expirados o fallidos.").font(.gpNote).foregroundStyle(GP.muted)
         }
     }
 
     private func topPayers(_ payers: [StatsPayer]) -> some View {
-        GPCard(spacing: 12) {
+        let maxTotal = max(0.01, payers.map(\.total).max() ?? 0)
+        return GPCard(spacing: 16) {
             Text("Quién te pagó más").font(.gpBodyStrong).foregroundStyle(GP.text)
-            ForEach(payers) { payer in
+            ForEach(Array(payers.enumerated()), id: \.element.id) { order, payer in
                 HStack(spacing: 12) {
                     AvatarView(name: payer.name, size: 36)
-                    VStack(alignment: .leading) {
-                        Text(payer.name).font(.gpBodyStrong).foregroundStyle(GP.text)
-                        Text(payer.count == 1 ? "1 pago" : "\(payer.count) pagos").font(.gpNote).foregroundStyle(GP.muted)
+                    VStack(spacing: 6) {
+                        HStack {
+                            Text("\(payer.name) · \(payer.count) \(payer.count == 1 ? "cobro" : "cobros")")
+                                .font(.gpLabel).foregroundStyle(GP.text).lineLimit(1)
+                            Spacer()
+                            Text(formatGroupedMoney(payer.total)).font(.gpLabel).foregroundStyle(GP.text)
+                        }
+                        DotTrack(fraction: payer.total / maxTotal, color: GP.chartPaid, order: order)
                     }
-                    Spacer()
-                    Text(formatGroupedMoney(payer.total)).font(.gpBodyStrong).foregroundStyle(GP.text)
                 }
                 .accessibilityElement(children: .combine)
             }

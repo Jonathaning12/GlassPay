@@ -12,7 +12,15 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -82,14 +90,17 @@ fun GlassPayRoot() {
     var pendingContactResolution by remember { mutableStateOf<PayerResolution?>(null) }
     var saveNotice by remember { mutableStateOf<String?>(null) }
     var tab by remember { mutableStateOf(AppTab.HOME) }
+    val haptics = LocalHapticFeedback.current
     var showMyQr by remember { mutableStateOf(false) }
     var showAddContact by remember { mutableStateOf(false) }
     var showSend by remember { mutableStateOf(false) }
     var sendContact by remember { mutableStateOf<Contact?>(null) }
     var showPayoutEmail by remember { mutableStateOf(false) }
-    var showAssistant by remember { mutableStateOf(false) }
     var showScheduled by remember { mutableStateOf(false) }
     var showStats by remember { mutableStateOf(false) }
+    var showProfile by remember { mutableStateOf(false) }
+    // Cobrar ya no es pestaña: es una pantalla completa que se abre desde Inicio, el perfil o un contacto.
+    var showCharge by remember { mutableStateOf(false) }
     // Conversación del asistente: solo en memoria; se descarta al salir del asistente.
     val assistantChat = remember { mutableStateOf(ChatState()) }
     var flowResolve by remember { mutableStateOf<ResolveState>(ResolveState.Scanning) }
@@ -111,8 +122,9 @@ fun GlassPayRoot() {
         welcomeMessage = message
         session = null
         pendingContactResolution = null
-        showAssistant = false
         showScheduled = false
+        showProfile = false
+        showCharge = false
         assistantChat.value = ChatState()
         cancelConfirmationChecks(context)
         tab = AppTab.HOME
@@ -122,21 +134,36 @@ fun GlassPayRoot() {
     }
 
     fun selectTab(next: AppTab) {
-        if (next != AppTab.CHARGE) {
-            flowResolve = ResolveState.Scanning
-            flowCharge = ChargeState.Ready()
-        }
+        flowResolve = ResolveState.Scanning
+        flowCharge = ChargeState.Ready()
         saveNotice = null
         showMyQr = false
         showAddContact = false
         showSend = false
         sendContact = null
         showPayoutEmail = false
-        showAssistant = false
         showScheduled = false
         showStats = false
-        assistantChat.value = ChatState()
+        showProfile = false
+        showCharge = false
+        pendingContactResolution = null
+        // La conversación solo vive mientras se está en la pestaña Asistente (o en Programados desde ella).
+        if (tab == AppTab.ASSISTANT && next != AppTab.ASSISTANT) assistantChat.value = ChatState()
         tab = next
+    }
+
+    fun openCharge() {
+        flowResolve = ResolveState.Scanning
+        flowCharge = ChargeState.Ready()
+        saveNotice = null
+        showCharge = true
+    }
+
+    fun closeCharge() {
+        showCharge = false
+        pendingContactResolution = null
+        flowResolve = ResolveState.Scanning
+        flowCharge = ChargeState.Ready()
     }
 
     var online by remember { mutableStateOf(true) }
@@ -273,21 +300,25 @@ fun GlassPayRoot() {
                 },
             )
             else -> {
-                val showBar = tab != AppTab.CHARGE || allowsTabSwitch(flowResolve, flowCharge)
-                BackHandler(enabled = tab == AppTab.CHARGE && !allowsTabSwitch(flowResolve, flowCharge)) { }
+                val canLeaveCharge = allowsTabSwitch(flowResolve, flowCharge)
+                // Durante Cobrar no hay barra: se sale con "Volver" solo si no se pierde un cobro en curso.
+                val showBar = !showCharge
+                BackHandler(enabled = showCharge) { if (canLeaveCharge) closeCharge() }
                 Scaffold(
                     containerColor = GlassPayColors.Background,
                     bottomBar = {
                         if (showBar) {
                             Column {
                                 HorizontalDivider(color = GlassPayColors.Line)
-                                // Cambiar de pestaña es frecuente: sin animaciones extra más allá del indicador.
                                 NavigationBar(containerColor = GlassPayColors.Card, tonalElevation = 0.dp) {
                                     tabItems.forEach { item ->
                                         NavigationBarItem(
                                             selected = tab == item.tab,
-                                            onClick = { selectTab(item.tab) },
-                                            icon = { Icon(painterResource(item.icon), contentDescription = null) },
+                                            onClick = {
+                                                if (tab != item.tab) haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                selectTab(item.tab)
+                                            },
+                                            icon = { TabIcon(item.icon, selected = tab == item.tab) },
                                             label = { Text(item.label, style = MaterialTheme.typography.bodySmall) },
                                             colors = NavigationBarItemDefaults.colors(
                                                 selectedIconColor = GlassPayColors.Accent,
@@ -308,73 +339,92 @@ fun GlassPayRoot() {
                             Text(it, color = GlassPayColors.Warning, modifier = Modifier.padding(16.dp))
                         }
                     Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                        when (tab) {
-                            AppTab.HOME -> if (showMyQr) {
-                                MyQrScreen(
-                                    session = current,
-                                    api = api,
-                                    onSessionInvalid = ::invalidateSession,
-                                    onBack = { showMyQr = false },
-                                    locked = lockActive,
-                                )
-                            } else if (showStats) {
-                                StatsScreen(
-                                    session = current,
-                                    api = api,
-                                    onSessionInvalid = ::invalidateSession,
-                                    onBack = { showStats = false },
-                                )
-                            } else if (showScheduled) {
-                                ScheduledScreen(
-                                    session = current,
-                                    api = api,
-                                    onSessionInvalid = ::invalidateSession,
-                                    onBack = { showScheduled = false },
-                                )
-                            } else if (showAssistant) {
-                                AssistantScreen(
-                                    session = current,
-                                    api = api,
-                                    chatState = assistantChat,
-                                    onSessionInvalid = ::invalidateSession,
-                                    onBack = {
-                                        showAssistant = false
-                                        assistantChat.value = ChatState()
-                                    },
-                                    onOpenScheduled = { showScheduled = true },
-                                )
-                            } else if (showPayoutEmail) {
-                                PayoutEmailScreen(
-                                    session = current,
-                                    api = api,
-                                    onSessionInvalid = ::invalidateSession,
-                                    onBack = { showPayoutEmail = false },
-                                )
-                            } else if (showSend) {
-                                SendMoneyScreen(
-                                    session = current,
-                                    api = api,
-                                    initialContact = sendContact,
-                                    locked = lockActive,
-                                    onSessionInvalid = ::invalidateSession,
-                                    onBack = {
-                                        showSend = false
-                                        sendContact = null
-                                    },
-                                    onOpenMovements = { selectTab(AppTab.MOVEMENTS) },
-                                )
-                            } else HomeScreen(
+                        // Subpantallas primero (en orden de prioridad); al volver de una, se ve la que la abrió.
+                        when {
+                            showCharge -> Column(modifier = Modifier.fillMaxSize()) {
+                                ScreenHeader("Cobrar", onBack = if (canLeaveCharge) ::closeCharge else null)
+                                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                                    ChargeScreen(
+                                        session = current,
+                                        api = api,
+                                        onSessionInvalid = ::invalidateSession,
+                                        onFlowStateChange = { resolve, charge ->
+                                            flowResolve = resolve
+                                            flowCharge = charge
+                                        },
+                                        onOpenMovements = { selectTab(AppTab.MOVEMENTS) },
+                                        locked = lockActive,
+                                        contactResolution = pendingContactResolution,
+                                        onContactResolutionConsumed = { pendingContactResolution = null },
+                                    )
+                                }
+                            }
+                            showMyQr -> MyQrScreen(
                                 session = current,
                                 api = api,
                                 onSessionInvalid = ::invalidateSession,
-                                onCharge = { selectTab(AppTab.CHARGE) },
-                                onOpenMyQr = { showMyQr = true },
+                                onBack = { showMyQr = false },
+                                locked = lockActive,
+                            )
+                            showStats -> StatsScreen(
+                                session = current,
+                                api = api,
+                                onSessionInvalid = ::invalidateSession,
+                                onBack = { showStats = false },
+                            )
+                            showScheduled -> ScheduledScreen(
+                                session = current,
+                                api = api,
+                                onSessionInvalid = ::invalidateSession,
+                                onBack = { showScheduled = false },
+                            )
+                            showPayoutEmail -> PayoutEmailScreen(
+                                session = current,
+                                api = api,
+                                onSessionInvalid = ::invalidateSession,
+                                onBack = { showPayoutEmail = false },
+                            )
+                            showSend -> SendMoneyScreen(
+                                session = current,
+                                api = api,
+                                initialContact = sendContact,
+                                locked = lockActive,
+                                onSessionInvalid = ::invalidateSession,
+                                onBack = {
+                                    showSend = false
+                                    sendContact = null
+                                },
+                                onOpenMovements = { selectTab(AppTab.MOVEMENTS) },
+                            )
+                            showAddContact -> AddContactScreen(
+                                session = current,
+                                api = api,
+                                onSessionInvalid = ::invalidateSession,
+                                onDone = { showAddContact = false },
+                            )
+                            showProfile -> ProfileScreen(
+                                session = current,
+                                api = api,
+                                onSessionInvalid = ::invalidateSession,
+                                onBack = { showProfile = false },
+                                onCharge = ::openCharge,
                                 onSend = {
                                     sendContact = null
                                     showSend = true
                                 },
+                                onOpenMyQr = { showMyQr = true },
                                 onPayoutEmail = { showPayoutEmail = true },
-                                onOpenAssistant = { showAssistant = true },
+                                onOpenScheduled = { showScheduled = true },
+                                amountsVisible = amountsVisible,
+                                onToggleAmounts = { amountsVisible = !amountsVisible },
+                                lockAvailability = authAvailability,
+                            )
+                            tab == AppTab.HOME -> HomeScreen(
+                                session = current,
+                                api = api,
+                                onSessionInvalid = ::invalidateSession,
+                                onCharge = ::openCharge,
+                                onOpenProfile = { showProfile = true },
                                 onOpenScheduled = { showScheduled = true },
                                 onOpenStats = { showStats = true },
                                 locked = lockActive,
@@ -382,47 +432,21 @@ fun GlassPayRoot() {
                                 onToggleAmounts = { amountsVisible = !amountsVisible },
                                 showLockHint = authAvailability != DeviceAuthAvailability.AVAILABLE,
                             )
-                            AppTab.MOVEMENTS -> MovementsScreen(
+                            tab == AppTab.MOVEMENTS -> MovementsScreen(
                                 session = current,
                                 api = api,
                                 onSessionInvalid = ::invalidateSession,
                                 amountsVisible = amountsVisible,
                                 onToggleAmounts = { amountsVisible = !amountsVisible },
                             )
-                            AppTab.CHARGE -> ChargeScreen(
+                            tab == AppTab.ASSISTANT -> AssistantScreen(
                                 session = current,
                                 api = api,
+                                chatState = assistantChat,
                                 onSessionInvalid = ::invalidateSession,
-                                onFlowStateChange = { resolve, charge ->
-                                    flowResolve = resolve
-                                    flowCharge = charge
-                                },
-                                onOpenMovements = { selectTab(AppTab.MOVEMENTS) },
-                                locked = lockActive,
-                                contactResolution = pendingContactResolution,
-                                onContactResolutionConsumed = { pendingContactResolution = null },
+                                onOpenScheduled = { showScheduled = true },
                             )
-                            AppTab.CONTACTS -> if (showAddContact) {
-                                AddContactScreen(
-                                    session = current,
-                                    api = api,
-                                    onSessionInvalid = ::invalidateSession,
-                                    onDone = { showAddContact = false },
-                                )
-                            } else if (showSend) {
-                                SendMoneyScreen(
-                                    session = current,
-                                    api = api,
-                                    initialContact = sendContact,
-                                    locked = lockActive,
-                                    onSessionInvalid = ::invalidateSession,
-                                    onBack = {
-                                        showSend = false
-                                        sendContact = null
-                                    },
-                                    onOpenMovements = { selectTab(AppTab.MOVEMENTS) },
-                                )
-                            } else ContactsScreen(
+                            else -> ContactsScreen(
                                 session = current,
                                 api = api,
                                 onSessionInvalid = ::invalidateSession,
@@ -432,8 +456,8 @@ fun GlassPayRoot() {
                                     showSend = true
                                 },
                                 onChargeContact = { resolution ->
+                                    openCharge()
                                     pendingContactResolution = resolution
-                                    selectTab(AppTab.CHARGE)
                                 },
                             )
                         }
@@ -490,9 +514,39 @@ internal tailrec fun Context.findActivity(): Activity? {
 
 private class TabItem(val tab: AppTab, val label: String, val icon: Int)
 
+/**
+ * Ícono de pestaña con un rebote corto al quedar seleccionado (no al arrancar ni al deseleccionar).
+ * Cambiar de pestaña es frecuente: la animación dura ~300 ms y se puede interrumpir con otro toque.
+ */
+@Composable
+private fun TabIcon(icon: Int, selected: Boolean) {
+    val animate = animationsEnabled()
+    val pop = remember { Animatable(1f) }
+    val lift = remember { Animatable(0f) }
+    var wasSelected by remember { mutableStateOf(selected) }
+    LaunchedEffect(selected) {
+        if (selected && !wasSelected && animate) {
+            pop.snapTo(0.8f)
+            lift.snapTo(1f)
+            launch { lift.animateTo(0f, tween(220, easing = FastOutSlowInEasing)) }
+            pop.animateTo(1f, spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMediumLow))
+        }
+        wasSelected = selected
+    }
+    Icon(
+        painterResource(icon),
+        contentDescription = null,
+        modifier = Modifier.graphicsLayer {
+            scaleX = pop.value
+            scaleY = pop.value
+            translationY = lift.value * 4.dp.toPx()
+        },
+    )
+}
+
 private val tabItems = listOf(
     TabItem(AppTab.HOME, "Inicio", R.drawable.ic_home),
     TabItem(AppTab.MOVEMENTS, "Movimientos", R.drawable.ic_movements),
-    TabItem(AppTab.CHARGE, "Cobrar", R.drawable.ic_charge),
+    TabItem(AppTab.ASSISTANT, "Asistente", R.drawable.ic_assistant),
     TabItem(AppTab.CONTACTS, "Contactos", R.drawable.ic_contacts),
 )

@@ -2,6 +2,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const initSqlJs = require("sql.js");
 
+// Solo se pueden ocultar movimientos que no movieron dinero.
+const HIDEABLE_CHARGE_STATES = new Set(["expirada", "rechazada", "fallida"]);
+const HIDEABLE_TRANSFER_STATES = new Set(["fallida"]);
+
 const TRANSACTION_STATES = new Set([
   "creada",
   "pendiente_de_pagador",
@@ -154,6 +158,15 @@ async function createDatabase(databasePath) {
       expires_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+
+    -- Movimientos que el cobrador quitó de SU lista. No borra ni modifica el registro financiero.
+    CREATE TABLE IF NOT EXISTS collector_hidden_movements (
+      collector_id TEXT NOT NULL,
+      movement_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      hidden_at TEXT NOT NULL,
+      PRIMARY KEY (collector_id, movement_id)
     );
 
     CREATE TABLE IF NOT EXISTS charge_proposals (
@@ -542,16 +555,19 @@ async function createDatabase(databasePath) {
       `, [collectorId, cutoff]).map((row) => row.id);
     },
 
-    listCollectorTransfers(collectorId, limit = 50) {
+    listCollectorTransfers(collectorId, limit = 50, { excludeHidden = false } = {}) {
       return all(`
         SELECT t.id, t.amount, t.currency, t.note, t.state, t.created_at, t.updated_at,
           p.display_name AS recipient_name
         FROM transfers t
         JOIN payer_profiles p ON p.id = t.recipient_payer_id
         WHERE t.sender_collector_id = ? AND t.state NOT IN ('propuesta')
+          AND (? = 0 OR NOT EXISTS (
+            SELECT 1 FROM collector_hidden_movements h WHERE h.collector_id = t.sender_collector_id AND h.movement_id = t.id
+          ))
         ORDER BY t.created_at DESC
         LIMIT ?
-      `, [collectorId, limit]).map((row) => ({
+      `, [collectorId, excludeHidden ? 1 : 0, limit]).map((row) => ({
         transferId: row.id,
         state: row.state,
         amount: row.amount,
@@ -615,7 +631,7 @@ async function createDatabase(databasePath) {
       return { charges, transfers };
     },
 
-    listCollectorMovements(collectorId, limit = 50) {
+    listCollectorMovements(collectorId, limit = 50, { excludeHidden = false } = {}) {
       return all(`
         SELECT r.id, t.state, t.amount, t.currency, t.concept, p.display_name,
           r.created_at, t.updated_at
@@ -623,9 +639,12 @@ async function createDatabase(databasePath) {
         JOIN transactions t ON t.id = r.transaction_id
         JOIN payer_profiles p ON p.id = r.payer_id
         WHERE r.collector_id = ?
+          AND (? = 0 OR NOT EXISTS (
+            SELECT 1 FROM collector_hidden_movements h WHERE h.collector_id = r.collector_id AND h.movement_id = r.id
+          ))
         ORDER BY r.created_at DESC
         LIMIT ?
-      `, [collectorId, limit]).map((row) => ({
+      `, [collectorId, excludeHidden ? 1 : 0, limit]).map((row) => ({
         movementId: row.id,
         state: row.state,
         amount: row.amount,
@@ -712,6 +731,38 @@ async function createDatabase(databasePath) {
       return get(`
         SELECT id FROM collector_contacts WHERE collector_id = ? AND payer_id = ?
       `, [collectorId, payerId])?.id || null;
+    },
+
+    // Quita un movimiento de la lista del cobrador (ocultado lógico). Solo se permite en movimientos
+    // que no movieron dinero: cobros expirados, rechazados o fallidos y envíos fallidos. El saldo y
+    // las estadísticas no cambian porque nunca los contaron. Devuelve "hidden", "not_hideable" o "not_found".
+    hideCollectorMovement(collectorId, movementId) {
+      return enqueueWrite(() => {
+        const charge = get(`
+          SELECT t.state
+          FROM payment_requests r
+          JOIN transactions t ON t.id = r.transaction_id
+          WHERE r.id = ? AND r.collector_id = ?
+        `, [movementId, collectorId]);
+        const transfer = charge ? null : get(`
+          SELECT state FROM transfers
+          WHERE id = ? AND sender_collector_id = ? AND state NOT IN ('propuesta')
+        `, [movementId, collectorId]);
+        if (!charge && !transfer) {
+          return "not_found";
+        }
+        const hideable = charge
+          ? HIDEABLE_CHARGE_STATES.has(charge.state)
+          : HIDEABLE_TRANSFER_STATES.has(transfer.state);
+        if (!hideable) {
+          return "not_hideable";
+        }
+        database.run(`
+          INSERT OR IGNORE INTO collector_hidden_movements (collector_id, movement_id, kind, hidden_at)
+          VALUES (?, ?, ?, ?)
+        `, [collectorId, movementId, charge ? "cobro" : "envio", now()]);
+        return "hidden";
+      });
     },
 
     deleteCollectorContact(contactId, collectorId) {

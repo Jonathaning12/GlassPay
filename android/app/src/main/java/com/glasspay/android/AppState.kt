@@ -7,11 +7,11 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-enum class AppTab { HOME, MOVEMENTS, CHARGE, CONTACTS }
+enum class AppTab { HOME, MOVEMENTS, ASSISTANT, CONTACTS }
 
 enum class StatusKind { SUCCESS, PENDING, FAILURE, NEUTRAL }
 
-/** La barra inferior solo se permite cuando cambiar de pestaña no pierde un cobro en curso. */
+/** Salir de la pantalla de Cobrar solo se permite cuando no se pierde un cobro en curso. */
 fun allowsTabSwitch(resolve: ResolveState, charge: ChargeState): Boolean {
     if (resolve is ResolveState.Resolving) return false
     if (resolve !is ResolveState.Identified) return true
@@ -54,6 +54,13 @@ fun movementStatusLabel(state: String, kind: String = "cobro"): String {
         else -> "Desconocido"
     }
 }
+
+/**
+ * Solo los movimientos que no movieron dinero se pueden quitar de la lista (mismas reglas que el
+ * servidor, que es quien decide). Es un ocultado: el registro y el saldo no cambian.
+ */
+fun canHideMovement(state: String, kind: String = "cobro"): Boolean =
+    if (kind == "envio") state == "fallida" else state in setOf("expirada", "rechazada", "fallida")
 
 fun movementStatusKind(state: String, kind: String = "cobro"): StatusKind {
     if (kind == "envio") {

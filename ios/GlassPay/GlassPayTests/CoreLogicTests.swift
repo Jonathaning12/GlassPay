@@ -192,6 +192,25 @@ private func machineInPreview(remaining: Int = 60) -> ChargeStateMachine {
 }
 
 @Suite struct FormattingTests {
+    @Test func failedChargesCanBeHidden() {
+        #expect(canHideMovement("expirada"))
+        #expect(canHideMovement("rechazada"))
+        #expect(canHideMovement("fallida"))
+    }
+
+    @Test func paidOrInProgressChargesCannotBeHidden() {
+        for state in ["pagada", "aprobada", "enviada", "pendiente_de_pagador", "creada"] {
+            #expect(!canHideMovement(state), "\(state)")
+        }
+    }
+
+    @Test func onlyFailedTransfersCanBeHidden() {
+        #expect(canHideMovement("fallida", kind: "envio"))
+        for state in ["procesando", "completada", "no_reclamada"] {
+            #expect(!canHideMovement(state, kind: "envio"), "\(state)")
+        }
+    }
+
     @Test func money() {
         #expect(formatMoney("350", "MXN") == "$350.00 MXN")
         #expect(formatMoney("1200.5", "MXN") == "$1200.50 MXN")

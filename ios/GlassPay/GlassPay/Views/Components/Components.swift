@@ -191,19 +191,15 @@ struct MoneyText: View {
     }
 }
 
-struct EyeToggle: View {
-    let visible: Bool
-    let toggle: () -> Void
+/// Escala 0.97 al presionar (pressScale en Android), sin cambiar colores ni forma.
+struct PressScaleStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    var body: some View {
-        Button(action: toggle) {
-            Image(systemName: visible ? "eye" : "eye.slash")
-                .contentTransition(.symbolEffect(.replace))
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(GP.muted)
-                .frame(width: 44, height: 44)
-        }
-        .accessibilityLabel(visible ? "Ocultar montos" : "Mostrar montos")
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .contentShape(Rectangle())
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 

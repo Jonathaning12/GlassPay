@@ -277,6 +277,12 @@ class PaymentApi(
         execute("DELETE", "/api/collectors/me/contacts/$contactId", null, 15_000, session.headers())
     }
 
+    /** "Eliminar de mi lista": ocultado lógico en el servidor. 409 = el movimiento no se puede ocultar. */
+    suspend fun hideMovement(session: CollectorSession, movementId: String) {
+        val body = JSONObject().toString().toRequestBody("application/json".toMediaType())
+        execute("POST", "/api/collectors/me/movements/$movementId/hide", body, 15_000, session.headers())
+    }
+
     suspend fun contactResolution(session: CollectorSession, contactId: String): PayerResolution {
         val body = JSONObject().toString().toRequestBody("application/json".toMediaType())
         val responseBody = execute(

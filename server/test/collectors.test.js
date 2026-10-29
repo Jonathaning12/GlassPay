@@ -2244,3 +2244,91 @@ test("a scheduled payment can be cancelled before it runs", async () => {
     await environment.close();
   }
 });
+
+// Cobro a un pagador cuyo secreto conocemos, para poder rechazarlo como él.
+async function createRejectableCharge(environment, collector) {
+  const payerResponse = await postJson(`${environment.baseUrl}/api/payers`, { displayName: "Beto" });
+  const payer = await payerResponse.json();
+  const payerHeaders = { "X-Payer-Id": payer.payerId, "X-Payer-Session": payer.sessionSecret };
+  const qr = await (await fetch(`${environment.baseUrl}/api/payers/${payer.payerId}/qr`, {
+    method: "POST",
+    headers: payerHeaders,
+  })).json();
+  const resolution = await (await postJson(
+    `${environment.baseUrl}/api/payers/resolve`,
+    { token: qr.token },
+    collector.headers,
+  )).json();
+  const proposal = await (await postJson(
+    `${environment.baseUrl}/api/agent/interpret`,
+    { resolutionId: resolution.resolutionId, text: "cóbrale 80 por el taxi" },
+    collector.headers,
+  )).json();
+  const charge = await (await postJson(
+    `${environment.baseUrl}/api/agent/confirm`,
+    { proposalId: proposal.proposalId },
+    collector.headers,
+  )).json();
+  return { charge, payerHeaders };
+}
+
+async function hideMovement(environment, headers, movementId) {
+  return postJson(`${environment.baseUrl}/api/collectors/me/movements/${movementId}/hide`, {}, headers);
+}
+
+test("a rejected charge can be hidden from my movements without changing my activity", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const collector = await createCollector(environment.baseUrl);
+    const { charge, payerHeaders } = await createRejectableCharge(environment, collector);
+    const rejected = await postJson(
+      `${environment.baseUrl}/api/payers/payment-requests/${charge.requestId}/reject`,
+      {},
+      payerHeaders,
+    );
+    assert.equal(rejected.status, 200);
+    const activityBefore = await (await getMe(environment.baseUrl, collector.headers)).json();
+
+    const hidden = await hideMovement(environment, collector.headers, charge.requestId);
+    assert.equal(hidden.status, 204);
+
+    const { movements } = await (await getMe(environment.baseUrl, collector.headers, "/movements")).json();
+    assert.equal(movements.some((movement) => movement.movementId === charge.requestId), false);
+    assert.deepEqual(await (await getMe(environment.baseUrl, collector.headers)).json(), activityBefore);
+    // Repetir es idempotente.
+    assert.equal((await hideMovement(environment, collector.headers, charge.requestId)).status, 204);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("a pending charge cannot be hidden and stays in my movements", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const collector = await createCollector(environment.baseUrl);
+    const charge = await createChargeFor(environment, collector);
+    const response = await hideMovement(environment, collector.headers, charge.requestId);
+    assert.equal(response.status, 409);
+    const { movements } = await (await getMe(environment.baseUrl, collector.headers, "/movements")).json();
+    assert.equal(movements.length, 1);
+  } finally {
+    await environment.close();
+  }
+});
+
+test("another collector cannot hide my movement and gets the generic 404", async () => {
+  const environment = await createTestEnvironment();
+  try {
+    const owner = await createCollector(environment.baseUrl, "Dueño");
+    const other = await createCollector(environment.baseUrl, "Otro");
+    const { charge, payerHeaders } = await createRejectableCharge(environment, owner);
+    await postJson(`${environment.baseUrl}/api/payers/payment-requests/${charge.requestId}/reject`, {}, payerHeaders);
+    assert.equal((await hideMovement(environment, other.headers, charge.requestId)).status, 404);
+    assert.equal((await hideMovement(environment, owner.headers, "no-existe-este-id-123")).status, 404);
+    assert.equal((await hideMovement(environment, {}, charge.requestId)).status, 401);
+    const { movements } = await (await getMe(environment.baseUrl, owner.headers, "/movements")).json();
+    assert.equal(movements.length, 1);
+  } finally {
+    await environment.close();
+  }
+});

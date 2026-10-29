@@ -12,7 +12,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.annotation.DrawableRes
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.TextButton
@@ -86,10 +88,7 @@ fun HomeScreen(
     api: PaymentApi,
     onSessionInvalid: (message: String) -> Unit,
     onCharge: () -> Unit,
-    onOpenMyQr: () -> Unit,
-    onSend: () -> Unit,
-    onPayoutEmail: () -> Unit,
-    onOpenAssistant: () -> Unit,
+    onOpenProfile: () -> Unit,
     onOpenScheduled: () -> Unit,
     onOpenStats: () -> Unit,
     locked: Boolean,
@@ -248,8 +247,7 @@ fun HomeScreen(
                 Text("Hola, ${session.displayName}", style = MaterialTheme.typography.headlineMedium, color = GlassPayColors.Text)
                 Text("Actividad en GlassPay (Sandbox)", style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
             }
-            CircleIconButton(R.drawable.ic_assistant, "Asistente de IA", onOpenAssistant, tint = GlassPayColors.Accent)
-            Avatar(session.displayName, highlighted = true)
+            ProfileAvatarButton(session.displayName, onClick = onOpenProfile)
         }
         if (showLockHint) {
             InlineNotice(
@@ -270,8 +268,9 @@ fun HomeScreen(
                                 Text("Aún no has cobrado. Empieza con Cobrar.", color = GlassPayColors.MutedText)
                             }
                             current.value.activity.forEach { item ->
-                                MoneyText(
-                                    maskAmount(formatMoney(item.availableTotal, item.currency), amountsVisible),
+                                MaskedMoney(
+                                    formatMoney(item.availableTotal, item.currency),
+                                    visible = amountsVisible,
                                     style = MaterialTheme.typography.displaySmall,
                                 )
                             }
@@ -299,14 +298,16 @@ fun HomeScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         TotalItem(
                             label = "Cobrado",
-                            value = maskAmount(formatMoney(item.paidTotal, item.currency), amountsVisible),
+                            value = formatMoney(item.paidTotal, item.currency),
+                            visible = amountsVisible,
                             icon = R.drawable.ic_receive,
                             tint = GlassPayColors.Success,
                             modifier = Modifier.weight(1f),
                         )
                         TotalItem(
                             label = "Enviado",
-                            value = maskAmount(formatMoney(item.sentTotal, item.currency), amountsVisible),
+                            value = formatMoney(item.sentTotal, item.currency),
+                            visible = amountsVisible,
                             icon = R.drawable.ic_send,
                             tint = GlassPayColors.Text,
                             modifier = Modifier.weight(1f),
@@ -324,6 +325,8 @@ fun HomeScreen(
                     }
                 }
             }
+            // Único acceso directo que queda en Inicio: cobrar es el flujo central de la demo.
+            GpButton("Cobrar", onClick = onCharge, icon = R.drawable.ic_charge, modifier = Modifier.fillMaxWidth())
             if (state is LoadState.Loaded) {
                 HorizontalDivider(color = GlassPayColors.Line)
                 Surface(
@@ -357,11 +360,6 @@ fun HomeScreen(
                 }
                 GpButton("Revisar", onClick = onOpenScheduled, modifier = Modifier.fillMaxWidth())
             }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            QuickAction("Cobrar", R.drawable.ic_charge, onCharge, primary = true, modifier = Modifier.weight(1f))
-            QuickAction("Enviar", R.drawable.ic_send, onSend, modifier = Modifier.weight(1f))
-            QuickAction("Mi QR", R.drawable.ic_qr, onOpenMyQr, modifier = Modifier.weight(1f))
         }
         if (reminders.isNotEmpty()) {
             Text("Recordatorios", style = MaterialTheme.typography.headlineSmall, color = GlassPayColors.Text)
@@ -445,27 +443,7 @@ fun HomeScreen(
             }
             incomingMessage?.let { InlineNotice(it, kind = StatusKind.PENDING) }
         }
-        (state as? LoadState.Loaded)?.let { loaded ->
-            val email = loaded.value.payoutEmail
-            GpCard(modifier = Modifier.fillMaxWidth(), spacing = 14.dp) {
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    IconBadge(R.drawable.ic_mail, tint = GlassPayColors.Accent, size = 40.dp)
-                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("Recibir envíos", style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
-                        Text(
-                            if (email == null) "Registra tu correo de PayPal Sandbox para recibir envíos." else "Recibes en $email",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = GlassPayColors.MutedText,
-                        )
-                    }
-                }
-                GpButton(
-                    if (email == null) "Registrar correo" else "Cambiar",
-                    onClick = onPayoutEmail,
-                    kind = if (email == null) GpButtonKind.PRIMARY else GpButtonKind.SECONDARY,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
+        if (state is LoadState.Loaded) {
             GpButton(
                 "Actualizar",
                 onClick = { reload += 1 },
@@ -496,40 +474,34 @@ fun MoneyText(formatted: String, style: TextStyle, modifier: Modifier = Modifier
 }
 
 @Composable
-private fun TotalItem(label: String, value: String, @DrawableRes icon: Int, tint: Color, modifier: Modifier = Modifier) {
+private fun TotalItem(
+    label: String,
+    value: String,
+    visible: Boolean,
+    @DrawableRes icon: Int,
+    tint: Color,
+    modifier: Modifier = Modifier,
+) {
     Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(painterResource(icon), contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
         Column {
             Text(label, style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
-            Text(value, style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text, maxLines = 1)
+            MaskedMoney(value, visible = visible, style = MaterialTheme.typography.titleMedium, large = false)
         }
     }
 }
 
+/** Avatar del encabezado de Inicio: abre el perfil. Área táctil de 48 dp. */
 @Composable
-private fun QuickAction(
-    label: String,
-    @DrawableRes icon: Int,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    primary: Boolean = false,
-) {
+private fun ProfileAvatarButton(name: String, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
-        shape = MaterialTheme.shapes.medium,
-        color = if (primary) GlassPayColors.Accent else GlassPayColors.Card,
-        contentColor = if (primary) GlassPayColors.OnAccent else GlassPayColors.Text,
-        border = if (primary) null else BorderStroke(1.dp, GlassPayColors.Line),
-        modifier = modifier,
+        shape = CircleShape,
+        color = Color.Transparent,
+        modifier = Modifier.size(48.dp).semantics { contentDescription = "Abrir mi perfil" },
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Icon(
-                painterResource(icon),
-                contentDescription = null,
-                tint = if (primary) GlassPayColors.OnAccent else GlassPayColors.Accent,
-                modifier = Modifier.size(28.dp),
-            )
-            Text(label, style = MaterialTheme.typography.titleMedium)
+        Box(contentAlignment = Alignment.Center) {
+            Avatar(name, size = 44.dp, highlighted = true)
         }
     }
 }

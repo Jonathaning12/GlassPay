@@ -61,8 +61,9 @@ fun AssistantScreen(
     api: PaymentApi,
     chatState: MutableState<ChatState>,
     onSessionInvalid: (message: String) -> Unit,
-    onBack: () -> Unit,
     onOpenScheduled: () -> Unit,
+    // Nulo cuando el asistente es una pestaña de la barra inferior (no hay pantalla a la que volver).
+    onBack: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -73,7 +74,7 @@ fun AssistantScreen(
     var voiceMessage by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
 
-    BackHandler { onBack() }
+    BackHandler(enabled = onBack != null) { onBack?.invoke() }
 
     // El dictado solo llena el campo: el usuario revisa y envía. Nunca se envía solo.
     val recognizer = remember {

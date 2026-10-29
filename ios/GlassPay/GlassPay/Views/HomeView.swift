@@ -58,10 +58,11 @@ struct HomeView: View {
                 }
                 balanceCard
                 if model.awaitingConfirmation > 0 { awaitingCard }
-                quickActions
                 remindersSection
                 incomingSection
-                if let profile = model.profile.value { payoutCard(profile.payoutEmail) }
+                if model.profile.value != nil {
+                    GPButton("Actualizar", kind: .ghost) { Task { await model.reload() } }.frame(maxWidth: .infinity)
+                }
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
@@ -99,12 +100,12 @@ struct HomeView: View {
                 Text("Actividad en GlassPay (Sandbox)").font(.gpNote).foregroundStyle(GP.muted)
             }
             Spacer()
-            Button { app.open(.assistant) } label: {
-                Image(systemName: GPIcon.assistant).font(.system(size: 20, weight: .medium)).foregroundStyle(GP.accent)
-                    .frame(width: 44, height: 44).background(GP.card, in: Circle()).overlay(Circle().stroke(GP.line))
+            // El avatar abre el perfil (Cobrar, Enviar, Mi QR, Recibir envíos, Programados, seguridad).
+            Button { app.open(.profile) } label: {
+                AvatarView(name: app.session?.displayName ?? "", size: 44, highlighted: true).frame(width: 48, height: 48)
             }
-            .accessibilityLabel("Asistente de IA")
-            AvatarView(name: app.session?.displayName ?? "", highlighted: true)
+            .buttonStyle(PressScaleStyle())
+            .accessibilityLabel("Abrir mi perfil")
         }
     }
 
@@ -119,7 +120,7 @@ struct HomeView: View {
                     case let .loaded(profile):
                         if profile.activity.isEmpty { Text("Aún no has cobrado. Empieza con Cobrar.").foregroundStyle(GP.muted) }
                         ForEach(profile.activity) { item in
-                            MoneyText(formatted: maskAmount(formatMoney(item.availableTotal, item.currency), visible: app.amountsVisible))
+                            MaskedMoney(formatted: formatMoney(item.availableTotal, item.currency), visible: app.amountsVisible)
                         }
                     }
                 }
@@ -136,14 +137,18 @@ struct HomeView: View {
                 ForEach(profile.activity) { item in
                     Divider().overlay(GP.line)
                     HStack(spacing: 12) {
-                        totalItem("Cobrado", maskAmount(formatMoney(item.paidTotal, item.currency), visible: app.amountsVisible), GPIcon.receive, GP.success)
-                        totalItem("Enviado", maskAmount(formatMoney(item.sentTotal, item.currency), visible: app.amountsVisible), GPIcon.send, GP.text)
+                        totalItem("Cobrado", formatMoney(item.paidTotal, item.currency), GPIcon.receive, GP.success)
+                        totalItem("Enviado", formatMoney(item.sentTotal, item.currency), GPIcon.send, GP.text)
                     }
                     HStack(spacing: 8) {
                         Text("\(item.paidCount) pagos recibidos").font(.gpNote).foregroundStyle(GP.muted)
                         if item.inProgressCount > 0 { StatusPill(text: "\(item.inProgressCount) en proceso", kind: .pending) }
                     }
                 }
+            }
+            // Único acceso directo que queda en Inicio: cobrar es el flujo central de la demo.
+            GPButton("Cobrar", icon: GPIcon.charge) { app.openCharge() }
+            if model.profile.value != nil {
                 Divider().overlay(GP.line)
                 Button { app.open(.stats) } label: {
                     HStack(spacing: 8) {
@@ -165,7 +170,7 @@ struct HomeView: View {
             Image(systemName: icon).foregroundStyle(tint)
             VStack(alignment: .leading) {
                 Text(label).font(.gpNote).foregroundStyle(GP.muted)
-                Text(value).font(.gpBodyStrong).foregroundStyle(GP.text).lineLimit(1).minimumScaleFactor(0.7)
+                MaskedMoney(formatted: value, visible: app.amountsVisible, font: .gpBodyStrong, large: false)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -183,30 +188,6 @@ struct HomeView: View {
             }
             GPButton("Revisar") { app.open(.scheduled) }
         }
-    }
-
-    private var quickActions: some View {
-        HStack(spacing: 12) {
-            quickAction("Cobrar", GPIcon.charge, primary: true) { app.selectTab(.charge) }
-            quickAction("Enviar", GPIcon.send) { app.open(.send(nil)) }
-            quickAction("Mi QR", GPIcon.qr) { app.open(.myQr) }
-        }
-    }
-
-    private func quickAction(_ label: String, _ icon: String, primary: Bool = false, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 10) {
-                Image(systemName: icon).font(.system(size: 24, weight: .medium)).foregroundStyle(primary ? GP.onAccent : GP.accent)
-                Text(label).font(.gpBodyStrong).foregroundStyle(primary ? GP.onAccent : GP.text)
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(primary ? GP.accent : GP.card, in: RoundedRectangle(cornerRadius: GP.radiusMedium, style: .continuous))
-            .overlay {
-                if !primary { RoundedRectangle(cornerRadius: GP.radiusMedium, style: .continuous).stroke(GP.line) }
-            }
-        }
-        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -254,23 +235,6 @@ struct HomeView: View {
                 }
             }
             if let message = model.incomingMessage { InlineNotice(message, kind: .pending) }
-        }
-    }
-
-    private func payoutCard(_ email: String?) -> some View {
-        VStack(spacing: 12) {
-            GPCard(spacing: 14) {
-                HStack(spacing: 12) {
-                    IconBadge(icon: GPIcon.mail)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Recibir envíos").font(.gpBodyStrong).foregroundStyle(GP.text)
-                        Text(email.map { "Recibes en \($0)" } ?? "Registra tu correo de PayPal Sandbox para recibir envíos.")
-                            .font(.gpNote).foregroundStyle(GP.muted)
-                    }
-                }
-                GPButton(email == nil ? "Registrar correo" : "Cambiar", kind: email == nil ? .primary : .secondary) { app.open(.payoutEmail) }
-            }
-            GPButton("Actualizar", kind: .ghost) { Task { await model.reload() } }
         }
     }
 }

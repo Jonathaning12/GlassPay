@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // GlassPayRoot de Android: bienvenida o pestañas, banner sin conexión, bloqueo y capa de privacidad.
 
@@ -45,56 +46,92 @@ struct RootView: View {
 private struct MainTabs: View {
     @Bindable var app: AppViewModel
     let context: AppContext
+    @State private var keyboardVisible = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TabView(selection: app.tabBinding) {
-            NavigationStack(path: $app.homePath) {
-                HomeView(app: app, context: context)
-                    .navigationDestination(for: Route.self) { destination($0) }
-            }
-            .tabItem { Label("Inicio", systemImage: GPIcon.home) }
-            .tag(AppTab.home)
+        ZStack {
+            VStack(spacing: 0) {
+                TabView(selection: app.tabBinding) {
+                    NavigationStack(path: $app.homePath) {
+                        HomeView(app: app, context: context)
+                            .navigationDestination(for: Route.self) { destination($0) }
+                    }
+                    .toolbar(.hidden, for: .tabBar)
+                    .tag(AppTab.home)
 
-            NavigationStack {
-                MovementsView(context: context, amountsVisible: $app.amountsVisible)
-            }
-            .tabItem { Label("Movimientos", systemImage: GPIcon.movements) }
-            .tag(AppTab.movements)
+                    NavigationStack {
+                        MovementsView(context: context, amountsVisible: $app.amountsVisible)
+                    }
+                    .toolbar(.hidden, for: .tabBar)
+                    .tag(AppTab.movements)
 
-            Group {
-                if let charge = app.charge {
-                    ChargeView(model: charge)
-                } else {
-                    Color.clear
+                    NavigationStack(path: $app.assistantPath) {
+                        Group {
+                            if let assistant = app.assistant {
+                                AssistantView(model: assistant, onOpenScheduled: { app.open(.scheduled) })
+                            } else {
+                                Color.clear
+                            }
+                        }
+                        .navigationDestination(for: Route.self) { destination($0) }
+                    }
+                    .toolbar(.hidden, for: .tabBar)
+                    .tag(AppTab.assistant)
+
+                    NavigationStack(path: $app.contactsPath) {
+                        ContactsView(app: app, context: context)
+                            .navigationDestination(for: Route.self) { destination($0) }
+                    }
+                    .toolbar(.hidden, for: .tabBar)
+                    .tag(AppTab.contacts)
+                }
+                .tint(GP.accent)
+                // Como la barra del sistema, la propia queda oculta mientras se escribe.
+                if !keyboardVisible {
+                    GPTabBar(selected: app.tab, onSelect: app.selectTab)
                 }
             }
-            .toolbar(app.showsTabBar ? .visible : .hidden, for: .tabBar)
-            .tabItem { Label("Cobrar", systemImage: GPIcon.charge) }
-            .tag(AppTab.charge)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if let notice = app.saveNotice {
+                    Text(notice).font(.gpNote).foregroundStyle(GP.warning).padding(12).frame(maxWidth: .infinity)
+                }
+            }
 
-            NavigationStack(path: $app.contactsPath) {
-                ContactsView(app: app, context: context)
-                    .navigationDestination(for: Route.self) { destination($0) }
+            // Cobrar va en pantalla completa sobre las pestañas (sin barra), pero debajo del bloqueo.
+            if let charge = app.charge {
+                NavigationStack {
+                    ChargeView(model: charge)
+                        .navigationTitle("Cobrar")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbarBackground(GP.background, for: .navigationBar)
+                        .toolbarBackground(.visible, for: .navigationBar)
+                        .toolbar {
+                            if app.canLeaveCharge {
+                                ToolbarItem(placement: .topBarLeading) {
+                                    Button { app.closeCharge() } label: { Image(systemName: "chevron.left") }
+                                        .accessibilityLabel("Volver")
+                                }
+                            }
+                        }
+                }
+                .tint(GP.accent)
+                .transition(.move(edge: .bottom))
+                .zIndex(1)
             }
-            .tabItem { Label("Contactos", systemImage: GPIcon.contacts) }
-            .tag(AppTab.contacts)
         }
-        .tint(GP.accent)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if let notice = app.saveNotice {
-                Text(notice).font(.gpNote).foregroundStyle(GP.warning).padding(12).frame(maxWidth: .infinity)
-            }
-        }
+        .animation(reduceMotion ? nil : .smooth(duration: 0.3), value: app.charge != nil)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in keyboardVisible = true }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in keyboardVisible = false }
     }
 
     @ViewBuilder
     private func destination(_ route: Route) -> some View {
         switch route {
+        case .profile: ProfileView(app: app, context: context)
         case .myQr: MyQrView(context: context, locked: app.lockActive)
         case .stats: StatsView(context: context)
         case .scheduled: ScheduledView(context: context)
-        case .assistant:
-            if let assistant = app.assistant { AssistantView(model: assistant, onOpenScheduled: { app.open(.scheduled) }) }
         case .payoutEmail: PayoutEmailView(context: context)
         case .addContact: AddContactView(context: context)
         case let .send(contact):

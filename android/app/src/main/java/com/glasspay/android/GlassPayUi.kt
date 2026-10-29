@@ -44,7 +44,7 @@ enum class GpButtonKind { PRIMARY, SECONDARY, GHOST, DANGER }
 
 /** Escala sutil al presionar (0.97, 120 ms): confirma el toque sin retrasar la acción. */
 @Composable
-private fun pressScale(interaction: MutableInteractionSource): Float {
+internal fun pressScale(interaction: MutableInteractionSource): Float {
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(
         targetValue = if (pressed && animationsEnabled()) 0.97f else 1f,

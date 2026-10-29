@@ -157,6 +157,40 @@ final class MovementsViewModel {
             state = .failed
         }
     }
+
+    // MARK: - Eliminar de mi lista
+
+    private(set) var hiding = false
+    var notice: (text: String, kind: StatusKind)?
+
+    /// Ocultado lógico en el servidor. Devuelve true si hay que salir del detalle (quitado o ya no existe);
+    /// quien llama recarga la lista después de salir, para no quitarle el movimiento al detalle abierto.
+    func hide(_ movement: Movement) async -> Bool {
+        guard !hiding else { return false }
+        hiding = true
+        defer { hiding = false }
+        do {
+            try await context.api.hideMovement(context.session, movementId: movement.movementId)
+            notice = ("Quitamos el movimiento de tu lista. Tu saldo no cambia.", .success)
+            return true
+        } catch {
+            guard !error.isCancellation else { return false }
+            logFailure("hide movement", error)
+            switch error.apiFailure {
+            case .unauthorized:
+                context.invalidate(sessionInvalidMessage)
+                return false
+            case .conflict:
+                notice = ("Este movimiento ya no se puede quitar: su estado cambió.", .failure)
+                return false
+            case .notFound:
+                return true
+            default:
+                notice = ("No pudimos quitar el movimiento. Revisa tu conexión.", .failure)
+                return false
+            }
+        }
+    }
 }
 
 @MainActor

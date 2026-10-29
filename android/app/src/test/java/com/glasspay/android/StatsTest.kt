@@ -2,6 +2,7 @@ package com.glasspay.android
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StatsTest {
@@ -56,6 +57,28 @@ class StatsTest {
         )
         assertEquals(1, defaultSelectedBucket(buckets))
         assertEquals(0, defaultSelectedBucket(listOf(StatsBucket("L", 0.0, 0.0))))
+    }
+
+    @Test
+    fun flatSegmentsKeepAFlatCurve() {
+        // Un periodo en 0 entre dos con actividad no debe dibujar la curva por debajo de 0.
+        val slopes = monotoneSlopes(floatArrayOf(0f, 1f, 2f, 3f), floatArrayOf(5f, 0f, 0f, 5f))
+        assertEquals(0f, slopes[1], 0f)
+        assertEquals(0f, slopes[2], 0f)
+    }
+
+    @Test
+    fun localPeaksHaveZeroSlope() {
+        // En un máximo o mínimo local la tangente es horizontal: no hay picos falsos.
+        val slopes = monotoneSlopes(floatArrayOf(0f, 1f, 2f), floatArrayOf(0f, 10f, 0f))
+        assertEquals(0f, slopes[1], 0f)
+    }
+
+    @Test
+    fun steepRisesAreLimitedToStayMonotone() {
+        val slopes = monotoneSlopes(floatArrayOf(0f, 1f, 2f), floatArrayOf(0f, 1f, 100f))
+        assertTrue(slopes.all { it >= 0f })
+        assertTrue(slopes[0] <= 3f * 1f)
     }
 
     @Test

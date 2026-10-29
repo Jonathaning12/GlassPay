@@ -2,7 +2,7 @@ import Foundation
 
 // Traducción de AppState.kt, AppLock.kt y Transfers.kt.
 
-enum AppTab: Hashable { case home, movements, charge, contacts }
+enum AppTab: Hashable, CaseIterable { case home, movements, assistant, contacts }
 
 enum StatusKind { case success, pending, failure, neutral }
 
@@ -19,7 +19,7 @@ func maskAmount(_ formatted: String, visible: Bool) -> String {
     return "$ ••••\(suffix)"
 }
 
-/// La barra de pestañas solo se permite cuando cambiar de pestaña no pierde un cobro en curso.
+/// Salir de la pantalla de Cobrar solo se permite cuando no se pierde un cobro en curso.
 func allowsTabSwitch(resolve: ResolveState, charge: ChargeState) -> Bool {
     if resolve.isResolving { return false }
     if !resolve.isIdentified { return true }
@@ -60,6 +60,12 @@ func movementStatusLabel(_ state: String, kind: String = "cobro") -> String {
     case "fallida": return "Falló"
     default: return "Desconocido"
     }
+}
+
+/// Solo los movimientos que no movieron dinero se pueden quitar de la lista (mismas reglas que el
+/// servidor, que es quien decide). Es un ocultado: el registro y el saldo no cambian.
+func canHideMovement(_ state: String, kind: String = "cobro") -> Bool {
+    kind == "envio" ? state == "fallida" : ["expirada", "rechazada", "fallida"].contains(state)
 }
 
 func movementStatusKind(_ state: String, kind: String = "cobro") -> StatusKind {

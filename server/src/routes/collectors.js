@@ -63,6 +63,10 @@ function isRequestId(value) {
 }
 
 function isContactId(value) {
+  return isOpaqueId(value);
+}
+
+function isOpaqueId(value) {
   return typeof value === "string" && /^[A-Za-z0-9_-]{16,64}$/.test(value);
 }
 
@@ -200,6 +204,7 @@ function createCollectorsRouter({ database, config, paypal, assistant, scheduler
   const profileLimiter = createRateLimiter({ maxRequests: 5, windowMs: 60_000 });
   const readLimiter = createRateLimiter({ maxRequests: 60, windowMs: 60_000 });
   const contactWriteLimiter = createRateLimiter({ maxRequests: 20, windowMs: 60_000 });
+  const movementWriteLimiter = createRateLimiter({ maxRequests: 20, windowMs: 60_000 });
   const contactResolutionLimiter = createRateLimiter({ maxRequests: 30, windowMs: 60_000 });
   const qrLimiter = createRateLimiter({ maxRequests: 20, windowMs: 60_000 });
   const transferLimiter = createRateLimiter({ maxRequests: 10, windowMs: 60_000 });
@@ -283,10 +288,33 @@ function createCollectorsRouter({ database, config, paypal, assistant, scheduler
     await database.expirePaymentRequests();
     await refreshOpenTransfers(collector.id);
     const movements = [
-      ...database.listCollectorMovements(collector.id).map((movement) => ({ ...movement, kind: "cobro" })),
-      ...database.listCollectorTransfers(collector.id).map(toMovementFromTransfer),
+      ...database.listCollectorMovements(collector.id, 50, { excludeHidden: true })
+        .map((movement) => ({ ...movement, kind: "cobro" })),
+      ...database.listCollectorTransfers(collector.id, 50, { excludeHidden: true }).map(toMovementFromTransfer),
     ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 50);
     return response.status(200).json({ movements });
+  });
+
+  // "Eliminar de mi lista": ocultado lógico, nunca borra el registro. Un movimiento ajeno o
+  // inexistente devuelve el mismo 404; uno que movió (o puede mover) dinero devuelve 409.
+  router.post("/me/movements/:movementId/hide", movementWriteLimiter, async (request, response) => {
+    const collector = authenticateCollector(request, database);
+    if (!collector) {
+      return response.status(401).json({ error: "collector authentication failed" });
+    }
+    if (!isOpaqueId(request.params.movementId)) {
+      return response.status(404).json({ error: "movement not found" });
+    }
+    await database.expirePaymentRequests();
+    const result = await database.hideCollectorMovement(collector.id, request.params.movementId);
+    if (result === "not_found") {
+      return response.status(404).json({ error: "movement not found" });
+    }
+    if (result === "not_hideable") {
+      return response.status(409).json({ error: "movement cannot be hidden" });
+    }
+    console.info("movement hidden", { ref: request.params.movementId.slice(0, 8) });
+    return response.status(204).end();
   });
 
   router.get("/me/stats", readLimiter, async (request, response) => {
