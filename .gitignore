@@ -12,3 +12,6 @@ coverage/
 .data/
 *.db
 .DS_Store
+xcuserdata/
+*.xcuserstate
+DerivedData/
