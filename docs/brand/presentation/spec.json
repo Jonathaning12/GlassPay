@@ -1,0 +1,33 @@
+{
+  "brand": "GlassPay",
+  "tagline": "Cobra con la mirada y la voz",
+  "brief": "Pagos manos libres para lentes inteligentes: miras el QR de tu amigo, dices cuánto le cobras y él aprueba en su teléfono. Debe sentirse confiable para mover dinero y, a la vez, moderno y cercano.",
+  "adjectives": ["confiable", "manos libres", "moderno", "cercano"],
+  "criteria": "Que se vean los lentes y la voz, que transmita confianza sin usar marcas de terceros, que se lea a 16 px y funcione en un color.",
+  "industry": "finance",
+  "nav": ["Cómo funciona", "Seguridad", "Descargar"],
+  "brand_color": "#141A38",
+  "tile_color": "#141A38",
+  "greyscale": false,
+  "designer": "GlassPay",
+  "round": 5,
+  "concepts": [
+    {
+      "name": "P-Lente",
+      "symbol": "../logo/glasspay-symbol-on-light.svg",
+      "lockup": "../logo/glasspay-horizontal-on-light.svg",
+      "symbol_on_tile": "../logo/glasspay-symbol-on-dark.svg",
+      "symbol_on_dark": "../logo/glasspay-symbol-on-dark.svg",
+      "lockup_on_dark": "../logo/glasspay-horizontal-on-dark.svg",
+      "stacked_on_tile": "../logo/glasspay-stacked-on-dark.svg",
+      "idea": "La P es una lente Wayfarer con su reflejo y emite ondas: pagas mirando y hablando, sin tocar.",
+      "rationale": [
+        "Lentes + voz + pago sin contacto en una sola letra",
+        "Índigo profundo para confianza; ámbar como el tono de unos lentes de sol",
+        "Wordmark dibujado a mano: la P del nombre repite la lente del símbolo"
+      ]
+    }
+  ],
+  "recommendation": "P-Lente en Ámbar noche: elegida por el equipo.",
+  "next_steps": ["Aplicar la paleta a la interfaz de iOS y Android", "Favicon en payer-web", "Búsqueda profesional de marca antes de registrarla"]
+}
