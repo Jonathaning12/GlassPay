@@ -21,10 +21,11 @@ Requisitos del hackathon:
 
 # DECISIONES YA TOMADAS (no las cambies sin preguntarme)
 
-- Monorepo único con estas carpetas: `android/`, `server/`, `payer-web/`, `docs/`.
+- Monorepo único con estas carpetas: `android/`, `ios/`, `server/`, `payer-web/`, `docs/`.
 - `server/`: Node.js (LTS) + Express. Es el único componente que habla con PayPal y con la IA.
 - `payer-web/`: React + Vite. Página del pagador (generar su QR y aprobar el pago).
 - `android/`: Kotlin + Jetpack Compose. App del cobrador, integrada con el Meta Wearables Device Access Toolkit (repositorio oficial `facebook/meta-wearables-dat-android`).
+- `ios/`: Swift + SwiftUI con MVVM (iOS 17+). Versión para iPhone de la app del cobrador, traducida de `android/` (ver "APP iOS").
 - Desarrollo sin lentes físicos: usar Mock Device Kit del toolkit, con la cámara del celular como feed simulado. Si no hay acceso al toolkit, usar la cámara del celular directamente como respaldo.
 - Despliegue del servidor en Render (cuenta ya creada). El servidor puede servir la build de `payer-web/` para tener una sola URL pública.
 - PayPal: cuenta de desarrollador y app Sandbox de tipo Merchant ya creadas. Cuentas sandbox: una Business (cobrador) y una Personal (pagador).
@@ -120,7 +121,7 @@ Fase 7 - Extras (solo si sobra tiempo)
 # REGLAS DE SEGURIDAD (innegociables)
 
 - Todo en PayPal Sandbox. Nunca uses credenciales ni endpoints de producción.
-- Los secretos viven solo en variables de entorno del servidor. Jamás en el código, en la app Android, en `payer-web/` ni en Git. Si ves un secreto en el repo, avísame de inmediato.
+- Los secretos viven solo en variables de entorno del servidor. Jamás en el código, en la app Android, en la app iOS, en `payer-web/` ni en Git. Si ves un secreto en el repo, avísame de inmediato.
 - Todas las llamadas a PayPal y a la IA salen únicamente desde `server/`.
 - Doble confirmación obligatoria: la confirma el cobrador (voz o gesto) y la aprueba el pagador en su teléfono. Ningún pago se crea sin confirmación explícita.
 - Sin biometría ni reconocimiento facial. La identificación es solo por QR con token opaco.
@@ -345,3 +346,12 @@ Reglas: antes de cada entrega de 5W, plan corto (pantallas, archivos, endpoints,
 - Límites: solo contactos guardados con correo de cobro, tope por pago igual al de cobros, máximo 3 pagos automáticos activos, horizonte de 30 días, saldo verificado y reservado de forma atómica al momento de enviar (saldo insuficiente → no se envía, sin reintento), solo pagos únicos.
 - WorkManager (androidx.work) aprobado para avisar con la app cerrada; las notificaciones no muestran montos ni nombres.
 - El servidor no puede verificar la huella: su autorización real es la sesión del cobrador + la propuesta de un solo uso (riesgo documentado en MEMORY.md).
+
+# APP iOS (aprobada el 2026-10-27)
+
+Cambio de alcance aprobado: además de Android, el cobrador tiene una app para iPhone en `ios/`. Antes iOS estaba fuera de alcance (2026-10-26).
+
+- Stack: Swift + SwiftUI, patrón MVVM (`Models/`, `ViewModels/`, `Views/`, `Services/`), iOS 17+, sin dependencias externas. Proyecto `ios/GlassPay/GlassPay.xcodeproj`.
+- Es una traducción de `android/`: mismo servidor, mismos endpoints y contratos, misma lógica de estados. Si cambia un contrato del servidor, se actualizan las dos apps.
+- Todas las reglas de seguridad de este archivo aplican igual a iOS. Equivalencias: el secreto de sesión se guarda en el Llavero (Keychain) del dispositivo; el desbloqueo de la propia app usa el bloqueo del iPhone (Face ID o código) mediante LocalAuthentication, con la misma excepción y las mismas reglas que `BiometricPrompt` en la Fase 5W.4.
+- Identidad visual compartida por las dos apps: `docs/brand/` (guía en `docs/brand/BRAND.md`).
