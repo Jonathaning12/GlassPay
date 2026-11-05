@@ -40,6 +40,10 @@ struct ProfileView: View {
                     ProfileRow(icon: GPIcon.clock, title: "Programados", description: "Cobros y pagos que programaste con el asistente") {
                         app.open(.scheduled)
                     }
+                    rowDivider
+                    ProfileRow(icon: "eyeglasses", title: "Probar lentes", description: "Prueba de lectura del QR con tus Oakley Meta") {
+                        app.open(.glassesTest)
+                    }
                 }
                 .reveal(revealed, index: 2)
 
