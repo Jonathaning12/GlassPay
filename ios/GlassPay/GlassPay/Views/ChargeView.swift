@@ -153,6 +153,15 @@ struct ChargeView: View {
         }
     }
 
+    @ViewBuilder
+    private var audioRouteButton: some View {
+        if model.glasses.isRegistered {
+            GPButton(model.prefersGlassesAudio ? "Usar el micrófono del iPhone" : "Usar el micrófono de los lentes", kind: .ghost) {
+                model.toggleAudioRoute()
+            }
+        }
+    }
+
     private func canSaveContact(_ state: ChargeState) -> Bool {
         switch state {
         case .ready, .error: return true
@@ -165,7 +174,10 @@ struct ChargeView: View {
     private func stateContent(_ state: ChargeState, payerName: String) -> some View {
         switch state {
         case let .ready(message):
-            if let message { InlineNotice(message, kind: .failure) }
+            if let message {
+                InlineNotice(message, kind: .failure)
+                audioRouteButton
+            }
         case .listening:
             HStack(spacing: 14) {
                 MicIndicator()
@@ -174,6 +186,7 @@ struct ChargeView: View {
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(GP.accentSoft, in: RoundedRectangle(cornerRadius: GP.radiusMedium, style: .continuous))
+            audioRouteButton
         case .interpreting:
             WorkingRow(text: "Interpretando…")
         case let .clarification(question):
@@ -183,6 +196,18 @@ struct ChargeView: View {
             }
         case let .preview(proposal, remaining, message):
             ReceiptCard(proposal: proposal, remaining: remaining, message: message, payerName: payerName)
+            if let status = model.voiceStatus, status != "Procesando voz…" {
+                HStack(spacing: 14) {
+                    MicIndicator()
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Di «confirmar» o «cancelar»").font(.gpBodyStrong).foregroundStyle(GP.text)
+                        Text(status).font(.gpNote).foregroundStyle(GP.muted)
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(GP.accentSoft, in: RoundedRectangle(cornerRadius: GP.radiusMedium, style: .continuous))
+            }
         case .confirming:
             WorkingRow(text: "Confirmando…")
         case let .created(_, _, payment):

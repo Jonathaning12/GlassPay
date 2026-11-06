@@ -38,6 +38,9 @@ private func machineInPreview(remaining: Int = 60) -> ChargeStateMachine {
         #expect(voiceCommand("cancelar", state: state) == .cancel)
         #expect(voiceCommand("empezar de nuevo", state: state) == .startOver)
         #expect(voiceCommand("sí", state: state) == .confirm)
+        // Eco de la pregunta del recibo por Bluetooth: nunca debe confirmar.
+        #expect(voiceCommand("¿Confirmas?", state: state) == .none)
+        #expect(voiceCommand("Cobro de 50 pesos por la cena ¿Confirmas?", state: state) == .none)
     }
 
     @Test func confirmOnlyCountsInPreview() {

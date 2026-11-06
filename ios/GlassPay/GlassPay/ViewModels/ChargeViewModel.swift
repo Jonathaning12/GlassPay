@@ -18,6 +18,7 @@ final class ChargeViewModel {
     private(set) var cameraError: String?
     private(set) var cameraGranted = QRScannerView.cameraAuthorized
     var textInput = ""
+    private(set) var prefersGlassesAudio = AudioRoute.prefersGlasses
     let glasses = GlassesCamera()
     /// Elección del usuario en Cobrar: usar el teléfono aunque los lentes estén disponibles.
     var prefersPhoneCamera = false
@@ -37,6 +38,9 @@ final class ChargeViewModel {
     @ObservationIgnored private let speech = SpeechOutput()
     @ObservationIgnored private var inputSession: ChargeInputSession?
     @ObservationIgnored private var attemptCounter = 0
+    @ObservationIgnored private var previewListens = 0
+    /// Veces que el recibo vuelve a escuchar tras un silencio o una frase que no es un comando.
+    private let maxPreviewListens = 4
     @ObservationIgnored private var serverReady = false
     @ObservationIgnored private var rejectedToken: String?
     @ObservationIgnored private var announcedPaymentRequestId: String?
@@ -58,8 +62,8 @@ final class ChargeViewModel {
             self?.lastRecognizedText = text
             self?.handleRecognized(text)
         }
-        voice.onReady = { [weak self] in self?.voiceStatus = "Escuchando…" }
-        voice.onPartial = { [weak self] in self?.voiceStatus = "Escuchando…" }
+        voice.onReady = { [weak self] in self?.voiceStatus = "Escuchando por \(AudioRoute.inputLabel)…" }
+        voice.onPartial = { [weak self] in self?.voiceStatus = "Escuchando por \(AudioRoute.inputLabel)…" }
         voice.onEnd = { [weak self] in self?.voiceStatus = "Procesando voz…" }
         voice.onError = { [weak self] kind in self?.voiceFailed(kind) }
     }
@@ -84,6 +88,7 @@ final class ChargeViewModel {
         [resolveTask, chargeTask, saveContactTask, expiryTask, countdownTask, pollingTask].forEach { $0?.cancel() }
         voice.release()
         speech.stop()
+        AudioRoute.release()
         glasses.tearDown()
     }
 
@@ -138,6 +143,7 @@ final class ChargeViewModel {
         chargeTask?.cancel()
         voice.release()
         speech.stop()
+        AudioRoute.release()
         inputSession = inputSessionAfter(inputSession, reason: .restarted)
         announcedPaymentRequestId = nil
         textInput = ""
@@ -219,8 +225,37 @@ final class ChargeViewModel {
         voice.start()
     }
 
+    /// Si los lentes no captan audio se puede seguir dictando con el iPhone, incluso a mitad de la escucha.
+    func toggleAudioRoute() {
+        prefersGlassesAudio.toggle()
+        AudioRoute.prefersGlasses = prefersGlassesAudio
+        guard chargeMachine.state.isListening else { return }
+        voice.cancel()
+        voiceStatus = "Preparando micrófono…"
+        voice.start()
+    }
+
+    /// El recibo sigue vigente aunque no se entienda la voz: nunca se confirma solo, se vuelve a escuchar
+    /// unas veces y después quedan los botones.
+    private func listenAgainInPreview() {
+        guard chargeMachine.state.isPreview, previewListens < maxPreviewListens else {
+            voiceStatus = nil
+            return
+        }
+        previewListens += 1
+        voiceStatus = "Preparando micrófono…"
+        voice.start()
+    }
+
     private func voiceFailed(_ kind: VoiceErrorKind) {
         guard shouldAcceptVoiceError(chargeState) else { return }
+        if chargeMachine.state.isPreview {
+            switch kind {
+            case .noMatch, .speechTimeout: listenAgainInPreview()
+            default: voiceStatus = nil
+            }
+            return
+        }
         voiceStatus = nil
         inputSession = inputSessionAfterDecision(inputSession, reason: .voiceError)
         applyCharge(chargeMachine.inputError(kind.message))
@@ -231,7 +266,8 @@ final class ChargeViewModel {
         case .cancel: cancel()
         case .startOver: startOver()
         case .confirm: if !locked { confirm() }
-        case .none: if chargeState.isListening { interpret(text) }
+        case .none:
+            if chargeState.isListening { interpret(text) } else { listenAgainInPreview() }
         }
     }
 
@@ -271,6 +307,7 @@ final class ChargeViewModel {
                 if let proposal = result.proposal {
                     inputSession = inputSessionAfter(inputSession, reason: .proposalCreated)
                     lastRecognizedText = nil
+                    previewListens = 0
                     applyCharge(chargeMachine.preview(proposal, remainingSeconds: remainingSeconds(proposal.expiresAt)))
                     speech.speak("Cobro de \(proposal.amount) \(proposal.currency) por \(proposal.concept). ¿Confirmas?") {
                         self.startVoiceAfterSpeech()
@@ -357,6 +394,7 @@ final class ChargeViewModel {
     func back() {
         voice.release()
         speech.stop()
+        AudioRoute.release()
         voiceStatus = nil
         lastRecognizedText = nil
         applyCharge(chargeMachine.back())
@@ -418,6 +456,7 @@ final class ChargeViewModel {
             savingContact = false
             contactMessage = nil
             voice.release()
+            AudioRoute.release()
             inputSession = inputSessionAfter(inputSession, reason: .resolutionExpired)
             textInput = ""
             lastRecognizedText = nil

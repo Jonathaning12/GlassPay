@@ -19,6 +19,44 @@ enum VoiceErrorKind {
     }
 }
 
+/// Ruta de audio compartida por el dictado y la voz de la app: los lentes (Bluetooth) si están enlazados
+/// y el usuario no eligió el iPhone. Se libera antes de volver a escanear, porque el video de los lentes
+/// necesita el ancho de banda de Bluetooth.
+@MainActor
+enum AudioRoute {
+    private static let preferenceKey = "glasspay.prefersGlassesAudio"
+
+    static var prefersGlasses: Bool {
+        get { UserDefaults.standard.object(forKey: preferenceKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: preferenceKey) }
+    }
+
+    static func activate(recording: Bool) throws {
+        let session = AVAudioSession.sharedInstance()
+        var options: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .duckOthers]
+        if prefersGlasses { options.insert(.allowBluetoothHFP) }
+        try session.setCategory(.playAndRecord, mode: .default, options: options)
+        try session.setActive(true, options: .notifyOthersOnDeactivation)
+        let bluetooth = prefersGlasses ? session.availableInputs?.first { $0.portType == .bluetoothHFP } : nil
+        try session.setPreferredInput(bluetooth)
+        if recording && bluetooth == nil { try session.setMode(.measurement) }
+    }
+
+    static func release() {
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    static var usesBluetooth: Bool {
+        AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .bluetoothHFP }
+    }
+
+    /// Por dónde se escucha ahora mismo; no incluye datos del usuario.
+    static var inputLabel: String {
+        let input = AVAudioSession.sharedInstance().currentRoute.inputs.first
+        return input?.portType == .bluetoothHFP ? input?.portName ?? "Bluetooth" : "el iPhone"
+    }
+}
+
 @MainActor
 final class VoiceRecognizer {
     var onResult: (String) -> Void = { _ in }
@@ -28,7 +66,7 @@ final class VoiceRecognizer {
     var onError: (VoiceErrorKind) -> Void = { _ in }
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "es-MX"))
-    private let audioEngine = AVAudioEngine()
+    private var audioEngine = AVAudioEngine()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var silenceTimer: Timer?
@@ -64,17 +102,22 @@ final class VoiceRecognizer {
             return
         }
         do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playAndRecord, mode: .measurement, options: [.defaultToSpeaker, .duckOthers])
-            try session.setActive(true, options: .notifyOthersOnDeactivation)
+            try AudioRoute.activate(recording: true)
 
             let request = SFSpeechAudioBufferRecognitionRequest()
             request.shouldReportPartialResults = true
             request.taskHint = .dictation
             self.request = request
 
+            // Motor nuevo en cada dictado: al cambiar de ruta, uno reutilizado conserva el formato anterior.
+            audioEngine = AVAudioEngine()
             let input = audioEngine.inputNode
             let format = input.outputFormat(forBus: 0)
+            guard format.sampleRate > 0, format.channelCount > 0 else {
+                stopEngine()
+                onError(.busy)
+                return
+            }
             input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
                 request.append(buffer)
             }
@@ -168,6 +211,10 @@ final class VoiceRecognizer {
 final class SpeechOutput: NSObject, AVSpeechSynthesizerDelegate {
     private let synthesizer = AVSpeechSynthesizer()
     private var completions: [ObjectIdentifier: () -> Void] = [:]
+    private var pendingCompletion: Task<Void, Never>?
+    /// El audio por Bluetooth termina de sonar después del aviso del sintetizador. Sin esta pausa, el
+    /// micrófono de los lentes capta el final de la frase (anti-eco).
+    private let bluetoothEchoDelay: Duration = .milliseconds(700)
 
     override init() {
         super.init()
@@ -177,8 +224,7 @@ final class SpeechOutput: NSObject, AVSpeechSynthesizerDelegate {
     /// `onDone` se llama al terminar o al interrumpirse, igual que en Android.
     func speak(_ text: String, onDone: @escaping () -> Void = {}) {
         stop()
-        try? AVAudioSession.sharedInstance().setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .duckOthers])
-        try? AVAudioSession.sharedInstance().setActive(true)
+        try? AudioRoute.activate(recording: false)
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = AVSpeechSynthesisVoice(language: "es-MX")
         completions[ObjectIdentifier(utterance)] = onDone
@@ -188,6 +234,8 @@ final class SpeechOutput: NSObject, AVSpeechSynthesizerDelegate {
     func stop() {
         // Detener sin disparar callbacks pendientes: el flujo que los pidió ya cambió.
         completions.removeAll()
+        pendingCompletion?.cancel()
+        pendingCompletion = nil
         if synthesizer.isSpeaking { synthesizer.stopSpeaking(at: .immediate) }
     }
 
@@ -202,6 +250,11 @@ final class SpeechOutput: NSObject, AVSpeechSynthesizerDelegate {
     }
 
     private func complete(_ id: ObjectIdentifier) {
-        completions.removeValue(forKey: id)?()
+        guard let done = completions.removeValue(forKey: id) else { return }
+        guard AudioRoute.usesBluetooth else { return done() }
+        pendingCompletion = Task { [bluetoothEchoDelay] in
+            try? await Task.sleep(for: bluetoothEchoDelay)
+            if !Task.isCancelled { done() }
+        }
     }
 }
