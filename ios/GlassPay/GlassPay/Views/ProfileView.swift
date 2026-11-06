@@ -41,8 +41,8 @@ struct ProfileView: View {
                         app.open(.scheduled)
                     }
                     rowDivider
-                    ProfileRow(icon: "eyeglasses", title: "Probar lentes", description: "Prueba de lectura del QR con tus Oakley Meta") {
-                        app.open(.glassesTest)
+                    ProfileRow(icon: "eyeglasses", title: "Lentes", description: "Cobra mirando el QR con tus lentes") {
+                        app.open(.glasses)
                     }
                 }
                 .reveal(revealed, index: 2)

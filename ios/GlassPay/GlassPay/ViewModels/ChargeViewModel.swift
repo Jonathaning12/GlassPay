@@ -18,6 +18,11 @@ final class ChargeViewModel {
     private(set) var cameraError: String?
     private(set) var cameraGranted = QRScannerView.cameraAuthorized
     var textInput = ""
+    let glasses = GlassesCamera()
+    /// Elección del usuario en Cobrar: usar el teléfono aunque los lentes estén disponibles.
+    var prefersPhoneCamera = false
+    var canUseGlasses: Bool { glasses.isRegistered && (glasses.hasActiveDevice || glasses.hasSession) }
+    var scansWithGlasses: Bool { canUseGlasses && !prefersPhoneCamera }
     /// Lo fija AppViewModel: bloqueada, la app no confirma nada (ni por toque ni por voz).
     var locked = false
 
@@ -79,6 +84,7 @@ final class ChargeViewModel {
         [resolveTask, chargeTask, saveContactTask, expiryTask, countdownTask, pollingTask].forEach { $0?.cancel() }
         voice.release()
         speech.stop()
+        glasses.tearDown()
     }
 
     // MARK: - QR

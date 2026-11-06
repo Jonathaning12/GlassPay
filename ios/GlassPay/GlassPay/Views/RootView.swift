@@ -134,7 +134,7 @@ private struct MainTabs: View {
         case .scheduled: ScheduledView(context: context)
         case .payoutEmail: PayoutEmailView(context: context)
         case .addContact: AddContactView(context: context)
-        case .glassesTest: GlassesTestView()
+        case .glasses: GlassesSetupView()
         case let .send(contact):
             SendMoneyView(context: context, initialContact: contact, locked: app.lockActive, onOpenMovements: { app.selectTab(.movements) })
         }

@@ -20,7 +20,7 @@ enum LoadState<Value> {
 }
 
 enum Route: Hashable {
-    case profile, myQr, stats, scheduled, payoutEmail, addContact, glassesTest
+    case profile, myQr, stats, scheduled, payoutEmail, addContact, glasses
     case send(Contact?)
 }
 
