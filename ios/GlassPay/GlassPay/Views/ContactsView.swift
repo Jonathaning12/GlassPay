@@ -130,6 +130,7 @@ struct MyQrView: View {
     let locked: Bool
     @State private var model: MyQrViewModel
     @State private var previousBrightness: CGFloat?
+    private let qrBrightness: CGFloat = 0.7
     @Environment(\.scenePhase) private var scenePhase
 
     init(context: AppContext, locked: Bool) {
@@ -170,11 +171,16 @@ struct MyQrView: View {
             if !locked && scenePhase == .active { await model.run() }
         }
         .onAppear {
-            // Brillo al máximo mientras el QR está visible; se restaura al salir.
+            // Brillo medio: al máximo la pantalla se satura y los lentes leen peor el QR. No se vuelve a
+            // imponer, así que el usuario puede ajustarlo; solo se restaura si no lo cambió.
             previousBrightness = UIScreen.main.brightness
-            UIScreen.main.brightness = 1
+            UIScreen.main.brightness = qrBrightness
         }
-        .onDisappear { if let previousBrightness { UIScreen.main.brightness = previousBrightness } }
+        .onDisappear {
+            if let previousBrightness, abs(UIScreen.main.brightness - qrBrightness) < 0.01 {
+                UIScreen.main.brightness = previousBrightness
+            }
+        }
     }
 }
 

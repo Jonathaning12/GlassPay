@@ -21,7 +21,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,7 +30,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -51,7 +49,6 @@ fun MyQrScreen(
     onBack: () -> Unit,
     locked: Boolean,
 ) {
-    val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     var qr by remember { mutableStateOf<MyQr?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -59,19 +56,6 @@ fun MyQrScreen(
     var reload by remember { mutableStateOf(0) }
 
     BackHandler { onBack() }
-
-    // Brillo al máximo mientras el QR está visible.
-    DisposableEffect(locked) {
-        if (locked) return@DisposableEffect onDispose { }
-        val window = context.findActivity()?.window
-        val previous = window?.attributes?.screenBrightness
-        window?.let { it.attributes = it.attributes.apply { screenBrightness = 1f } }
-        onDispose {
-            if (window != null && previous != null) {
-                window.attributes = window.attributes.apply { screenBrightness = previous }
-            }
-        }
-    }
 
     LaunchedEffect(reload, locked) {
         if (locked) return@LaunchedEffect
