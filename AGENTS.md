@@ -25,7 +25,7 @@ Requisitos del hackathon:
 - `server/`: Node.js (LTS) + Express. Es el único componente que habla con PayPal y con la IA.
 - `payer-web/`: React + Vite. Página del pagador (generar su QR y aprobar el pago).
 - `android/`: Kotlin + Jetpack Compose. App del cobrador, integrada con el Meta Wearables Device Access Toolkit (repositorio oficial `facebook/meta-wearables-dat-android`).
-- `ios/`: Swift + SwiftUI con MVVM (iOS 17+). Versión para iPhone de la app del cobrador, traducida de `android/` (ver "APP iOS").
+- `ios/`: Swift + SwiftUI con MVVM (iOS 17.2+). Versión para iPhone de la app del cobrador, traducida de `android/` (ver "APP iOS").
 - Desarrollo sin lentes físicos: usar Mock Device Kit del toolkit, con la cámara del celular como feed simulado. Si no hay acceso al toolkit, usar la cámara del celular directamente como respaldo.
 - Despliegue del servidor en Render (cuenta ya creada). El servidor puede servir la build de `payer-web/` para tener una sola URL pública.
 - PayPal: cuenta de desarrollador y app Sandbox de tipo Merchant ya creadas. Cuentas sandbox: una Business (cobrador) y una Personal (pagador).
@@ -351,7 +351,7 @@ Reglas: antes de cada entrega de 5W, plan corto (pantallas, archivos, endpoints,
 
 Cambio de alcance aprobado: además de Android, el cobrador tiene una app para iPhone en `ios/`. Antes iOS estaba fuera de alcance (2026-10-26).
 
-- Stack: Swift + SwiftUI, patrón MVVM (`Models/`, `ViewModels/`, `Views/`, `Services/`), iOS 17+, sin dependencias externas. Proyecto `ios/GlassPay/GlassPay.xcodeproj`.
+- Stack: Swift + SwiftUI, patrón MVVM (`Models/`, `ViewModels/`, `Views/`, `Services/`), iOS 17.2+, sin dependencias externas. Proyecto `ios/GlassPay/GlassPay.xcodeproj`.
 - Es una traducción de `android/`: mismo servidor, mismos endpoints y contratos, misma lógica de estados. Si cambia un contrato del servidor, se actualizan las dos apps.
 - Todas las reglas de seguridad de este archivo aplican igual a iOS. Equivalencias: el secreto de sesión se guarda en el Llavero (Keychain) del dispositivo; el desbloqueo de la propia app usa el bloqueo del iPhone (Face ID o código) mediante LocalAuthentication, con la misma excepción y las mismas reglas que `BiometricPrompt` en la Fase 5W.4.
 - Identidad visual compartida por las dos apps: `docs/brand/` (guía en `docs/brand/BRAND.md`).
