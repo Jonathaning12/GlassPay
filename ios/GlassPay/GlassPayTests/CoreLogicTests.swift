@@ -1,5 +1,7 @@
+import CoreImage
 import Foundation
 import Testing
+import UIKit
 @testable import GlassPay
 
 // Casos traducidos de ChargeStateTest, ChargeNavigationTest, ResolveStateTest, QrTokenParserTest,
@@ -36,6 +38,9 @@ private func machineInPreview(remaining: Int = 60) -> ChargeStateMachine {
         #expect(voiceCommand("cancelar", state: state) == .cancel)
         #expect(voiceCommand("empezar de nuevo", state: state) == .startOver)
         #expect(voiceCommand("sí", state: state) == .confirm)
+        // Eco de la pregunta del recibo por Bluetooth: nunca debe confirmar.
+        #expect(voiceCommand("¿Confirmas?", state: state) == .none)
+        #expect(voiceCommand("Cobro de 50 pesos por la cena ¿Confirmas?", state: state) == .none)
     }
 
     @Test func confirmOnlyCountsInPreview() {
@@ -282,5 +287,36 @@ private func machineInPreview(remaining: Int = 60) -> ChargeStateMachine {
         let cancelled = try JSONDecoder().decode(ProposalOutcome.self, from: Data(#"{"cancelled":true}"#.utf8))
         #expect(cancelled == .cancelled)
         #expect(throws: (any Error).self) { try JSONDecoder().decode(ProposalOutcome.self, from: Data("{}".utf8)) }
+    }
+}
+
+#if targetEnvironment(simulator)
+private let visionUnavailable = true
+#else
+private let visionUnavailable = false
+#endif
+
+// En el simulador, Vision falla con "Could not create inference context": estas pruebas requieren un iPhone.
+@Suite(.disabled(if: visionUnavailable, "Vision no lee códigos en el simulador"))
+struct GlassesQrReaderTests {
+    private func read(_ payload: String) async throws -> [String] {
+        let filter = try #require(CIFilter(name: "CIQRCodeGenerator"))
+        filter.setValue(Data(payload.utf8), forKey: "inputMessage")
+        let output = try #require(filter.outputImage).transformed(by: CGAffineTransform(scaleX: 6, y: 6))
+        let bitmap = try #require(CIContext().createCGImage(output, from: output.extent))
+        return await withCheckedContinuation { continuation in
+            GlassesQrReader().read(UIImage(cgImage: bitmap)) { continuation.resume(returning: $0) }
+        }
+    }
+
+    @Test func readsGlassPayCodeFromFrame() async throws {
+        let token = String(repeating: "aZ3_", count: 11).prefix(43)
+        let payloads = try await read("glasspay:\(token)")
+        #expect(payloads.compactMap { QrTokenParser.extractToken($0) } == [String(token)])
+    }
+
+    @Test func foreignCodeYieldsNoToken() async throws {
+        let payloads = try await read("https://example.com/promo")
+        #expect(payloads.compactMap { QrTokenParser.extractToken($0) }.isEmpty)
     }
 }

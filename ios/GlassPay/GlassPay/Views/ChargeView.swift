@@ -22,17 +22,19 @@ struct ChargeView: View {
 
     private var scanning: some View {
         ZStack {
-            if model.cameraGranted {
+            if model.scansWithGlasses {
+                GlassesScanner(glasses: model.glasses, onToken: model.resolveToken)
+            } else if model.cameraGranted {
                 QRScannerView(onToken: model.resolveToken).ignoresSafeArea()
                 GP.background.opacity(0.35).ignoresSafeArea()
                 ScanFrame().stroke(GP.accent, style: StrokeStyle(lineWidth: 5, lineCap: .round)).frame(width: 264, height: 264)
                     .accessibilityHidden(true)
             }
             VStack {
-                if model.cameraGranted, model.resolveState == .scanning {
+                if model.cameraGranted || model.scansWithGlasses, model.resolveState == .scanning {
                     HStack(spacing: 10) {
-                        Image(systemName: GPIcon.qr).foregroundStyle(GP.accent)
-                        Text("Apunta al QR de tu amigo").font(.gpBodyStrong).foregroundStyle(GP.text)
+                        Image(systemName: model.scansWithGlasses ? "eyeglasses" : GPIcon.qr).foregroundStyle(GP.accent)
+                        Text(model.scansWithGlasses ? "Mira el QR de tu amigo" : "Apunta al QR de tu amigo").font(.gpBodyStrong).foregroundStyle(GP.text)
                     }
                     .padding(.horizontal, 18).padding(.vertical, 12)
                     .background(GP.background.opacity(0.72), in: Capsule())
@@ -40,7 +42,7 @@ struct ChargeView: View {
                 }
                 Spacer()
                 scanSheet.padding(20)
-                if !model.cameraGranted { Spacer() }
+                if !model.cameraGranted && !model.scansWithGlasses { Spacer() }
             }
         }
     }
@@ -60,7 +62,21 @@ struct ChargeView: View {
                 statusLine("Buscando un QR de GlassPay…", failed: false)
                 Text("Solo se leen códigos de GlassPay. Los demás se ignoran sin enviar nada.").font(.gpNote).foregroundStyle(GP.muted)
             }
-            if let error = model.cameraError { Text(error).font(.gpLabel).foregroundStyle(GP.error) }
+            if !model.scansWithGlasses, let error = model.cameraError { Text(error).font(.gpLabel).foregroundStyle(GP.error) }
+            if model.scansWithGlasses {
+                if model.glasses.isPaused {
+                    Text("Video en pausa: toca el lateral de los lentes.").font(.gpLabel).foregroundStyle(GP.warning)
+                }
+                if let error = model.glasses.errorMessage {
+                    Text(error).font(.gpLabel).foregroundStyle(GP.error)
+                    GPButton("Reintentar con los lentes") { model.glasses.restart() }
+                }
+            }
+            if model.canUseGlasses, case .scanning = model.resolveState {
+                GPButton(model.prefersPhoneCamera ? "Usar los lentes" : "Usar la cámara del teléfono", icon: model.prefersPhoneCamera ? "eyeglasses" : "camera", kind: .secondary) {
+                    model.prefersPhoneCamera.toggle()
+                }
+            }
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -137,6 +153,15 @@ struct ChargeView: View {
         }
     }
 
+    @ViewBuilder
+    private var audioRouteButton: some View {
+        if model.glasses.isRegistered {
+            GPButton(model.prefersGlassesAudio ? "Usar el micrófono del iPhone" : "Usar el micrófono de los lentes", kind: .ghost) {
+                model.toggleAudioRoute()
+            }
+        }
+    }
+
     private func canSaveContact(_ state: ChargeState) -> Bool {
         switch state {
         case .ready, .error: return true
@@ -149,7 +174,10 @@ struct ChargeView: View {
     private func stateContent(_ state: ChargeState, payerName: String) -> some View {
         switch state {
         case let .ready(message):
-            if let message { InlineNotice(message, kind: .failure) }
+            if let message {
+                InlineNotice(message, kind: .failure)
+                audioRouteButton
+            }
         case .listening:
             HStack(spacing: 14) {
                 MicIndicator()
@@ -158,6 +186,7 @@ struct ChargeView: View {
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(GP.accentSoft, in: RoundedRectangle(cornerRadius: GP.radiusMedium, style: .continuous))
+            audioRouteButton
         case .interpreting:
             WorkingRow(text: "Interpretando…")
         case let .clarification(question):
@@ -167,6 +196,18 @@ struct ChargeView: View {
             }
         case let .preview(proposal, remaining, message):
             ReceiptCard(proposal: proposal, remaining: remaining, message: message, payerName: payerName)
+            if let status = model.voiceStatus, status != "Procesando voz…" {
+                HStack(spacing: 14) {
+                    MicIndicator()
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Di «confirmar» o «cancelar»").font(.gpBodyStrong).foregroundStyle(GP.text)
+                        Text(status).font(.gpNote).foregroundStyle(GP.muted)
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(GP.accentSoft, in: RoundedRectangle(cornerRadius: GP.radiusMedium, style: .continuous))
+            }
         case .confirming:
             WorkingRow(text: "Confirmando…")
         case let .created(_, _, payment):
@@ -264,5 +305,50 @@ private struct MicIndicator: View {
         }
         .frame(width: 48, height: 48)
         .accessibilityLabel("Micrófono escuchando")
+    }
+}
+
+/// Video de los lentes mientras se busca el QR. Se detiene al salir de la pantalla (por ejemplo, al
+/// identificar al pagador) y en segundo plano: los lentes no graban más tiempo del necesario.
+private struct GlassesScanner: View {
+    @Bindable var glasses: GlassesCamera
+    let onToken: (String) -> Void
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        ZStack {
+            GP.background.ignoresSafeArea()
+            if let preview = glasses.preview {
+                Image(uiImage: preview)
+                    .resizable()
+                    .scaledToFill()
+                    .ignoresSafeArea()
+                    .accessibilityLabel("Video de los lentes")
+            } else if glasses.errorMessage == nil {
+                VStack(spacing: 12) {
+                    ProgressView().tint(GP.accent)
+                    Text("Conectando con tus lentes…").font(.gpLabel).foregroundStyle(GP.muted)
+                }
+            }
+        }
+        .clipped()
+        .onAppear {
+            glasses.onToken = onToken
+            glasses.start()
+        }
+        .onDisappear { glasses.stop() }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .background: glasses.stop()
+            case .active: glasses.start()
+            default: break
+            }
+        }
+        .alert("Autorizar en Meta AI", isPresented: $glasses.showPermissionPrompt) {
+            Button("Abrir Meta AI") { Task { await glasses.grantPermissionAndStream() } }
+            Button("Cancelar", role: .cancel) { glasses.stop() }
+        } message: {
+            Text("Se abrirá Meta AI para permitir que GlassPay use la cámara de los lentes.")
+        }
     }
 }
