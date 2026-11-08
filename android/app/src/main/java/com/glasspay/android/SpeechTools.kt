@@ -2,6 +2,9 @@ package com.glasspay.android
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -137,11 +140,71 @@ fun voiceErrorMessage(error: Int): String {
     }
 }
 
+/**
+ * Ruta de audio compartida por el dictado y la voz de la app: los lentes (Bluetooth SCO) si están
+ * enlazados y el usuario no eligió el teléfono. Se libera antes de volver a escanear, porque el video
+ * de los lentes necesita el ancho de banda de Bluetooth.
+ */
+class AudioRoute(context: Context) {
+    private val audioManager = context.getSystemService(AudioManager::class.java)
+    private val preferences = context.applicationContext
+        .getSharedPreferences("glasspay.audio", Context.MODE_PRIVATE)
+    private var active = false
+
+    var prefersGlasses: Boolean
+        get() = preferences.getBoolean(PREFERS_GLASSES_KEY, true)
+        set(value) = preferences.edit().putBoolean(PREFERS_GLASSES_KEY, value).apply()
+
+    /** Hay lentes u otro auricular Bluetooth que se puede usar para dictar. */
+    fun hasBluetoothDevice(): Boolean = bluetoothDevice() != null
+
+    fun activate() {
+        val device = if (prefersGlasses) bluetoothDevice() else null
+        if (device == null) {
+            release()
+            return
+        }
+        // El modo de comunicación da prioridad a esta app sobre la ruta; la plataforma elige el micrófono a juego.
+        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        active = audioManager.setCommunicationDevice(device)
+        if (!active) audioManager.mode = AudioManager.MODE_NORMAL
+    }
+
+    fun release() {
+        if (!active) return
+        active = false
+        audioManager.clearCommunicationDevice()
+        audioManager.mode = AudioManager.MODE_NORMAL
+    }
+
+    val usesBluetooth: Boolean
+        get() = active && audioManager.communicationDevice?.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO
+
+    /** Por dónde se escucha ahora mismo; no incluye datos del usuario. */
+    val inputLabel: String
+        get() = if (usesBluetooth) {
+            audioManager.communicationDevice?.productName?.toString()?.takeIf { it.isNotBlank() } ?: "Bluetooth"
+        } else {
+            "el teléfono"
+        }
+
+    private fun bluetoothDevice(): AudioDeviceInfo? =
+        audioManager.availableCommunicationDevices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO }
+
+    private companion object {
+        const val PREFERS_GLASSES_KEY = "prefersGlassesAudio"
+    }
+}
+
 class SpeechOutput(
     context: Context,
+    private val audioRoute: AudioRoute? = null,
 ) {
     private var ready = false
     private val speech: TextToSpeech
+    private val mainHandler = Handler(Looper.getMainLooper())
+    // Cada speak/stop invalida los avisos de fin pendientes: el flujo que los pidió ya cambió.
+    @Volatile private var generation = 0
 
     init {
         speech = TextToSpeech(context) { status ->
@@ -151,13 +214,33 @@ class SpeechOutput(
     }
 
     fun speak(text: String, utteranceId: String, onDone: () -> Unit = {}) {
+        val current = ++generation
+        audioRoute?.activate()
+        val bluetooth = audioRoute?.usesBluetooth == true
+        // Por Bluetooth SCO solo suena el audio de comunicación; en el teléfono se conserva el de siempre
+        // (multimedia, el valor por defecto de TextToSpeech), que sale por la bocina.
+        speech.setAudioAttributes(
+            AudioAttributes.Builder()
+                .setUsage(if (bluetooth) AudioAttributes.USAGE_VOICE_COMMUNICATION else AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .build(),
+        )
+        val finish = {
+            if (bluetooth) {
+                // El audio por Bluetooth termina de sonar después del aviso del sintetizador. Sin esta
+                // pausa, el micrófono de los lentes capta el final de la frase (anti-eco).
+                mainHandler.postDelayed({ if (generation == current) onDone() }, BLUETOOTH_ECHO_DELAY_MILLIS)
+            } else {
+                onDone()
+            }
+        }
         speech.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) = Unit
             override fun onDone(id: String?) {
-                if (id == utteranceId) onDone()
+                if (id == utteranceId) finish()
             }
             override fun onError(id: String?) {
-                if (id == utteranceId) onDone()
+                if (id == utteranceId) finish()
             }
         })
         if (ready) {
@@ -168,12 +251,18 @@ class SpeechOutput(
     }
 
     fun stop() {
+        generation++
         speech.stop()
     }
 
     fun shutdown() {
+        generation++
         speech.stop()
         speech.shutdown()
+    }
+
+    private companion object {
+        const val BLUETOOTH_ECHO_DELAY_MILLIS = 700L
     }
 }
 

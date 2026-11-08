@@ -83,6 +83,15 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
+import androidx.compose.foundation.Image
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.layout.ContentScale
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import com.meta.wearable.dat.core.Wearables
+import com.meta.wearable.dat.core.types.Permission
+import com.meta.wearable.dat.core.types.PermissionStatus
 import java.util.concurrent.Executors
 
 const val SESSION_INVALID_MESSAGE = "Tu sesión ya no es válida. Crea tu cuenta de nuevo."
@@ -108,7 +117,20 @@ fun ChargeScreen(
     val scope = rememberCoroutineScope()
     val stateMachine = remember { ResolveStateMachine() }
     val chargeMachine = remember { ChargeStateMachine() }
-    val speechOutput = remember { SpeechOutput(context) }
+    val audioRoute = remember { AudioRoute(context) }
+    val speechOutput = remember { SpeechOutput(context, audioRoute) }
+    var prefersGlassesAudio by remember { mutableStateOf(audioRoute.prefersGlasses) }
+    // Lentes: solo si el SDK está listo (permiso de Bluetooth dado en Perfil > Lentes).
+    val glasses = remember { if (GlassesSupport.isReady) GlassesCamera() else null }
+    DisposableEffect(glasses) { onDispose { glasses?.tearDown() } }
+    // Elección del usuario en Cobrar: usar el teléfono aunque los lentes estén disponibles.
+    var prefersPhoneCamera by remember { mutableStateOf(false) }
+    val canUseGlasses = glasses != null && glasses.isRegistered && (glasses.hasActiveDevice || glasses.hasSession)
+    val scansWithGlasses = canUseGlasses && !prefersPhoneCamera
+    val glassesPermissionLauncher = rememberLauncherForActivityResult(Wearables.RequestPermissionContract()) { result ->
+        glasses?.permissionResult(result.getOrDefault(PermissionStatus.Denied))
+    }
+    var previewListens by remember { mutableStateOf(0) }
     var cameraGranted by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
@@ -172,6 +194,8 @@ fun ChargeScreen(
         }
     }
 
+    // Error de voz en el recibo; lo atiende un LaunchedEffect, igual que `recognizedText`.
+    var previewVoiceError by remember { mutableStateOf<PreviewVoiceError?>(null) }
     val voiceRecognizer = remember(audioGranted) {
         VoiceRecognizer(
             context = context,
@@ -180,11 +204,16 @@ fun ChargeScreen(
                 lastRecognizedText = text
                 recognizedText = text
             },
-            onReady = { voiceStatus = "Escuchando…" },
+            onReady = { voiceStatus = "Escuchando por ${audioRoute.inputLabel}…" },
             onEnd = { voiceStatus = "Procesando voz…" },
-            onPartial = { voiceStatus = "Escuchando…" },
+            onPartial = { voiceStatus = "Escuchando por ${audioRoute.inputLabel}…" },
             reportError = { errorCode, message ->
                 if (!shouldAcceptVoiceError(chargeState)) {
+                    return@VoiceRecognizer
+                }
+                if (chargeState is ChargeState.Preview) {
+                    // Un error de voz no tira el recibo: se vuelve a escuchar o quedan los botones.
+                    previewVoiceError = PreviewVoiceError(errorCode)
                     return@VoiceRecognizer
                 }
                 voiceStatus = null
@@ -221,7 +250,27 @@ fun ChargeScreen(
             return
         }
         voiceStatus = "Preparando micrófono…"
+        audioRoute.activate()
         action()
+    }
+
+    fun listenAgainInPreview(errorCode: Int?) {
+        if (!shouldListenAgainInPreview(chargeMachine.state, errorCode, previewListens)) {
+            voiceStatus = null
+            return
+        }
+        previewListens += 1
+        startVoiceAfterSpeech { voiceRecognizer.start() }
+    }
+
+    /** Si los lentes no captan audio se puede seguir con el teléfono, incluso a mitad de la escucha. */
+    fun toggleAudioRoute() {
+        prefersGlassesAudio = !prefersGlassesAudio
+        audioRoute.prefersGlasses = prefersGlassesAudio
+        if (chargeMachine.state !is ChargeState.Listening && chargeMachine.state !is ChargeState.Preview) return
+        if (voiceStatus == null) return
+        voiceRecognizer.cancel()
+        startVoiceAfterSpeech { voiceRecognizer.start() }
     }
 
     fun startChargeInput() {
@@ -285,6 +334,7 @@ fun ChargeScreen(
                     inputSession = inputSessionAfter(inputSession, ChargeInputClearReason.PROPOSAL_CREATED)
                     lastRecognizedText = null
                     recognizedText = null
+                    previewListens = 0
                     val remaining = remainingSeconds(next.expiresAt)
                     dispatchCharge(chargeMachine.preview(next, remaining))
                     speechOutput.speak(
@@ -393,6 +443,7 @@ fun ChargeScreen(
         voiceStatus = null
         speechOutput.stop()
         confirmedCharge = null
+        audioRoute.release()
         dispatchCharge(chargeMachine.startOver())
     }
 
@@ -410,8 +461,22 @@ fun ChargeScreen(
             VoiceCommand.CANCEL -> cancelCharge()
             VoiceCommand.START_OVER -> startOverCharge()
             VoiceCommand.CONFIRM -> if (!lockedNow.value) confirmCharge()
-            VoiceCommand.NONE -> if (chargeState is ChargeState.Listening) interpretText(text)
+            VoiceCommand.NONE -> if (chargeState is ChargeState.Listening) {
+                interpretText(text)
+            } else {
+                listenAgainInPreview(null)
+            }
         }
+    }
+
+    LaunchedEffect(previewVoiceError) {
+        val error = previewVoiceError ?: return@LaunchedEffect
+        previewVoiceError = null
+        listenAgainInPreview(error.code)
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { audioRoute.release() }
     }
 
     LaunchedEffect(startVoiceWhenPermissionGranted, audioGranted, chargeState) {
@@ -446,6 +511,7 @@ fun ChargeScreen(
         chargeJob?.cancel()
         voiceRecognizer.release()
         speechOutput.stop()
+        audioRoute.release()
         inputSession = inputSessionAfter(inputSession, ChargeInputClearReason.RESTARTED)
         announcedPaymentRequestId = null
         textInput = ""
@@ -579,6 +645,7 @@ fun ChargeScreen(
             savingContact = false
             contactMessage = null
             voiceRecognizer.release()
+            audioRoute.release()
             inputSession = inputSessionAfter(inputSession, ChargeInputClearReason.RESOLUTION_EXPIRED)
             textInput = ""
             recognizedText = null
@@ -664,10 +731,14 @@ fun ChargeScreen(
 
     Box(modifier = Modifier.fillMaxSize().background(GlassPayColors.Background)) {
         val scanning = uiState !is ResolveState.Identified
-        if (cameraGranted && scanning) {
+        if (scanning && glasses != null && scansWithGlasses) {
+            GlassesScanner(glasses = glasses, onToken = ::resolveToken)
+        } else if (cameraGranted && scanning) {
             CameraScanner(lifecycleOwner = lifecycleOwner, onTokenDetected = ::resolveToken)
             Box(Modifier.fillMaxSize().background(GlassPayColors.Background.copy(alpha = 0.35f)))
             ScanFrame(modifier = Modifier.align(Alignment.Center))
+        }
+        if ((cameraGranted || scansWithGlasses) && scanning) {
             if (uiState is ResolveState.Scanning) {
                 Row(
                     modifier = Modifier
@@ -678,8 +749,17 @@ fun ChargeScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(painterResource(R.drawable.ic_qr), contentDescription = null, tint = GlassPayColors.Accent, modifier = Modifier.size(22.dp))
-                    Text("Apunta al QR de tu amigo", color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
+                    Icon(
+                        painterResource(if (scansWithGlasses) R.drawable.ic_glasses else R.drawable.ic_qr),
+                        contentDescription = null,
+                        tint = GlassPayColors.Accent,
+                        modifier = Modifier.size(22.dp),
+                    )
+                    Text(
+                        if (scansWithGlasses) "Mira el QR de tu amigo" else "Apunta al QR de tu amigo",
+                        color = GlassPayColors.Text,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                 }
             }
         }
@@ -687,7 +767,7 @@ fun ChargeScreen(
             // Hoja inferior con el estado del escaneo; sobre la cámara o sola si no hay permiso.
             Column(
                 modifier = Modifier
-                    .align(if (cameraGranted) Alignment.BottomCenter else Alignment.Center)
+                    .align(if (cameraGranted || scansWithGlasses) Alignment.BottomCenter else Alignment.Center)
                     .padding(20.dp)
                     .fillMaxWidth()
                     .background(GlassPayColors.Card.copy(alpha = 0.94f), MaterialTheme.shapes.large)
@@ -711,7 +791,25 @@ fun ChargeScreen(
                         state = uiState,
                         onRetry = { (uiState as? ResolveState.RetryableError)?.let { resolveToken(it.token) } },
                         onScanAnother = { dispatch(ResolveEvent.Reset) },
-                        cameraError = cameraError,
+                        cameraError = if (scansWithGlasses) null else cameraError,
+                    )
+                }
+                if (scansWithGlasses) {
+                    if (glasses.isPaused) {
+                        Text("Video en pausa: toca el lateral de los lentes.", color = GlassPayColors.Warning, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    glasses.errorMessage?.let {
+                        Text(it, color = GlassPayColors.Error, style = MaterialTheme.typography.bodyMedium)
+                        GpButton("Reintentar con los lentes", onClick = { glasses.restart() }, modifier = Modifier.fillMaxWidth())
+                    }
+                }
+                if (canUseGlasses && uiState is ResolveState.Scanning) {
+                    GpButton(
+                        if (prefersPhoneCamera) "Usar los lentes" else "Usar la cámara del teléfono",
+                        onClick = { prefersPhoneCamera = !prefersPhoneCamera },
+                        kind = GpButtonKind.SECONDARY,
+                        icon = if (prefersPhoneCamera) R.drawable.ic_glasses else R.drawable.ic_qr,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
@@ -734,6 +832,7 @@ fun ChargeScreen(
                     onBack = {
                         voiceRecognizer.release()
                         speechOutput.stop()
+                        audioRoute.release()
                         voiceStatus = null
                         lastRecognizedText = null
                         recognizedText = null
@@ -759,7 +858,74 @@ fun ChargeScreen(
                     voiceStatus = voiceStatus,
                     lastRecognizedText = lastRecognizedText,
                     accumulatedText = inputSession?.text,
+                    canSwitchAudio = audioRoute.hasBluetoothDevice(),
+                    glassesAudioMissing = glasses?.isRegistered == true && prefersGlassesAudio &&
+                        !audioRoute.hasBluetoothDevice(),
+                    prefersGlassesAudio = prefersGlassesAudio,
+                    onToggleAudioRoute = { toggleAudioRoute() },
                 )
+            }
+        }
+    }
+
+    if (glasses?.showPermissionPrompt == true) {
+        AlertDialog(
+            onDismissRequest = {
+                glasses.showPermissionPrompt = false
+                glasses.stop()
+            },
+            title = { Text("Autorizar en Meta AI") },
+            text = { Text("Se abrirá Meta AI para permitir que GlassPay use la cámara de los lentes.") },
+            confirmButton = {
+                TextButton(onClick = { glassesPermissionLauncher.launch(Permission.CAMERA) }) { Text("Abrir Meta AI") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    glasses.showPermissionPrompt = false
+                    glasses.stop()
+                }) { Text("Cancelar") }
+            },
+        )
+    }
+}
+
+/**
+ * Video de los lentes mientras se busca el QR. Se detiene al salir de la pantalla (por ejemplo, al
+ * identificar al pagador) y en segundo plano: los lentes no graban más tiempo del necesario.
+ */
+@Composable
+private fun GlassesScanner(glasses: GlassesCamera, onToken: (String) -> Unit) {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val latestOnToken = androidx.compose.runtime.rememberUpdatedState(onToken)
+    DisposableEffect(glasses, lifecycle) {
+        glasses.onToken = { latestOnToken.value(it) }
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> glasses.start()
+                Lifecycle.Event.ON_STOP -> glasses.stop()
+                else -> Unit
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose {
+            lifecycle.removeObserver(observer)
+            glasses.onToken = {}
+            glasses.stop()
+        }
+    }
+    Box(modifier = Modifier.fillMaxSize().background(GlassPayColors.Background), contentAlignment = Alignment.Center) {
+        val preview = glasses.preview
+        if (preview != null) {
+            Image(
+                bitmap = preview,
+                contentDescription = "Video de los lentes",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        } else if (glasses.errorMessage == null) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp, color = GlassPayColors.Accent)
+                Text("Conectando con tus lentes…", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodyMedium)
             }
         }
     }
@@ -788,8 +954,21 @@ private fun IdentifiedContent(
     voiceStatus: String?,
     lastRecognizedText: String?,
     accumulatedText: String?,
+    canSwitchAudio: Boolean,
+    glassesAudioMissing: Boolean,
+    prefersGlassesAudio: Boolean,
+    onToggleAudioRoute: () -> Unit,
 ) {
     val actions = availableActions(chargeState)
+    val audioRouteButton = @Composable {
+        if (canSwitchAudio) {
+            GpButton(
+                if (prefersGlassesAudio) "Usar el micrófono del teléfono" else "Usar el micrófono de los lentes",
+                onClick = onToggleAudioRoute,
+                kind = GpButtonKind.GHOST,
+            )
+        }
+    }
     // Mientras se espera el pago, la línea de tiempo ocupa la pantalla; la tarjeta del pagador sobraría ahí.
     if (chargeState !is ChargeState.Created || isTerminal(chargeState.payment)) {
         GpCard(modifier = Modifier.fillMaxWidth()) {
@@ -813,24 +992,54 @@ private fun IdentifiedContent(
         }
     }
     contactMessage?.let { InlineNotice(it, kind = StatusKind.PENDING) }
+    // Los lentes están conectados en GlassPay, pero su audio Bluetooth no: la voz cae al teléfono.
+    if (glassesAudioMissing && usesVoice(chargeState)) {
+        InlineNotice(
+            "Tus lentes no están enlazados por Bluetooth; la voz sale por el teléfono.",
+            kind = StatusKind.PENDING,
+            icon = R.drawable.ic_glasses,
+        )
+    }
     when (val charge = chargeState) {
         is ChargeState.Ready -> {
-            charge.message?.let { InlineNotice(it, kind = StatusKind.FAILURE) }
+            charge.message?.let {
+                InlineNotice(it, kind = StatusKind.FAILURE)
+                audioRouteButton()
+            }
         }
-        ChargeState.Listening -> Row(
-            modifier = Modifier.fillMaxWidth().background(GlassPayColors.AccentSoft, MaterialTheme.shapes.medium).padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            MicIndicator()
-            Text(voiceStatus ?: "Preparando micrófono…", color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
+        ChargeState.Listening -> {
+            Row(
+                modifier = Modifier.fillMaxWidth().background(GlassPayColors.AccentSoft, MaterialTheme.shapes.medium).padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                MicIndicator()
+                Text(voiceStatus ?: "Preparando micrófono…", color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
+            }
+            audioRouteButton()
         }
         ChargeState.Interpreting -> WorkingRow("Interpretando…")
         is ChargeState.Clarification -> GpCard(modifier = Modifier.fillMaxWidth(), spacing = 8.dp) {
             Overline("Necesito un dato más", color = GlassPayColors.Warning)
             Text(charge.question, color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
         }
-        is ChargeState.Preview -> ReceiptCard(charge, state.displayName)
+        is ChargeState.Preview -> {
+            ReceiptCard(charge, state.displayName)
+            if (voiceStatus != null && voiceStatus != "Procesando voz…" && charge.remainingSeconds > 0) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().background(GlassPayColors.AccentSoft, MaterialTheme.shapes.medium).padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    MicIndicator()
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Di «confirmar» o «cancelar»", color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
+                        Text(voiceStatus, color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                audioRouteButton()
+            }
+        }
         ChargeState.Confirming -> WorkingRow("Confirmando…")
         is ChargeState.Created -> {
             PaymentProgress(
@@ -943,6 +1152,13 @@ private fun ReceiptCard(charge: ChargeState.Preview, payerName: String) {
         InlineNotice("Di «confirmar» o toca el botón. «Cancelar» lo descarta.", icon = R.drawable.ic_mic)
     }
 }
+
+private fun usesVoice(state: ChargeState): Boolean =
+    state is ChargeState.Ready || state is ChargeState.Listening ||
+        state is ChargeState.Clarification || state is ChargeState.Preview
+
+/** Un error de voz del recibo; instancia nueva por error, aunque el código se repita. */
+private class PreviewVoiceError(val code: Int)
 
 // Vida de referencia de una propuesta (2 min); solo dimensiona la barra, el servidor manda.
 private const val PROPOSAL_REFERENCE_SECONDS = 120f
