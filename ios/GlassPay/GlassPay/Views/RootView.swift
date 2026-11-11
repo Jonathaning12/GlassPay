@@ -102,7 +102,7 @@ private struct MainTabs: View {
             if let charge = app.charge {
                 NavigationStack {
                     ChargeView(model: charge)
-                        .navigationTitle("Cobrar")
+                        .navigationTitle(L("Cobrar"))
                         .navigationBarTitleDisplayMode(.inline)
                         .toolbarBackground(GP.background, for: .navigationBar)
                         .toolbarBackground(.visible, for: .navigationBar)
@@ -110,7 +110,7 @@ private struct MainTabs: View {
                             if app.canLeaveCharge {
                                 ToolbarItem(placement: .topBarLeading) {
                                     Button { app.closeCharge() } label: { Image(systemName: "chevron.left") }
-                                        .accessibilityLabel("Volver")
+                                        .accessibilityLabel(L("Volver"))
                                 }
                             }
                         }
@@ -145,7 +145,7 @@ private struct OfflineBanner: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: GPIcon.wifiOff)
-            Text("Sin conexión. Revisa tu red.").font(.gpLabel)
+            Text(L("Sin conexión. Revisa tu red.")).font(.gpLabel)
         }
         .foregroundStyle(GP.background)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -162,10 +162,10 @@ private struct LockView: View {
     var body: some View {
         VStack(spacing: 16) {
             IconBadge(icon: GPIcon.lock, size: 88)
-            Text("GlassPay").font(.system(size: 32, weight: .semibold)).foregroundStyle(GP.text)
-            Text("Está bloqueada. Usa Face ID o el código de tu teléfono.")
+            Text(verbatim: "GlassPay").font(.system(size: 32, weight: .semibold)).foregroundStyle(GP.text)
+            Text(L("Está bloqueada. Usa Face ID o el código de tu teléfono."))
                 .font(.gpBody).foregroundStyle(GP.muted).multilineTextAlignment(.center)
-            GPButton("Desbloquear", icon: GPIcon.lock, action: onUnlock)
+            GPButton(L("Desbloquear"), icon: GPIcon.lock, action: onUnlock)
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

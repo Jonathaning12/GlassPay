@@ -1,6 +1,6 @@
 // Interpretación y validación de cobros programados desde el chat. Todo cálculo de fecha se hace
 // en hora de México; la IA solo propone campos y aquí se comprueban contra el texto del usuario.
-const { NUMBER_WORDS, parseSpanishNumber } = require("./agent");
+const { ENGLISH_NUMBER_WORDS, NUMBER_WORDS, parseEnglishNumber, parseSpanishNumber } = require("./agent");
 
 // Ciudad de México sin horario de verano desde 2022: UTC−6 fijo (mismo criterio que stats.js).
 const MEXICO_OFFSET_MS = -6 * 60 * 60 * 1000;
@@ -16,6 +16,7 @@ function foldWords(text) {
 }
 
 const OCCURRENCES_PATTERN = /\b(?:por|durante)\s+\d{1,2}\s+(?:veces|semanas|meses)\b|\b\d{1,2}\s+veces\b/;
+const EN_OCCURRENCES_PATTERN = /\bfor\s+\d{1,2}\s+(?:weeks|months)\b|\b\d{1,2}\s+times\b/;
 
 function fold(text) {
   return text.normalize("NFKC").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
@@ -45,9 +46,17 @@ function describeNow(now) {
   return `${WEEKDAYS[parts.weekday]} ${parts.year}-${pad(parts.month + 1)}-${pad(parts.day)} ${pad(parts.hour)}:${pad(parts.minute)}`;
 }
 
-/** Etiqueta en español para la tarjeta: "vie 30 oct, 18:00". */
-function formatRunAt(date) {
+const WEEKDAYS_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MONTHS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Etiqueta para la tarjeta: "vie 30 oct, 18:00" o, en inglés, "Fri Oct 30, 6:00 PM". */
+function formatRunAt(date, language = "es") {
   const parts = localParts(date);
+  if (language === "en") {
+    const hour12 = parts.hour % 12 || 12;
+    const suffix = parts.hour < 12 ? "AM" : "PM";
+    return `${WEEKDAYS_EN[parts.weekday]} ${MONTHS_EN[parts.month]} ${parts.day}, ${hour12}:${String(parts.minute).padStart(2, "0")} ${suffix}`;
+  }
   const day = WEEKDAYS[parts.weekday].slice(0, 3).replace("mie", "mié").replace("sab", "sáb");
   return `${day} ${parts.day} ${MONTHS[parts.month]}, ${String(parts.hour).padStart(2, "0")}:${String(parts.minute).padStart(2, "0")}`;
 }
@@ -102,8 +111,96 @@ function smallNumber(token) {
   return /^\d+$/.test(token) ? Number(token) : SMALL_NUMBERS[token];
 }
 
-/** Respaldo sin IA: entiende "en 2 horas", "mañana a las 6", "el viernes a las 18:30", "hoy a las 5 pm". */
+/** Respaldo sin IA: entiende "en 2 horas", "mañana a las 6", "el viernes a las 18:30", "hoy a las 5 pm"
+ * y, en inglés, "in 2 hours", "tomorrow at 6 pm", "on Friday at 6:30", "on the 15th". */
 function parseWhenFallback(text, now) {
+  return parseSpanishWhen(text, now) || parseEnglishWhen(text, now);
+}
+
+const EN_WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+const EN_MONTHS = [
+  "january", "february", "march", "april", "may", "june",
+  "july", "august", "september", "october", "november", "december",
+];
+const EN_SMALL_NUMBERS = {
+  a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, fifteen: 15, twenty: 20, thirty: 30, half: 0.5,
+};
+const EN_RELATIVE_PATTERN = /\bin\s+(\d+|an?|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|half an?)\s+(minutes?|hours?|days?)\b/;
+const EN_TIME_PATTERN = /\bat\s+(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|noon)(?::(\d{2}))?(?:\s*(am|pm|a\.m\.?|p\.m\.?|in the morning|in the afternoon|in the evening|at night|o'?clock))?/;
+const EN_DAY_OF_MONTH_PATTERN = new RegExp(
+  `\\b(?:on|starting|from)\\s+(?:the\\s+)?(?:(${EN_MONTHS.join("|")})\\s+)?(\\d{1,2})(?:st|nd|rd|th)?(?:\\s+of\\s+(${EN_MONTHS.join("|")}))?\\b`,
+);
+
+function englishSmallNumber(token) {
+  if (/^\d+$/.test(token)) return Number(token);
+  return EN_SMALL_NUMBERS[token.split(" ")[0]];
+}
+
+function parseEnglishWhen(text, now) {
+  const folded = fold(text);
+  const relative = folded.match(EN_RELATIVE_PATTERN);
+  if (relative) {
+    const quantity = englishSmallNumber(relative[1]);
+    const unit = relative[2].startsWith("min") ? 1 : relative[2].startsWith("hour") ? 60 : 24 * 60;
+    return { whenType: "relative", minutesFromNow: quantity * unit, date: "", time: "", matched: relative[0] };
+  }
+  const today = localParts(now);
+  let dayOffset = null;
+  let dayText = "";
+  if (/\bday after tomorrow\b/.test(folded)) {
+    dayOffset = 2;
+    dayText = "day after tomorrow";
+  } else if (/\btomorrow\b/.test(folded)) {
+    dayOffset = 1;
+    dayText = "tomorrow";
+  } else if (/\b(today|tonight)\b/.test(folded)) {
+    dayOffset = 0;
+    dayText = "today";
+  } else {
+    const weekday = EN_WEEKDAYS.findIndex((name) => new RegExp(`\\b(?:on|this|next|every|starting)\\s+${name}\\b`).test(folded));
+    const dayOfMonth = folded.match(EN_DAY_OF_MONTH_PATTERN);
+    if (weekday >= 0) {
+      dayOffset = (weekday - today.weekday + 7) % 7 || 7;
+      dayText = EN_WEEKDAYS[weekday];
+    } else if (dayOfMonth) {
+      const day = Number(dayOfMonth[2]);
+      const monthName = dayOfMonth[1] || dayOfMonth[3];
+      const namedMonth = monthName ? EN_MONTHS.indexOf(monthName) : -1;
+      let month = namedMonth >= 0 ? namedMonth : today.month;
+      let year = today.year;
+      if (namedMonth < 0 && day < today.day) month += 1;
+      if (namedMonth >= 0 && (namedMonth < today.month || (namedMonth === today.month && day < today.day))) year += 1;
+      const target = new Date(Date.UTC(year, month, day));
+      if (target.getUTCDate() !== day) return null;
+      dayOffset = Math.round((target.getTime() - Date.UTC(today.year, today.month, today.day)) / DAY_MS);
+      dayText = dayOfMonth[0];
+    }
+  }
+  const timeMatch = folded.match(EN_TIME_PATTERN);
+  let time = "";
+  if (timeMatch) {
+    let hour = timeMatch[1] === "noon" ? 12 : englishSmallNumber(timeMatch[1]);
+    const minute = timeMatch[2] ? Number(timeMatch[2]) : 0;
+    const marker = timeMatch[3] || "";
+    const pm = marker.startsWith("p") || /afternoon|evening|night/.test(marker);
+    const am = marker.startsWith("a") || /morning/.test(marker);
+    if (pm && hour < 12) hour += 12;
+    else if (am && hour === 12) hour = 0;
+    // Igual que en español: sin am/pm, de 1 a 7 se entiende de la tarde.
+    else if (!pm && !am && timeMatch[1] !== "noon" && hour >= 1 && hour <= 7) hour += 12;
+    time = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  }
+  if (dayOffset === null && !time) return null;
+  let date = "";
+  if (dayOffset !== null) {
+    const target = new Date(Date.UTC(today.year, today.month, today.day + dayOffset));
+    date = `${target.getUTCFullYear()}-${String(target.getUTCMonth() + 1).padStart(2, "0")}-${String(target.getUTCDate()).padStart(2, "0")}`;
+  }
+  return { whenType: "absolute", minutesFromNow: 0, date, time, matched: [dayText, timeMatch?.[0] || ""].join(" ") };
+}
+
+function parseSpanishWhen(text, now) {
   const folded = fold(text);
   const relative = folded.match(RELATIVE_PATTERN);
   if (relative) {
@@ -165,13 +262,15 @@ function parseWhenFallback(text, now) {
 }
 
 const RECURRENCE_PATTERN = /\bcada\s+(semana|mes|lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b|\b(semanal|mensual)(?:mente)?\b/;
+const EN_RECURRENCE_PATTERN = /\bevery\s+(week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b|\b(weekly|monthly)\b/;
 
-/** "cada mes" → monthly; "cada semana" o "cada viernes" → weekly; si no, null. */
+/** "cada mes"/"every month" → monthly; "cada semana", "cada viernes", "every friday" → weekly; si no, null. */
 function detectRecurrence(text) {
-  const match = fold(text).match(RECURRENCE_PATTERN);
+  const folded = fold(text);
+  const match = folded.match(RECURRENCE_PATTERN) || folded.match(EN_RECURRENCE_PATTERN);
   if (!match) return null;
   const word = match[1] || match[2];
-  return word === "mes" || word === "mensual" ? "monthly" : "weekly";
+  return ["mes", "mensual", "month", "monthly"].includes(word) ? "monthly" : "weekly";
 }
 
 /** Siguiente fecha de una serie; el día 31 inexistente pasa al último día del mes. */
@@ -211,6 +310,18 @@ function numbersInText(text) {
     else flush();
   }
   flush();
+  // Números en palabras en inglés ("two hundred"); "and" solo une dentro de un número.
+  let englishRun = [];
+  const flushEnglish = () => {
+    while (englishRun.length && englishRun[englishRun.length - 1] === "and") englishRun.pop();
+    if (englishRun.length) numbers.add(parseEnglishNumber(englishRun));
+    englishRun = [];
+  };
+  for (const token of folded.replace(/-/g, " ").split(/[\s,.]+/)) {
+    if (ENGLISH_NUMBER_WORDS.has(token) && token !== "point" && (token !== "and" || englishRun.length)) englishRun.push(token);
+    else flushEnglish();
+  }
+  flushEnglish();
   return numbers;
 }
 
@@ -221,7 +332,11 @@ function amountFallback(text) {
     .replace(new RegExp(RELATIVE_PATTERN.source, "g"), " ")
     .replace(new RegExp(TIME_PATTERN.source, "g"), " ")
     .replace(new RegExp(DAY_OF_MONTH_PATTERN.source, "g"), " ")
-    .replace(new RegExp(OCCURRENCES_PATTERN.source, "g"), " ");
+    .replace(new RegExp(OCCURRENCES_PATTERN.source, "g"), " ")
+    .replace(new RegExp(EN_RELATIVE_PATTERN.source, "g"), " ")
+    .replace(new RegExp(EN_TIME_PATTERN.source, "g"), " ")
+    .replace(new RegExp(EN_DAY_OF_MONTH_PATTERN.source, "g"), " ")
+    .replace(new RegExp(EN_OCCURRENCES_PATTERN.source, "g"), " ");
   const numeric = folded.match(/\$?\s?(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:[.,]\d{1,2})?)/);
   if (numeric) {
     const raw = /,\d{3}/.test(numeric[1]) ? numeric[1].replace(/,/g, "") : numeric[1].replace(",", ".");
@@ -231,10 +346,12 @@ function amountFallback(text) {
   return values.length ? values[0] : null;
 }
 
-/** Concepto: lo que sigue a "por"/"para" hasta la fecha u hora. */
+/** Concepto: lo que sigue a "por"/"para" (o "for" en inglés) hasta la fecha u hora. */
 function conceptFallback(text) {
   const match = text.replace(new RegExp(OCCURRENCES_PATTERN.source, "gi"), " ").match(/\b(?:por|para)\s+(.+?)(?=\s+(?:hoy|ma[ñn]ana|pasado|el\s+\w+|este\s+\w+|a\s+las?\s|en\s+\d|dentro\s+de|cada\s|a\s+partir|empezando|entre\s)|$)/i);
-  return match ? match[1].trim() : "";
+  if (match) return match[1].trim();
+  const english = text.replace(new RegExp(EN_OCCURRENCES_PATTERN.source, "gi"), " ").match(/\bfor\s+(.+?)(?=\s+(?:today|tonight|tomorrow|the\s+day\s+after|on\s+\w+|this\s+\w+|next\s+\w+|at\s+\d|at\s+noon|in\s+(?:\d|an?\s|half)|every\s|starting|from\s|between\s)|[.!?]*$)/i);
+  return english ? english[1].trim() : "";
 }
 
 /**

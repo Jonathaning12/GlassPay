@@ -208,3 +208,46 @@ test("a reminder needs a saved contact; amount, concept and date are optional", 
   assert.equal(ask("recuérdale a Pedro que me pague").type, "clarification");
   assert.equal(ask("recuérdale a Luis que me pague 5000").type, "clarification");
 });
+
+test("English dates are read in Mexico time", () => {
+  assert.equal(runAtOf("charge Ana 300 in 2 hours"), "2026-10-29T18:00:00.000Z");
+  assert.equal(runAtOf("in half an hour"), "2026-10-29T16:30:00.000Z");
+  assert.equal(runAtOf("tomorrow at 6"), "2026-10-31T00:00:00.000Z"); // 30 oct 18:00 MX
+  assert.equal(runAtOf("tomorrow at 9 am"), "2026-10-30T15:00:00.000Z");
+  assert.equal(runAtOf("today at 5 pm"), "2026-10-29T23:00:00.000Z");
+  assert.equal(runAtOf("on Friday at 6:30 pm"), "2026-10-31T00:30:00.000Z");
+  assert.equal(runAtOf("the day after tomorrow"), "2026-10-31T16:00:00.000Z");
+  assert.equal(runAtOf("on the 15th"), "2026-11-15T16:00:00.000Z");
+});
+
+test("run time label can be in English", () => {
+  assert.equal(formatRunAt(new Date("2026-10-31T00:00:00.000Z"), "en"), "Fri Oct 30, 6:00 PM");
+  assert.equal(formatRunAt(new Date("2026-10-31T00:00:00.000Z")), "vie 30 oct, 18:00");
+});
+
+test("an English message becomes a validated proposal with English clarifications", () => {
+  const result = prepareScheduleCharge({
+    interpretation: fallback(),
+    text: "charge Luis 300 for rent tomorrow at 6 pm",
+    contacts: CONTACTS,
+    config: CONFIG,
+    now: NOW,
+    language: "en",
+  });
+  assert.equal(result.type, "proposal");
+  assert.equal(result.payload.contactId, "c-luis");
+  assert.equal(result.payload.amount, "300.00");
+  assert.equal(result.payload.concept, "rent");
+  assert.equal(result.payload.runAt, "2026-10-31T00:00:00.000Z");
+
+  const ask = (text) => prepareScheduleCharge({
+    interpretation: fallback(), text, contacts: CONTACTS, config: CONFIG, now: NOW, language: "en",
+  });
+  assert.match(ask("charge Luis 300 for rent").text, /^When should I schedule it\?/);
+  assert.match(ask("charge Luis for rent tomorrow at 6 pm").text, /^How much should I charge\? .*\$1,000 per person/);
+  assert.match(ask("charge Pedro 300 tomorrow at 6 pm").text, /^I couldn't find that person/);
+  // En español no cambia nada.
+  assert.match(prepareScheduleCharge({
+    interpretation: fallback(), text: "cóbrale a Luis 300", contacts: CONTACTS, config: CONFIG, now: NOW,
+  }).text, /^¿Para cuándo lo programo\?/);
+});

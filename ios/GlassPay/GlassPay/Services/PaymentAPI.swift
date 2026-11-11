@@ -240,6 +240,8 @@ final class PaymentAPI: Sendable {
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        // Idioma de la app: el servidor redacta en él aclaraciones, respuestas del asistente y etiquetas.
+        request.setValue(currentLanguage.rawValue, forHTTPHeaderField: "X-GlassPay-Language")
         headers.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
         if let json {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")

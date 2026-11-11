@@ -11,7 +11,7 @@ struct StatsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Picker("Periodo", selection: $model.period) {
+                Picker(L("Periodo"), selection: $model.period) {
                     ForEach(StatsPeriod.allCases) { Text($0.label).tag($0) }
                 }
                 .pickerStyle(.segmented)
@@ -20,18 +20,18 @@ struct StatsView: View {
                     SkeletonBox(height: 120)
                     SkeletonBox(height: 260)
                 case .failed:
-                    InlineNotice("No pudimos cargar tus estadísticas.", kind: .failure)
-                    GPButton("Reintentar", kind: .secondary) { Task { await model.reload() } }
+                    InlineNotice(L("No pudimos cargar tus estadísticas."), kind: .failure)
+                    GPButton(L("Reintentar"), kind: .secondary) { Task { await model.reload() } }
                 case let .loaded(stats):
                     content(stats)
                 }
-                Text("Actividad en GlassPay (Sandbox). Solo cuenta cobros pagados y envíos completados; no es tu saldo bancario.")
+                Text(L("Actividad en GlassPay (Sandbox). Solo cuenta cobros pagados y envíos completados; no es tu saldo bancario."))
                     .font(.gpNote).foregroundStyle(GP.muted)
             }
             .padding(20)
         }
         .gpScreen()
-        .navigationTitle("Estadísticas")
+        .navigationTitle(L("Estadísticas"))
         .navigationBarTitleDisplayMode(.inline)
         .task(id: model.period) { await model.reload() }
     }
@@ -39,19 +39,19 @@ struct StatsView: View {
     @ViewBuilder
     private func content(_ stats: Stats) -> some View {
         GPCard(spacing: 8) {
-            Overline("Balance del periodo")
+            Overline(L("Balance del periodo"))
             Text(formatGroupedMoney(stats.netTotal, signed: true)).font(.gpAmount).foregroundStyle(GP.text)
             if let change = netChangePercent(current: stats.netTotal, previous: stats.previousNetTotal) {
-                Text("\(change >= 0 ? "▲" : "▼") \(abs(change))% \(model.period.previousLabel)")
+                Text(verbatim: "\(change >= 0 ? "▲" : "▼") \(abs(change))% \(model.period.previousLabel)")
                     .font(.gpLabel).foregroundStyle(change >= 0 ? GP.success : GP.error)
             }
         }
         HStack(spacing: 12) {
-            tile("Cobrado", stats.paidTotal, "\(stats.paidCount) pagos", GP.chartPaid)
-            tile("Enviado", stats.sentTotal, "\(stats.sentCount) envíos", GP.chartSent)
+            tile(L("Cobrado"), stats.paidTotal, L("%@ pagos", "\(stats.paidCount)"), GP.chartPaid)
+            tile(L("Enviado"), stats.sentTotal, L("%@ envíos", "\(stats.sentCount)"), GP.chartSent)
         }
         if stats.paidTotal == 0 && stats.sentTotal == 0 {
-            InlineNotice("Sin actividad en este periodo. Cuando cobres o envíes, aparecerá aquí.", icon: GPIcon.chart)
+            InlineNotice(L("Sin actividad en este periodo. Cuando cobres o envíes, aparecerá aquí."), icon: GPIcon.chart)
         } else {
             chart(stats)
         }
@@ -76,10 +76,10 @@ struct StatsView: View {
         let selected = buckets.indices.contains(model.selectedBucket) ? buckets[model.selectedBucket] : nil
         return GPCard(spacing: 14) {
             HStack {
-                Text("Por \(model.period.bucketNoun)").font(.gpBodyStrong).foregroundStyle(GP.text)
+                Text(L("Por %@", "\(model.period.bucketNoun)")).font(.gpBodyStrong).foregroundStyle(GP.text)
                 Spacer()
-                legend("Cobrado", GP.chartPaid)
-                legend("Enviado", GP.chartSent)
+                legend(L("Cobrado"), GP.chartPaid)
+                legend(L("Enviado"), GP.chartSent)
             }
             // Lectura del periodo seleccionado: arriba de la gráfica para que el dedo no la tape.
             if let selected {
@@ -98,10 +98,10 @@ struct StatsView: View {
             DotLineChart(buckets: buckets, selected: $model.selectedBucket)
                 .frame(height: 220)
                 .accessibilityElement()
-                .accessibilityLabel("Gráfica de cobrado y enviado por \(model.period.bucketNoun). " + buckets.map {
-                    "\($0.label): cobrado \(formatGroupedMoney($0.paidTotal)), enviado \(formatGroupedMoney($0.sentTotal))"
+                .accessibilityLabel(L("Gráfica de cobrado y enviado por %@. ", "\(model.period.bucketNoun)") + buckets.map {
+                    L("%@: cobrado %@, enviado %@", "\($0.label)", "\(formatGroupedMoney($0.paidTotal))", "\(formatGroupedMoney($0.sentTotal))")
                 }.joined(separator: ". "))
-            Text("Toca o desliza sobre la gráfica para ver cada \(model.period.bucketNoun).").font(.gpNote).foregroundStyle(GP.muted)
+            Text(L("Toca o desliza sobre la gráfica para ver cada %@.", "\(model.period.bucketNoun)")).font(.gpNote).foregroundStyle(GP.muted)
         }
     }
 
@@ -115,14 +115,14 @@ struct StatsView: View {
     @ViewBuilder
     private func statusCard(_ stats: Stats) -> some View {
         let rows: [(String, Int, StatusKind, String)] = [
-            ("Pagados", stats.paidByStatus, .success, GPIcon.check),
-            ("Pendientes", stats.pendingByStatus, .pending, GPIcon.clock),
-            ("No completados", stats.notCompletedByStatus, .failure, GPIcon.close),
+            (L("Pagados"), stats.paidByStatus, .success, GPIcon.check),
+            (L("Pendientes"), stats.pendingByStatus, .pending, GPIcon.clock),
+            (L("No completados"), stats.notCompletedByStatus, .failure, GPIcon.close),
         ]
         let maxCount = max(1, rows.map(\.1).max() ?? 0)
         if rows.contains(where: { $0.1 > 0 }) {
             GPCard(spacing: 14) {
-                Text("Cobros por estado").font(.gpBodyStrong).foregroundStyle(GP.text)
+                Text(L("Cobros por estado")).font(.gpBodyStrong).foregroundStyle(GP.text)
                 ForEach(Array(rows.enumerated()), id: \.offset) { order, row in
                     VStack(spacing: 4) {
                         HStack(spacing: 10) {
@@ -135,7 +135,7 @@ struct StatsView: View {
                         DotTrack(fraction: Double(row.1) / Double(maxCount), color: GP.status(row.2), order: order)
                     }
                 }
-                Text("No completados = rechazados, expirados o fallidos.").font(.gpNote).foregroundStyle(GP.muted)
+                Text(L("No completados = rechazados, expirados o fallidos.")).font(.gpNote).foregroundStyle(GP.muted)
             }
         }
     }
@@ -143,13 +143,13 @@ struct StatsView: View {
     private func topPayers(_ payers: [StatsPayer]) -> some View {
         let maxTotal = max(0.01, payers.map(\.total).max() ?? 0)
         return GPCard(spacing: 16) {
-            Text("Quién te pagó más").font(.gpBodyStrong).foregroundStyle(GP.text)
+            Text(L("Quién te pagó más")).font(.gpBodyStrong).foregroundStyle(GP.text)
             ForEach(Array(payers.enumerated()), id: \.element.id) { order, payer in
                 HStack(spacing: 12) {
                     AvatarView(name: payer.name, size: 36)
                     VStack(spacing: 6) {
                         HStack {
-                            Text("\(payer.name) · \(payer.count) \(payer.count == 1 ? "cobro" : "cobros")")
+                            Text(payer.count == 1 ? L("%@ · 1 cobro", payer.name) : L("%@ · %@ cobros", payer.name, "\(payer.count)"))
                                 .font(.gpLabel).foregroundStyle(GP.text).lineLimit(1)
                             Spacer()
                             Text(formatGroupedMoney(payer.total)).font(.gpLabel).foregroundStyle(GP.text)

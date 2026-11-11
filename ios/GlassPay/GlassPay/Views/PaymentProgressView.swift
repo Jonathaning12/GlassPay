@@ -21,21 +21,21 @@ struct PaymentProgressView: View {
         let step = paymentStep(payment)
         let active = step == .confirming ? 2 : 1
         let awaitingDetail: String
-        if case let .waitingWithMessage(message) = payment { awaitingDetail = message } else { awaitingDetail = "Esperando al pagador." }
+        if case let .waitingWithMessage(message) = payment { awaitingDetail = message } else { awaitingDetail = L("Esperando al pagador.") }
         let steps = [
-            ("Solicitud enviada", "Ya la ve en su teléfono."),
-            ("El pagador está aprobando", active == 1 ? awaitingDetail : "Aprobó en PayPal."),
-            ("Confirmando con PayPal", "Solo PayPal puede marcarlo como pagado."),
+            (L("Solicitud enviada"), L("Ya la ve en su teléfono.")),
+            (L("El pagador está aprobando"), active == 1 ? awaitingDetail : L("Aprobó en PayPal.")),
+            (L("Confirmando con PayPal"), L("Solo PayPal puede marcarlo como pagado.")),
         ]
         return VStack(alignment: .leading, spacing: 16) {
             summary
-            Text("Esperando el pago").font(.gpHeading).foregroundStyle(GP.text)
+            Text(L("Esperando el pago")).font(.gpHeading).foregroundStyle(GP.text)
             GPCard(spacing: 0) {
                 ForEach(Array(steps.enumerated()), id: \.offset) { index, item in
                     TimelineStep(title: item.0, detail: item.1, done: index < active, active: index == active, last: index == steps.count - 1)
                 }
             }
-            InlineNotice("Si dejas de esperar, el pagador todavía podrá aprobar desde su teléfono.", icon: GPIcon.lock)
+            InlineNotice(L("Si dejas de esperar, el pagador todavía podrá aprobar desde su teléfono."), icon: GPIcon.lock)
         }
     }
 
@@ -43,7 +43,7 @@ struct PaymentProgressView: View {
     private var summary: some View {
         if let confirmed {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Cobro a \(confirmed.payerName)").font(.gpNote).foregroundStyle(GP.muted)
+                Text(L("Cobro a %@", "\(confirmed.payerName)")).font(.gpNote).foregroundStyle(GP.muted)
                 MoneyText(formatted: formatMoney(confirmed.amount, confirmed.currency), font: .gpAmountMedium)
                 Text(confirmed.concept).font(.gpBody).foregroundStyle(GP.muted)
             }
@@ -53,11 +53,11 @@ struct PaymentProgressView: View {
     private var stopped: some View {
         let (text, kind): (String, StatusKind) = {
             switch payment {
-            case .rejected: return ("El pagador rechazó la solicitud.", .failure)
-            case .expired: return ("La solicitud expiró.", .pending)
-            case .failed: return ("El pago falló.", .failure)
+            case .rejected: return (L("El pagador rechazó la solicitud."), .failure)
+            case .expired: return (L("La solicitud expiró."), .pending)
+            case .failed: return (L("El pago falló."), .failure)
             case let .error(message): return (message, .failure)
-            default: return ("No pudimos consultar el estado del pago.", .failure)
+            default: return (L("No pudimos consultar el estado del pago."), .failure)
             }
         }()
         return VStack(alignment: .leading, spacing: 16) {
@@ -66,7 +66,7 @@ struct PaymentProgressView: View {
                 IconBadge(icon: kind == .pending ? GPIcon.clock : GPIcon.close, tint: GP.status(kind), size: 56, background: GP.statusSoft(kind))
                 Text(text).font(.gpBodyStrong).foregroundStyle(GP.status(kind))
             }
-            GPButton("Escanear otro QR", icon: GPIcon.charge, action: onNewCharge)
+            GPButton(L("Escanear otro QR"), icon: GPIcon.charge, action: onNewCharge)
         }
     }
 }
@@ -105,7 +105,7 @@ private struct TimelineStep: View {
             .padding(.bottom, last ? 0 : 16)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityValue(done ? "Paso completado" : (active ? "Paso en curso" : "Paso pendiente"))
+        .accessibilityValue(done ? L("Paso completado") : (active ? L("Paso en curso") : L("Paso pendiente")))
     }
 }
 
@@ -124,16 +124,16 @@ private struct PaidView: View {
                 Image(systemName: GPIcon.check).font(.system(size: 48, weight: .bold)).foregroundStyle(GP.background)
             }
             .scaleEffect(entered || reduceMotion ? 1 : 0.6)
-            .accessibilityLabel("Pago recibido")
+            .accessibilityLabel(L("Pago recibido"))
             .onAppear { withAnimation(.spring(response: 0.5, dampingFraction: 0.6)) { entered = true } }
-            Text("¡Pago recibido!").font(.gpTitle).foregroundStyle(GP.success)
+            Text(L("¡Pago recibido!")).font(.gpTitle).foregroundStyle(GP.success)
             if let confirmed {
                 MoneyText(formatted: formatMoney(confirmed.amount, confirmed.currency))
-                Text("De \(confirmed.payerName) · \(confirmed.concept)").font(.gpBody).foregroundStyle(GP.muted)
+                Text(L("De %@ · %@", "\(confirmed.payerName)", "\(confirmed.concept)")).font(.gpBody).foregroundStyle(GP.muted)
             }
-            Text("Confirmado por PayPal (Sandbox)").font(.gpNote).foregroundStyle(GP.muted)
-            GPButton("Nuevo cobro", icon: GPIcon.charge, action: onNewCharge).padding(.top, 16)
-            GPButton("Ver en Movimientos", kind: .secondary, action: onOpenMovements)
+            Text(L("Confirmado por PayPal (Sandbox)")).font(.gpNote).foregroundStyle(GP.muted)
+            GPButton(L("Nuevo cobro"), icon: GPIcon.charge, action: onNewCharge).padding(.top, 16)
+            GPButton(L("Ver en Movimientos"), kind: .secondary, action: onOpenMovements)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 24)

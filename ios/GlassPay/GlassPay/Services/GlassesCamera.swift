@@ -189,7 +189,7 @@ final class GlassesCamera {
         showPermissionPrompt = false
         do {
             guard try await wearables.requestPermission(.camera) == .granted else {
-                errorMessage = "Meta AI no autorizó la cámara de los lentes."
+                errorMessage = L("Meta AI no autorizó la cámara de los lentes.")
                 return
             }
             beginStream()
@@ -233,7 +233,7 @@ final class GlassesCamera {
         let config = StreamConfiguration(videoCodec: VideoCodec.raw, resolution: StreamingResolution.high, frameRate: 7)
         do {
             guard let created = try session.addCamera(config: config) else {
-                errorMessage = "No se pudo usar la cámara de los lentes."
+                errorMessage = L("No se pudo usar la cámara de los lentes.")
                 return
             }
             camera = created

@@ -72,7 +72,7 @@ final class AppViewModel {
             try store.save(created)
             saveNotice = nil
         } catch {
-            saveNotice = "No pudimos guardar tu sesión en este teléfono."
+            saveNotice = L("No pudimos guardar tu sesión en este teléfono.")
         }
         welcomeMessage = nil
         locked = false
@@ -163,7 +163,7 @@ final class AppViewModel {
     func unlock() async {
         guard lockActive, !prompting else { return }
         prompting = true
-        let ok = await DeviceAuthenticator.authenticate(reason: "Desbloquea GlassPay con Face ID o el código de tu teléfono")
+        let ok = await DeviceAuthenticator.authenticate(reason: L("Desbloquea GlassPay con Face ID o el código de tu teléfono"))
         prompting = false
         if ok { locked = false }
         charge?.locked = lockActive

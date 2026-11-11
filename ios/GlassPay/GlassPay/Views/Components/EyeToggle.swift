@@ -17,8 +17,8 @@ struct EyeToggle: View {
                 .background(GP.raised, in: Circle())
         }
         .buttonStyle(PressScaleStyle())
-        .accessibilityLabel(visible ? "Ocultar montos" : "Mostrar montos")
-        .accessibilityValue(visible ? "Montos visibles" : "Montos ocultos")
+        .accessibilityLabel(visible ? L("Ocultar montos") : L("Mostrar montos"))
+        .accessibilityValue(visible ? L("Montos visibles") : L("Montos ocultos"))
     }
 }
 
@@ -179,7 +179,7 @@ struct MaskedMoney: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(visible ? prefix + formatted : "Monto oculto")
+        .accessibilityLabel(visible ? prefix + formatted : L("Monto oculto"))
     }
 
     private func amountText(_ text: String) -> some View {
