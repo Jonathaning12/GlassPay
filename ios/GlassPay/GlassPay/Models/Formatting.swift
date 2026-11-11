@@ -44,21 +44,21 @@ func isAllowedApproveUrl(_ url: String?) -> Bool {
 func movementStatusLabel(_ state: String, kind: String = "cobro") -> String {
     if kind == "envio" {
         switch state {
-        case "procesando": return "Enviando"
-        case "completada": return "Enviado"
-        case "no_reclamada": return "Sin reclamar"
-        case "fallida": return "Falló"
-        default: return "Desconocido"
+        case "procesando": return L("Enviando")
+        case "completada": return L("Enviado")
+        case "no_reclamada": return L("Sin reclamar")
+        case "fallida": return L("Falló")
+        default: return L("Desconocido")
         }
     }
     switch state {
-    case "pagada": return "Pagado"
-    case "aprobada", "enviada": return "Procesando"
-    case "pendiente_de_pagador", "creada": return "Esperando al pagador"
-    case "rechazada": return "Rechazado"
-    case "expirada": return "Expirado"
-    case "fallida": return "Falló"
-    default: return "Desconocido"
+    case "pagada": return L("Pagado")
+    case "aprobada", "enviada": return L("Procesando")
+    case "pendiente_de_pagador", "creada": return L("Esperando al pagador")
+    case "rechazada": return L("Rechazado")
+    case "expirada": return L("Expirado")
+    case "fallida": return L("Falló")
+    default: return L("Desconocido")
     }
 }
 
@@ -118,8 +118,8 @@ func parseISODate(_ iso: String) -> Date? {
 func formatMovementDate(_ iso: String) -> String {
     guard let date = parseISODate(iso) else { return iso }
     let formatter = DateFormatter()
-    formatter.locale = Locale(identifier: "es_MX")
-    formatter.dateFormat = "d MMM yyyy, HH:mm"
+    formatter.locale = currentLanguage.locale
+    formatter.dateFormat = currentLanguage == .en ? "MMM d, yyyy, h:mm a" : "d MMM yyyy, HH:mm"
     return formatter.string(from: date)
 }
 
@@ -161,19 +161,19 @@ func transferErrorMessage(_ type: ApiFailureType, serverError: String?, recipien
     case .conflict:
         switch serverError {
         case "recipient cannot receive":
-            return "\(recipientName ?? "El destinatario") todavía no registró su correo para recibir envíos."
-        case "insufficient balance": return "No tienes saldo suficiente."
-        default: return "No se pudo completar el envío."
+            return L("%@ todavía no registró su correo para recibir envíos.", recipientName ?? L("El destinatario"))
+        case "insufficient balance": return L("No tienes saldo suficiente.")
+        default: return L("No se pudo completar el envío.")
         }
-    case .badRequest: return "Revisa el monto (máximo 1,000 MXN)."
-    case .notFound: return "La vista previa venció. Revísala de nuevo."
-    case .rateLimited: return "Demasiados intentos. Espera unos segundos."
-    default: return "No pudimos confirmar el envío. Revisa Movimientos antes de intentarlo de nuevo."
+    case .badRequest: return L("Revisa el monto (máximo 1,000 MXN).")
+    case .notFound: return L("La vista previa venció. Revísala de nuevo.")
+    case .rateLimited: return L("Demasiados intentos. Espera unos segundos.")
+    default: return L("No pudimos confirmar el envío. Revisa Movimientos antes de intentarlo de nuevo.")
     }
 }
 
-let sessionInvalidMessage = "Tu sesión ya no es válida. Crea tu cuenta de nuevo."
-let sessionInvalidConfirmMessage = "Tu sesión ya no es válida. El cobro no se envió. Crea tu cuenta de nuevo."
+var sessionInvalidMessage: String { L("Tu sesión ya no es válida. Crea tu cuenta de nuevo.") }
+var sessionInvalidConfirmMessage: String { L("Tu sesión ya no es válida. El cobro no se envió. Crea tu cuenta de nuevo.") }
 
 /// Iniciales para el avatar ("Ana López" → "AL").
 func initials(_ name: String) -> String {

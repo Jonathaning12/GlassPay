@@ -18,12 +18,12 @@ enum ResolveFailureType {
 
     var message: String {
         switch self {
-        case .network, .timeout: return "No pudimos conectar con GlassPay. Revisa tu conexión."
-        case .rateLimited: return "Demasiados intentos. Espera unos segundos."
-        case .server: return "GlassPay no pudo procesar el QR. Intenta de nuevo."
-        case .invalidResponse: return "Recibimos una respuesta inválida de GlassPay."
-        case .notFound: return "El QR no es válido o ya venció."
-        case .ownQr: return "Ese es tu propio QR."
+        case .network, .timeout: return L("No pudimos conectar con GlassPay. Revisa tu conexión.")
+        case .rateLimited: return L("Demasiados intentos. Espera unos segundos.")
+        case .server: return L("GlassPay no pudo procesar el QR. Intenta de nuevo.")
+        case .invalidResponse: return L("Recibimos una respuesta inválida de GlassPay.")
+        case .notFound: return L("El QR no es válido o ya venció.")
+        case .ownQr: return L("Ese es tu propio QR.")
         }
     }
 

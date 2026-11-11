@@ -55,6 +55,46 @@ private func machineInPreview(remaining: Int = 60) -> ChargeStateMachine {
     }
 }
 
+@Suite struct EnglishLanguageTests {
+    @Test func englishCommandsAreExactPhrases() {
+        let state = machineInPreview().state
+        #expect(voiceCommand("Confirm.", state: state, language: .en) == .confirm)
+        #expect(voiceCommand("yes", state: state, language: .en) == .confirm)
+        #expect(voiceCommand("cancel", state: state, language: .en) == .cancel)
+        #expect(voiceCommand("No", state: state, language: .en) == .cancel)
+        #expect(voiceCommand("start over", state: state, language: .en) == .startOver)
+        // Eco de la pregunta del recibo y frases que no son el comando exacto.
+        #expect(voiceCommand("Confirm?", state: state, language: .en) == .confirm)
+        #expect(voiceCommand("Charge of 50 pesos for dinner. Confirm?", state: state, language: .en) == .none)
+        #expect(voiceCommand("yes please confirm", state: state, language: .en) == .none)
+        #expect(voiceCommand("yes", state: .listening, language: .en) == .none)
+        // En inglés, las palabras en español no son comandos (y al revés).
+        #expect(voiceCommand("confirmar", state: state, language: .en) == .none)
+        #expect(voiceCommand("confirm", state: state, language: .es) == .none)
+    }
+
+    @Test func englishChargeVerbStartsNewSession() {
+        #expect(startsWithChargeVerb("Charge 350 for dinner", language: .en))
+        #expect(!startsWithChargeVerb("Cóbrale 350 por la cena", language: .en))
+        #expect(!startsWithChargeVerb("no, make it 400", language: .en))
+    }
+
+    @Test func translatesAndFormats() {
+        #expect(localized("Pago recibido.", language: .en) == "Payment received.")
+        #expect(localized("Pago recibido.", language: .es) == "Pago recibido.")
+        #expect(localized("Cobro de %@ %@ por %@. ¿Confirmas?", language: .en, ["350.00", "MXN", "cena"])
+            == "Charge of 350.00 MXN for cena. Do you confirm?")
+        #expect(localized("Texto sin traducción", language: .en) == "Texto sin traducción")
+    }
+
+    @Test func everyTranslationKeepsItsFormats() {
+        let pattern = /%[@d]/
+        for (spanish, english) in englishStrings {
+            #expect(spanish.matches(of: pattern).map { String($0.output) } == english.matches(of: pattern).map { String($0.output) }, "\(spanish)")
+        }
+    }
+}
+
 @Suite struct ChargeInputSessionTests {
     @Test func clarificationConcatenates() throws {
         let session = try #require(ChargeInputSession.start(resolutionId: "r", text: "cóbrale 350 por la cena"))

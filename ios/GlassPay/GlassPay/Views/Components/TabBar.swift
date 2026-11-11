@@ -6,10 +6,10 @@ import SwiftUI
 extension AppTab {
     var label: String {
         switch self {
-        case .home: "Inicio"
-        case .movements: "Movimientos"
-        case .assistant: "Asistente"
-        case .contacts: "Contactos"
+        case .home: L("Inicio")
+        case .movements: L("Movimientos")
+        case .assistant: L("Asistente")
+        case .contacts: L("Contactos")
         }
     }
 

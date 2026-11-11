@@ -34,7 +34,7 @@ struct ChargeView: View {
                 if model.cameraGranted || model.scansWithGlasses, model.resolveState == .scanning {
                     HStack(spacing: 10) {
                         Image(systemName: model.scansWithGlasses ? "eyeglasses" : GPIcon.qr).foregroundStyle(GP.accent)
-                        Text(model.scansWithGlasses ? "Mira el QR de tu amigo" : "Apunta al QR de tu amigo").font(.gpBodyStrong).foregroundStyle(GP.text)
+                        Text(model.scansWithGlasses ? L("Mira el QR de tu amigo") : L("Apunta al QR de tu amigo")).font(.gpBodyStrong).foregroundStyle(GP.text)
                     }
                     .padding(.horizontal, 18).padding(.vertical, 12)
                     .background(GP.background.opacity(0.72), in: Capsule())
@@ -51,29 +51,29 @@ struct ChargeView: View {
         VStack(alignment: .leading, spacing: 12) {
             switch model.resolveState {
             case let .resolving(_, _, waking):
-                WorkingRow(text: waking ? "Despertando el servidor…" : "Resolviendo QR…")
+                WorkingRow(text: waking ? L("Despertando el servidor…") : L("Resolviendo QR…"))
             case let .retryableError(_, _, message):
                 statusLine(message, failed: true)
-                GPButton("Reintentar") { model.retryResolve() }
+                GPButton(L("Reintentar")) { model.retryResolve() }
             case let .failed(message):
                 statusLine(message, failed: true)
-                GPButton("Escanear otro QR", icon: GPIcon.charge, kind: .secondary) { model.resetScan() }
+                GPButton(L("Escanear otro QR"), icon: GPIcon.charge, kind: .secondary) { model.resetScan() }
             default:
-                statusLine("Buscando un QR de GlassPay…", failed: false)
-                Text("Solo se leen códigos de GlassPay. Los demás se ignoran sin enviar nada.").font(.gpNote).foregroundStyle(GP.muted)
+                statusLine(L("Buscando un QR de GlassPay…"), failed: false)
+                Text(L("Solo se leen códigos de GlassPay. Los demás se ignoran sin enviar nada.")).font(.gpNote).foregroundStyle(GP.muted)
             }
             if !model.scansWithGlasses, let error = model.cameraError { Text(error).font(.gpLabel).foregroundStyle(GP.error) }
             if model.scansWithGlasses {
                 if model.glasses.isPaused {
-                    Text("Video en pausa: toca el lateral de los lentes.").font(.gpLabel).foregroundStyle(GP.warning)
+                    Text(L("Video en pausa: toca el lateral de los lentes.")).font(.gpLabel).foregroundStyle(GP.warning)
                 }
                 if let error = model.glasses.errorMessage {
                     Text(error).font(.gpLabel).foregroundStyle(GP.error)
-                    GPButton("Reintentar con los lentes") { model.glasses.restart() }
+                    GPButton(L("Reintentar con los lentes")) { model.glasses.restart() }
                 }
             }
             if model.canUseGlasses, case .scanning = model.resolveState {
-                GPButton(model.prefersPhoneCamera ? "Usar los lentes" : "Usar la cámara del teléfono", icon: model.prefersPhoneCamera ? "eyeglasses" : "camera", kind: .secondary) {
+                GPButton(model.prefersPhoneCamera ? L("Usar los lentes") : L("Usar la cámara del teléfono"), icon: model.prefersPhoneCamera ? "eyeglasses" : "camera", kind: .secondary) {
                     model.prefersPhoneCamera.toggle()
                 }
             }
@@ -103,23 +103,23 @@ struct ChargeView: View {
                     if let message = model.contactMessage { InlineNotice(message, kind: .pending) }
                     stateContent(state, payerName: name)
                 }
-                if showsRecognizedText(state), let text = model.lastRecognizedText { echo("Entendí", displayText(text, maxLength: 120)) }
-                if showsAccumulatedText(state), let text = model.accumulatedText { echo("Frase acumulada", displayText(text, maxLength: 240)) }
+                if showsRecognizedText(state), let text = model.lastRecognizedText { echo(L("Entendí"), displayText(text, maxLength: 120)) }
+                if showsAccumulatedText(state), let text = model.accumulatedText { echo(L("Frase acumulada"), displayText(text, maxLength: 240)) }
 
-                if actions.contains(.confirm) { GPButton("Confirmar cobro", icon: GPIcon.check) { model.confirm() }.disabled(model.locked) }
-                if actions.contains(.dictate) { GPButton("Dictar cobro", icon: GPIcon.mic) { model.startChargeInput() } }
-                if actions.contains(.answer) { GPButton("Responder", icon: GPIcon.mic) { model.startChargeInput() } }
-                if actions.contains(.retry) { GPButton("Intentar de nuevo") { model.retry() } }
-                if actions.contains(.cancel) { GPButton("Cancelar", kind: .secondary) { model.cancel() } }
-                if actions.contains(.stopWaiting) { GPButton("Dejar de esperar", kind: .secondary) { model.stopWaiting() } }
+                if actions.contains(.confirm) { GPButton(L("Confirmar cobro"), icon: GPIcon.check) { model.confirm() }.disabled(model.locked) }
+                if actions.contains(.dictate) { GPButton(L("Dictar cobro"), icon: GPIcon.mic) { model.startChargeInput() } }
+                if actions.contains(.answer) { GPButton(L("Responder"), icon: GPIcon.mic) { model.startChargeInput() } }
+                if actions.contains(.retry) { GPButton(L("Intentar de nuevo")) { model.retry() } }
+                if actions.contains(.cancel) { GPButton(L("Cancelar"), kind: .secondary) { model.cancel() } }
+                if actions.contains(.stopWaiting) { GPButton(L("Dejar de esperar"), kind: .secondary) { model.stopWaiting() } }
                 if actions.contains(.scanAnother) && !state.isCreated {
-                    GPButton("Escanear otro QR", icon: GPIcon.charge, kind: .secondary) { model.scanAnotherQr() }
+                    GPButton(L("Escanear otro QR"), icon: GPIcon.charge, kind: .secondary) { model.scanAnotherQr() }
                 }
                 if actions.contains(.back) || actions.contains(.startOver) {
                     HStack {
-                        if actions.contains(.back) { GPButton("Volver", icon: "chevron.left", kind: .ghost) { model.back() } }
+                        if actions.contains(.back) { GPButton(L("Volver"), icon: "chevron.left", kind: .ghost) { model.back() } }
                         Spacer()
-                        if actions.contains(.startOver) { GPButton("Empezar de nuevo", kind: .ghost) { model.startOver() } }
+                        if actions.contains(.startOver) { GPButton(L("Empezar de nuevo"), kind: .ghost) { model.startOver() } }
                     }
                 }
                 if showsTextInput(state) { textInput }
@@ -139,16 +139,16 @@ struct ChargeView: View {
             HStack(spacing: 12) {
                 AvatarView(name: name, size: 48)
                 VStack(alignment: .leading, spacing: 2) {
-                    Overline("Cobrar a")
+                    Overline(L("Cobrar a"))
                     Text(name).font(.gpHeading).foregroundStyle(GP.text)
                 }
             }
             if contactId != nil {
-                StatusPill(text: "En tus contactos", kind: .success)
+                StatusPill(text: L("En tus contactos"), kind: .success)
             } else if model.savingContact {
                 ProgressView().tint(GP.accent)
             } else if canSaveContact(state) {
-                GPButton("Guardar contacto", icon: GPIcon.plus, kind: .secondary) { model.saveContact() }
+                GPButton(L("Guardar contacto"), icon: GPIcon.plus, kind: .secondary) { model.saveContact() }
             }
         }
     }
@@ -156,7 +156,7 @@ struct ChargeView: View {
     @ViewBuilder
     private var audioRouteButton: some View {
         if model.glasses.isRegistered {
-            GPButton(model.prefersGlassesAudio ? "Usar el micrófono del iPhone" : "Usar el micrófono de los lentes", kind: .ghost) {
+            GPButton(model.prefersGlassesAudio ? L("Usar el micrófono del iPhone") : L("Usar el micrófono de los lentes"), kind: .ghost) {
                 model.toggleAudioRoute()
             }
         }
@@ -181,17 +181,17 @@ struct ChargeView: View {
         case .listening:
             HStack(spacing: 14) {
                 MicIndicator()
-                Text(model.voiceStatus ?? "Preparando micrófono…").font(.gpBodyStrong).foregroundStyle(GP.text)
+                Text(model.voiceStatus ?? L("Preparando micrófono…")).font(.gpBodyStrong).foregroundStyle(GP.text)
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(GP.accentSoft, in: RoundedRectangle(cornerRadius: GP.radiusMedium, style: .continuous))
             audioRouteButton
         case .interpreting:
-            WorkingRow(text: "Interpretando…")
+            WorkingRow(text: L("Interpretando…"))
         case let .clarification(question):
             GPCard(spacing: 8) {
-                Overline("Necesito un dato más", color: GP.warning)
+                Overline(L("Necesito un dato más"), color: GP.warning)
                 Text(question).font(.gpBodyStrong).foregroundStyle(GP.text)
             }
         case let .preview(proposal, remaining, message):
@@ -200,7 +200,7 @@ struct ChargeView: View {
                 HStack(spacing: 14) {
                     MicIndicator()
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Di «confirmar» o «cancelar»").font(.gpBodyStrong).foregroundStyle(GP.text)
+                        Text(L("Di «confirmar» o «cancelar»")).font(.gpBodyStrong).foregroundStyle(GP.text)
                         Text(status).font(.gpNote).foregroundStyle(GP.muted)
                     }
                 }
@@ -209,7 +209,7 @@ struct ChargeView: View {
                 .background(GP.accentSoft, in: RoundedRectangle(cornerRadius: GP.radiusMedium, style: .continuous))
             }
         case .confirming:
-            WorkingRow(text: "Confirmando…")
+            WorkingRow(text: L("Confirmando…"))
         case let .created(_, _, payment):
             PaymentProgressView(
                 payment: payment,
@@ -225,7 +225,7 @@ struct ChargeView: View {
     private func echo(_ label: String, _ text: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label).font(.gpNote).foregroundStyle(GP.muted)
-            Text("«\(text)»").font(.gpBody).foregroundStyle(GP.text)
+            Text(verbatim: "«\(text)»").font(.gpBody).foregroundStyle(GP.text)
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -235,11 +235,11 @@ struct ChargeView: View {
     private var textInput: some View {
         VStack(spacing: 12) {
             Divider().overlay(GP.line)
-            TextField("Cóbrale 350 pesos por la cena", text: $model.textInput, axis: .vertical)
+            TextField(L("Cóbrale 350 pesos por la cena"), text: $model.textInput, axis: .vertical)
                 .lineLimit(1...3)
                 .gpField()
-                .accessibilityLabel("O escribe la frase del cobro")
-            GPButton("Interpretar texto", icon: GPIcon.keyboard, kind: .secondary) { model.interpretTextInput() }
+                .accessibilityLabel(L("O escribe la frase del cobro"))
+            GPButton(L("Interpretar texto"), icon: GPIcon.keyboard, kind: .secondary) { model.interpretTextInput() }
                 .disabled(model.textInput.trimmingCharacters(in: .whitespaces).isEmpty)
         }
     }
@@ -259,14 +259,14 @@ private struct ReceiptCard: View {
         let timeColor = expired ? GP.error : GP.warning
         VStack(alignment: .leading, spacing: 16) {
             GPCard(padding: 24, spacing: 18) {
-                Overline("Revisa el cobro")
+                Overline(L("Revisa el cobro"))
                 MoneyText(formatted: formatMoney(proposal.amount, proposal.currency))
-                field("Concepto", proposal.concept)
-                field("Pagador", payerName)
+                field(L("Concepto"), proposal.concept)
+                field(L("Pagador"), payerName)
                 Divider().overlay(GP.line)
                 HStack(spacing: 8) {
                     Image(systemName: GPIcon.clock)
-                    Text(expired ? "La propuesta venció" : "Vence en \(formatCountdown(remaining))").font(.gpLabel)
+                    Text(expired ? L("La propuesta venció") : L("Vence en %@", "\(formatCountdown(remaining))")).font(.gpLabel)
                 }
                 .foregroundStyle(timeColor)
                 ProgressView(value: min(1, max(0, Double(remaining) / referenceSeconds)))
@@ -275,7 +275,7 @@ private struct ReceiptCard: View {
                 if let message { Text(message).font(.gpLabel).foregroundStyle(GP.error) }
             }
             if !expired {
-                InlineNotice("Di «confirmar» o toca el botón. «Cancelar» lo descarta.", icon: GPIcon.mic)
+                InlineNotice(L("Di «confirmar» o toca el botón. «Cancelar» lo descarta."), icon: GPIcon.mic)
             }
         }
     }
@@ -304,7 +304,7 @@ private struct MicIndicator: View {
             Image(systemName: "mic.fill").foregroundStyle(GP.onAccent)
         }
         .frame(width: 48, height: 48)
-        .accessibilityLabel("Micrófono escuchando")
+        .accessibilityLabel(L("Micrófono escuchando"))
     }
 }
 
@@ -323,11 +323,11 @@ private struct GlassesScanner: View {
                     .resizable()
                     .scaledToFill()
                     .ignoresSafeArea()
-                    .accessibilityLabel("Video de los lentes")
+                    .accessibilityLabel(L("Video de los lentes"))
             } else if glasses.errorMessage == nil {
                 VStack(spacing: 12) {
                     ProgressView().tint(GP.accent)
-                    Text("Conectando con tus lentes…").font(.gpLabel).foregroundStyle(GP.muted)
+                    Text(L("Conectando con tus lentes…")).font(.gpLabel).foregroundStyle(GP.muted)
                 }
             }
         }
@@ -344,11 +344,11 @@ private struct GlassesScanner: View {
             default: break
             }
         }
-        .alert("Autorizar en Meta AI", isPresented: $glasses.showPermissionPrompt) {
-            Button("Abrir Meta AI") { Task { await glasses.grantPermissionAndStream() } }
-            Button("Cancelar", role: .cancel) { glasses.stop() }
+        .alert(L("Autorizar en Meta AI"), isPresented: $glasses.showPermissionPrompt) {
+            Button(L("Abrir Meta AI")) { Task { await glasses.grantPermissionAndStream() } }
+            Button(L("Cancelar"), role: .cancel) { glasses.stop() }
         } message: {
-            Text("Se abrirá Meta AI para permitir que GlassPay use la cámara de los lentes.")
+            Text(L("Se abrirá Meta AI para permitir que GlassPay use la cámara de los lentes."))
         }
     }
 }

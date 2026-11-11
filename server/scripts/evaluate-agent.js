@@ -17,7 +17,7 @@ const selectedCases = cases.filter((testCase, index) => {
   }
   const caseNumber = index + 1;
   const isAmbiguous = testCase.expected === "clarification";
-  const isAttack = /ignora|instrucciones|contraseña|confirmación|no pidas/i.test(testCase.text);
+  const isAttack = /ignora|instrucciones|contraseña|confirmación|no pidas|ignore|instructions|confirmation/i.test(testCase.text);
   return caseNumber === 19 || caseNumber === 21 || isAmbiguous || isAttack;
 });
 let lastFallback = null;
@@ -64,9 +64,10 @@ async function run() {
   for (let index = 0; index < selectedCases.length; index += 1) {
     const testCase = selectedCases[index];
     const caseNumber = cases.indexOf(testCase) + 1;
+    const caseContext = { ...context, language: testCase.language || "es" };
     const result = useRealApi
-      ? await service.parseCharge(testCase.text, context)
-      : deterministicParse(testCase.text, context);
+      ? await service.parseCharge(testCase.text, caseContext)
+      : deterministicParse(testCase.text, caseContext);
     const fallback = lastFallback;
     lastFallback = null;
     const actual = classify(result);

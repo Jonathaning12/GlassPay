@@ -7,13 +7,13 @@ enum StatsPeriod: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 
     var label: String {
-        switch self { case .week: "Semana"; case .month: "Mes"; case .year: "Año" }
+        switch self { case .week: L("Semana"); case .month: L("Mes"); case .year: L("Año") }
     }
     var previousLabel: String {
-        switch self { case .week: "vs. semana pasada"; case .month: "vs. mes pasado"; case .year: "vs. año pasado" }
+        switch self { case .week: L("vs. semana pasada"); case .month: L("vs. mes pasado"); case .year: L("vs. año pasado") }
     }
     var bucketNoun: String {
-        switch self { case .week: "día"; case .month: "semana"; case .year: "mes" }
+        switch self { case .week: L("día"); case .month: L("semana"); case .year: L("mes") }
     }
 }
 

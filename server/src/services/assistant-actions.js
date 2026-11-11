@@ -11,11 +11,12 @@ const {
   numbersInText,
   parseWhenFallback,
 } = require("./scheduling");
+const { t } = require("./i18n");
 
 const MIN_LEAD_MS = 60 * 1000;
 const MAX_OCCURRENCES = 12;
 const MAX_SPLIT_CONTACTS = 10;
-const INCLUDES_ME_PATTERN = /\b(y yo|conmigo|incluyendome|contandome|entre nosotros)\b/;
+const INCLUDES_ME_PATTERN = /\b(y yo|conmigo|incluyendome|contandome|entre nosotros|and me|and myself|with me|including me|me included)\b/;
 
 // Se importa al usarse para no crear un ciclo collectors → assistant-actions → payments → collectors.
 const validators = () => require("../routes/payments");
@@ -39,12 +40,12 @@ function resolveWhen(interpretation, text, now) {
 }
 
 /** Fecha futura dentro del horizonte, o el texto de aclaración. */
-function checkRunAt(runAt, config, now) {
+function checkRunAt(runAt, config, now, language = "es") {
   if (runAt.getTime() < now.getTime() + MIN_LEAD_MS) {
-    return "Esa hora ya pasó o es muy pronto. Dime una hora al menos un minuto en el futuro.";
+    return t(language, "Esa hora ya pasó o es muy pronto. Dime una hora al menos un minuto en el futuro.");
   }
   if (runAt.getTime() > now.getTime() + config.scheduling.maxHorizonDays * 24 * 60 * 60 * 1000) {
-    return `Solo puedo programar hasta ${config.scheduling.maxHorizonDays} días en el futuro.`;
+    return t(language, "Solo puedo programar hasta {days} días en el futuro.", { days: config.scheduling.maxHorizonDays });
   }
   return null;
 }
@@ -62,41 +63,42 @@ function resolveAmount(interpretation, text, maxAmount) {
   return amount === null ? null : validators().parseAmount(amount, maxAmount);
 }
 
-function resolveConcept(interpretation, text, fallbackConcept) {
+function resolveConcept(interpretation, text, fallbackConcept, language = "es") {
   return validators().sanitizeConcept(interpretation.concept || conceptFallback(text) || "")?.slice(0, 60)
-    || fallbackConcept;
+    || (fallbackConcept ? t(language, fallbackConcept) : fallbackConcept);
 }
 
-function amountQuestion(config, what = "¿Cuánto le cobro?") {
-  return clarification(
-    `${what} Escribe el monto en el mensaje (máximo $${config.payments.maxAmount.toLocaleString("en-US")} por persona).`,
-  );
+function amountQuestion(config, language = "es", what = "¿Cuánto le cobro?") {
+  return clarification(t(language, "{what} Escribe el monto en el mensaje (máximo ${max} por persona).", {
+    what: t(language, what),
+    max: config.payments.maxAmount.toLocaleString("en-US"),
+  }));
 }
 
-function contactProblem(match) {
+function contactProblem(match, language = "es") {
   if (match.status === "ambiguous") {
     const names = match.candidates.slice(0, 3).map((contact) => contact.displayName).join(", ");
-    return clarification(`Tienes varios contactos con ese nombre (${names}). Escribe su nombre completo.`);
+    return clarification(t(language, "Tienes varios contactos con ese nombre ({names}). Escribe su nombre completo.", { names }));
   }
   return clarification(
-    "No encontré a esa persona en tus contactos. Agrégala primero escaneando su QR en Contactos.",
+    t(language, "No encontré a esa persona en tus contactos. Agrégala primero escaneando su QR en Contactos."),
   );
 }
 
 /** Cobro programado: contacto guardado, monto del texto, fecha futura dentro del horizonte. */
-function prepareScheduleCharge({ interpretation, text, contacts, config, now = new Date() }) {
+function prepareScheduleCharge({ interpretation, text, contacts, config, now = new Date(), language = "es" }) {
   const runAt = resolveWhen(interpretation, text, now);
   if (!runAt) {
-    return clarification("¿Para cuándo lo programo? Por ejemplo: «mañana a las 6» o «en 2 horas».");
+    return clarification(t(language, "¿Para cuándo lo programo? Por ejemplo: «mañana a las 6» o «en 2 horas»."));
   }
-  const timeProblem = checkRunAt(runAt, config, now);
+  const timeProblem = checkRunAt(runAt, config, now, language);
   if (timeProblem) return clarification(timeProblem);
 
   const amount = resolveAmount(interpretation, text, config.payments.maxAmount);
-  if (!amount) return amountQuestion(config);
+  if (!amount) return amountQuestion(config, language);
 
   const match = matchContact(interpretation.contactName, text, contacts);
-  if (match.status !== "match") return contactProblem(match);
+  if (match.status !== "match") return contactProblem(match, language);
 
   return {
     type: "proposal",
@@ -106,7 +108,7 @@ function prepareScheduleCharge({ interpretation, text, contacts, config, now = n
       contactName: match.contact.displayName,
       amount,
       currency: config.payments.defaultCurrency,
-      concept: resolveConcept(interpretation, text, "Cobro programado"),
+      concept: resolveConcept(interpretation, text, "Cobro programado", language),
       runAt: runAt.toISOString(),
     },
   };
@@ -117,19 +119,19 @@ function prepareScheduleCharge({ interpretation, text, contacts, config, now = n
  * El correo de cobro del destinatario y el saldo se revisan en la ruta (dependen de la base) y
  * el saldo se vuelve a verificar de forma atómica al enviar.
  */
-function prepareSchedulePayment({ interpretation, text, contacts, config, now = new Date() }) {
+function prepareSchedulePayment({ interpretation, text, contacts, config, now = new Date(), language = "es" }) {
   const runAt = resolveWhen(interpretation, text, now);
   if (!runAt) {
-    return clarification("¿Para cuándo programo el pago? Por ejemplo: «mañana a las 6».");
+    return clarification(t(language, "¿Para cuándo programo el pago? Por ejemplo: «mañana a las 6»."));
   }
-  const timeProblem = checkRunAt(runAt, config, now);
+  const timeProblem = checkRunAt(runAt, config, now, language);
   if (timeProblem) return clarification(timeProblem);
 
   const amount = resolveAmount(interpretation, text, config.payments.maxAmount);
-  if (!amount) return amountQuestion(config, "¿Cuánto le pago?");
+  if (!amount) return amountQuestion(config, language, "¿Cuánto le pago?");
 
   const match = matchContact(interpretation.contactName, text, contacts);
-  if (match.status !== "match") return contactProblem(match);
+  if (match.status !== "match") return contactProblem(match, language);
 
   return {
     type: "proposal",
@@ -139,7 +141,7 @@ function prepareSchedulePayment({ interpretation, text, contacts, config, now = 
       contactName: match.contact.displayName,
       amount,
       currency: config.payments.defaultCurrency,
-      concept: resolveConcept(interpretation, text, "Envío GlassPay"),
+      concept: resolveConcept(interpretation, text, "Envío GlassPay", language),
       runAt: runAt.toISOString(),
     },
   };
@@ -147,7 +149,7 @@ function prepareSchedulePayment({ interpretation, text, contacts, config, now = 
 
 /** Cuántas repeticiones: "6 veces" / "por 6 meses"; si no lo dice, el máximo (12). */
 function resolveOccurrences(interpretation, text) {
-  const match = fold(text).match(/\b(\d{1,2})\s+(?:veces|meses|semanas)\b/);
+  const match = fold(text).match(/\b(\d{1,2})\s+(?:veces|meses|semanas|times|months|weeks)\b/);
   const fromText = match ? Number(match[1]) : null;
   const fromModel = interpretation.occurrences > 0 && numbersInText(text).has(interpretation.occurrences)
     ? interpretation.occurrences
@@ -156,28 +158,28 @@ function resolveOccurrences(interpretation, text) {
 }
 
 /** Cobro recurrente: semanal o mensual, máximo 12 repeticiones, la primera dentro del horizonte. */
-function prepareRecurringCharge({ interpretation, text, contacts, config, now = new Date() }) {
+function prepareRecurringCharge({ interpretation, text, contacts, config, now = new Date(), language = "es" }) {
   // La recurrencia la decide el texto ("cada mes", "cada viernes"), no la IA.
   const recurrence = detectRecurrence(text);
   if (!recurrence) {
-    return clarification("¿Cada cuánto? Dime «cada semana» o «cada mes».");
+    return clarification(t(language, "¿Cada cuánto? Dime «cada semana» o «cada mes»."));
   }
   const occurrences = resolveOccurrences(interpretation, text);
   if (occurrences < 2 || occurrences > MAX_OCCURRENCES) {
-    return clarification(`Un cobro recurrente puede repetirse de 2 a ${MAX_OCCURRENCES} veces.`);
+    return clarification(t(language, "Un cobro recurrente puede repetirse de 2 a {max} veces.", { max: MAX_OCCURRENCES }));
   }
   const runAt = resolveWhen(interpretation, text, now);
   if (!runAt) {
-    return clarification("¿Cuándo es el primer cobro? Por ejemplo: «cada mes, empezando el 1 de noviembre a las 10».");
+    return clarification(t(language, "¿Cuándo es el primer cobro? Por ejemplo: «cada mes, empezando el 1 de noviembre a las 10»."));
   }
-  const timeProblem = checkRunAt(runAt, config, now);
+  const timeProblem = checkRunAt(runAt, config, now, language);
   if (timeProblem) return clarification(timeProblem);
 
   const amount = resolveAmount(interpretation, text, config.payments.maxAmount);
-  if (!amount) return amountQuestion(config);
+  if (!amount) return amountQuestion(config, language);
 
   const match = matchContact(interpretation.contactName, text, contacts);
-  if (match.status !== "match") return contactProblem(match);
+  if (match.status !== "match") return contactProblem(match, language);
 
   return {
     type: "proposal",
@@ -187,7 +189,7 @@ function prepareRecurringCharge({ interpretation, text, contacts, config, now = 
       contactName: match.contact.displayName,
       amount,
       currency: config.payments.defaultCurrency,
-      concept: resolveConcept(interpretation, text, "Cobro recurrente"),
+      concept: resolveConcept(interpretation, text, "Cobro recurrente", language),
       runAt: runAt.toISOString(),
       recurrence,
       occurrencesTotal: occurrences,
@@ -197,7 +199,7 @@ function prepareRecurringCharge({ interpretation, text, contacts, config, now = 
 }
 
 /** Contactos nombrados en el texto, en el orden en que aparecen; sin duplicados. */
-function splitParticipants(interpretation, text, contacts) {
+function splitParticipants(interpretation, text, contacts, language = "es") {
   const folded = ` ${foldWords(text)} `;
   const names = interpretation.contactNames.length > 0
     ? interpretation.contactNames
@@ -207,9 +209,9 @@ function splitParticipants(interpretation, text, contacts) {
   const participants = [];
   for (const name of names) {
     const match = matchContact(name, text, contacts);
-    if (match.status === "ambiguous") return { problem: contactProblem(match) };
+    if (match.status === "ambiguous") return { problem: contactProblem(match, language) };
     if (match.status !== "match") {
-      return { problem: clarification(`No encontré a «${name}» en tus contactos.`) };
+      return { problem: clarification(t(language, "No encontré a «{name}» en tus contactos.", { name })) };
     }
     if (!participants.some((entry) => entry.contactId === match.contact.contactId)) {
       participants.push(match.contact);
@@ -223,25 +225,25 @@ function splitParticipants(interpretation, text, contacts) {
  * Dividir cuenta: partes iguales entre los contactos nombrados (y el cobrador si dice "y yo");
  * los centavos sobrantes van al primero. Cada parte es un cobro normal que se aprueba en PayPal.
  */
-function prepareSplitBill({ interpretation, text, contacts, config, now = new Date() }) {
-  const { participants, problem } = splitParticipants(interpretation, text, contacts);
+function prepareSplitBill({ interpretation, text, contacts, config, now = new Date(), language = "es" }) {
+  const { participants, problem } = splitParticipants(interpretation, text, contacts, language);
   if (problem) return problem;
   if (participants.length === 0) {
-    return clarification("¿Entre quiénes la divido? Nombra a tus contactos, por ejemplo: «entre Ana, Luis y yo».");
+    return clarification(t(language, "¿Entre quiénes la divido? Nombra a tus contactos, por ejemplo: «entre Ana, Luis y yo»."));
   }
   if (participants.length > MAX_SPLIT_CONTACTS) {
-    return clarification(`Puedo dividir entre ${MAX_SPLIT_CONTACTS} contactos como máximo.`);
+    return clarification(t(language, "Puedo dividir entre {max} contactos como máximo.", { max: MAX_SPLIT_CONTACTS }));
   }
   // "y yo" lo decide el texto, no la IA.
   const includesMe = INCLUDES_ME_PATTERN.test(fold(text));
   const people = participants.length + (includesMe ? 1 : 0);
   if (people < 2) {
-    return clarification("Para dividir necesito al menos dos personas. Si es solo una, pídeme un cobro normal.");
+    return clarification(t(language, "Para dividir necesito al menos dos personas. Si es solo una, pídeme un cobro normal."));
   }
 
   const total = textAmount(interpretation, text);
   const totalAmount = total === null ? null : validators().parseAmount(total, config.payments.maxAmount * people);
-  if (!totalAmount) return amountQuestion(config, "¿Cuánto fue el total?");
+  if (!totalAmount) return amountQuestion(config, language, "¿Cuánto fue el total?");
   const totalCents = Math.round(Number(totalAmount) * 100);
   const baseCents = Math.floor(totalCents / people);
   const remainder = totalCents - baseCents * people;
@@ -251,7 +253,7 @@ function prepareSplitBill({ interpretation, text, contacts, config, now = new Da
     amount: ((baseCents + (index === 0 ? remainder : 0)) / 100).toFixed(2),
   }));
   if (baseCents <= 0 || shares.some((share) => Number(share.amount) > config.payments.maxAmount)) {
-    return amountQuestion(config, "Con ese total alguna parte queda fuera del rango permitido.");
+    return amountQuestion(config, language, "Con ese total alguna parte queda fuera del rango permitido.");
   }
 
   // Si dice cuándo, cada parte se programa; si no, se cobra al confirmar.
@@ -259,8 +261,8 @@ function prepareSplitBill({ interpretation, text, contacts, config, now = new Da
   let runAt = null;
   if (when) {
     runAt = resolveWhen(interpretation, text, now);
-    if (!runAt) return clarification("No entendí para cuándo. Por ejemplo: «mañana a las 6».");
-    const timeProblem = checkRunAt(runAt, config, now);
+    if (!runAt) return clarification(t(language, "No entendí para cuándo. Por ejemplo: «mañana a las 6»."));
+    const timeProblem = checkRunAt(runAt, config, now, language);
     if (timeProblem) return clarification(timeProblem);
   }
 
@@ -272,27 +274,27 @@ function prepareSplitBill({ interpretation, text, contacts, config, now = new Da
       total: totalAmount,
       myShare: includesMe ? (baseCents / 100).toFixed(2) : null,
       currency: config.payments.defaultCurrency,
-      concept: resolveConcept(interpretation, text, "Cuenta dividida"),
+      concept: resolveConcept(interpretation, text, "Cuenta dividida", language),
       runAt: runAt ? runAt.toISOString() : null,
     },
   };
 }
 
 /** Recordatorio: contacto guardado; monto, concepto y fecha opcionales. Sin fecha, se envía al confirmar. */
-function prepareReminder({ interpretation, text, contacts, config, now = new Date() }) {
+function prepareReminder({ interpretation, text, contacts, config, now = new Date(), language = "es" }) {
   const match = matchContact(interpretation.contactName, text, contacts);
-  if (match.status !== "match") return contactProblem(match);
+  if (match.status !== "match") return contactProblem(match, language);
 
   const rawAmount = textAmount(interpretation, text);
   const amount = rawAmount === null ? null : validators().parseAmount(rawAmount, config.payments.maxAmount);
-  if (rawAmount !== null && !amount) return amountQuestion(config, "Ese monto no es válido.");
+  if (rawAmount !== null && !amount) return amountQuestion(config, language, "Ese monto no es válido.");
 
   const when = parseWhenFallback(text, now) || (interpretation.whenType !== "none" ? interpretation : null);
   let runAt = null;
   if (when) {
     runAt = resolveWhen(interpretation, text, now);
-    if (!runAt) return clarification("No entendí para cuándo. Por ejemplo: «mañana a las 10».");
-    const timeProblem = checkRunAt(runAt, config, now);
+    if (!runAt) return clarification(t(language, "No entendí para cuándo. Por ejemplo: «mañana a las 10»."));
+    const timeProblem = checkRunAt(runAt, config, now, language);
     if (timeProblem) return clarification(timeProblem);
   }
 
@@ -304,17 +306,17 @@ function prepareReminder({ interpretation, text, contacts, config, now = new Dat
       contactName: match.contact.displayName,
       amount,
       currency: config.payments.defaultCurrency,
-      concept: resolveConcept(interpretation, text, ""),
+      concept: resolveConcept(interpretation, text, "", language),
       runAt: runAt ? runAt.toISOString() : null,
     },
   };
 }
 
 /** Cancelar: si hay exactamente una programación activa que coincide, se propone cancelarla. */
-function prepareCancel({ interpretation, text, scheduled }) {
+function prepareCancel({ interpretation, text, scheduled, language = "es" }) {
   const active = scheduled.filter((item) => ACTIVE_STATES.has(item.state));
   if (active.length === 0) {
-    return { type: "text", text: "No tienes nada programado para cancelar." };
+    return { type: "text", text: t(language, "No tienes nada programado para cancelar.") };
   }
   const people = [...new Map(active.map((item) => [item.contactName, { displayName: item.contactName }])).values()];
   const match = matchContact(interpretation.contactName, text, people);
@@ -338,7 +340,7 @@ function prepareCancel({ interpretation, text, scheduled }) {
   }
   return {
     type: "scheduled",
-    text: "Tienes varias programaciones que podrían coincidir. Elige cuál cancelar en la lista.",
+    text: t(language, "Tienes varias programaciones que podrían coincidir. Elige cuál cancelar en la lista."),
   };
 }
 

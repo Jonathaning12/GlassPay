@@ -32,7 +32,7 @@ struct AssistantView: View {
             composer
         }
         .gpScreen()
-        .navigationTitle("Asistente")
+        .navigationTitle(L("Asistente"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -45,10 +45,10 @@ struct AssistantView: View {
     private var intro: some View {
         VStack(alignment: .leading, spacing: 10) {
             IconBadge(icon: GPIcon.assistant, size: 56)
-            Text("¿En qué te ayudo?").font(.gpHeading).foregroundStyle(GP.text)
-            Text("Pregúntame cuánto cobraste o enviaste y quién te debe, o pídeme programar un cobro a un contacto. Respondo con tu actividad en GlassPay (Sandbox).")
+            Text(L("¿En qué te ayudo?")).font(.gpHeading).foregroundStyle(GP.text)
+            Text(L("Pregúntame cuánto cobraste o enviaste y quién te debe, o pídeme programar un cobro a un contacto. Respondo con tu actividad en GlassPay (Sandbox)."))
                 .font(.gpBody).foregroundStyle(GP.muted)
-            InlineNotice("La IA solo interpreta tu mensaje: nunca cobra ni envía dinero sin que tú lo confirmes.", icon: GPIcon.lock)
+            InlineNotice(L("La IA solo interpreta tu mensaje: nunca cobra ni envía dinero sin que tú lo confirmes."), icon: GPIcon.lock)
         }
     }
 
@@ -69,7 +69,7 @@ struct AssistantView: View {
             if let proposal = message.reply?.proposal { ProposalCard(model: model, proposal: proposal, onOpenScheduled: onOpenScheduled) }
             if let scheduled = message.reply?.scheduled, !scheduled.isEmpty {
                 ForEach(scheduled) { scheduledLine($0) }
-                GPButton("Ver programados", icon: GPIcon.clock, kind: .secondary, action: onOpenScheduled)
+                GPButton(L("Ver programados"), icon: GPIcon.clock, kind: .secondary, action: onOpenScheduled)
             }
         }
         .padding(16)
@@ -83,10 +83,10 @@ struct AssistantView: View {
         VStack(alignment: .leading, spacing: 10) {
             Overline(assistantPeriodLabel(summary.period))
             HStack(spacing: 12) {
-                figure("Cobrado", formatMoney(summary.paidTotal, summary.currency), "\(summary.paidCount) pagos")
-                figure("Enviado", formatMoney(summary.sentTotal, summary.currency), "\(summary.sentCount) envíos")
+                figure(L("Cobrado"), formatMoney(summary.paidTotal, summary.currency), L("%@ pagos", "\(summary.paidCount)"))
+                figure(L("Enviado"), formatMoney(summary.sentTotal, summary.currency), L("%@ envíos", "\(summary.sentCount)"))
             }
-            figure("Balance", formatMoney(summary.netTotal, summary.currency), "cobrado − enviado")
+            figure(L("Balance"), formatMoney(summary.netTotal, summary.currency), L("cobrado − enviado"))
         }
     }
 
@@ -106,7 +106,7 @@ struct AssistantView: View {
                     AvatarView(name: debtor.name, size: 32)
                     VStack(alignment: .leading) {
                         Text(debtor.name).font(.gpBodyStrong).foregroundStyle(GP.text)
-                        Text(debtor.count == 1 ? "1 cobro pendiente" : "\(debtor.count) cobros pendientes").font(.gpNote).foregroundStyle(GP.muted)
+                        Text(debtor.count == 1 ? L("1 cobro pendiente") : L("%@ cobros pendientes", "\(debtor.count)")).font(.gpNote).foregroundStyle(GP.muted)
                     }
                     Spacer()
                     Text(withoutCurrency(formatMoney(debtor.total, "MXN"))).font(.gpBodyStrong).foregroundStyle(GP.text)
@@ -129,7 +129,7 @@ struct AssistantView: View {
     private var typing: some View {
         HStack(spacing: 10) {
             ProgressView().tint(GP.accent)
-            Text("Pensando…").font(.gpLabel).foregroundStyle(GP.muted)
+            Text(L("Pensando…")).font(.gpLabel).foregroundStyle(GP.muted)
         }
         .padding(16)
         .background(GP.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -156,7 +156,7 @@ struct AssistantView: View {
         VStack(alignment: .leading, spacing: 6) {
             if let message = model.voiceMessage { Text(message).font(.gpNote).foregroundStyle(GP.warning) }
             HStack(spacing: 10) {
-                TextField(model.listening ? "Escuchando…" : "Escribe un mensaje", text: $model.input, axis: .vertical)
+                TextField(model.listening ? L("Escuchando…") : L("Escribe un mensaje"), text: $model.input, axis: .vertical)
                     .lineLimit(1...4)
                     .focused($inputFocused)
                     .gpField()
@@ -166,14 +166,14 @@ struct AssistantView: View {
                         .frame(width: 48, height: 48)
                         .background(model.listening ? GP.accent : GP.card, in: Circle())
                 }
-                .accessibilityLabel(model.listening ? "Escuchando" : "Dictar mensaje")
+                .accessibilityLabel(model.listening ? L("Escuchando") : L("Dictar mensaje"))
                 Button { model.send(model.input) } label: {
                     Image(systemName: "arrow.up").font(.system(size: 18, weight: .bold)).foregroundStyle(GP.onAccent)
                         .frame(width: 48, height: 48).background(GP.accent, in: Circle())
                 }
                 .disabled(!model.chat.canSend(model.input))
                 .opacity(model.chat.canSend(model.input) ? 1 : 0.45)
-                .accessibilityLabel("Enviar mensaje")
+                .accessibilityLabel(L("Enviar mensaje"))
             }
         }
         .padding(.horizontal, 20)
@@ -203,10 +203,10 @@ private struct ProposalCard: View {
             if let amount = proposal.amount { MoneyText(formatted: formatMoney(amount, proposal.currency), font: .gpAmountMedium) }
             if !proposal.concept.isEmpty { Text(proposal.concept).font(.gpBody).foregroundStyle(GP.muted) }
             if paying && proposal.balanceWarning {
-                InlineNotice("Hoy tu saldo no alcanza para este pago. Se volverá a revisar a la hora; si no alcanza, no se envía.", kind: .pending)
+                InlineNotice(L("Hoy tu saldo no alcanza para este pago. Se volverá a revisar a la hora; si no alcanza, no se envía."), kind: .pending)
             }
             if reminding {
-                Text("Le llega como aviso en su sección «Por pagar». No crea ningún cobro.").font(.gpNote).foregroundStyle(GP.muted)
+                Text(L("Le llega como aviso en su sección «Por pagar». No crea ningún cobro.")).font(.gpNote).foregroundStyle(GP.muted)
             }
             if splitting {
                 ForEach(proposal.participants) { share in
@@ -217,7 +217,7 @@ private struct ProposalCard: View {
                     }
                 }
                 if let mine = proposal.myShare {
-                    Text("Tu parte: \(withoutCurrency(formatMoney(mine, proposal.currency))) (no se cobra)").font(.gpNote).foregroundStyle(GP.muted)
+                    Text(L("Tu parte: %@ (no se cobra)", "\(withoutCurrency(formatMoney(mine, proposal.currency)))")).font(.gpNote).foregroundStyle(GP.muted)
                 }
             }
             if let series = recurrenceLabel(proposal.recurrence, total: proposal.occurrencesTotal) {
@@ -230,8 +230,8 @@ private struct ProposalCard: View {
                 if scheduledForLater && !cancelling {
                     Toggle(isOn: auto) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(paying ? "Enviar automáticamente a la hora (bajo tu riesgo)"
-                                 : reminding ? "Enviar automáticamente a la hora" : "Crear automáticamente a la hora")
+                            Text(paying ? L("Enviar automáticamente a la hora (bajo tu riesgo)")
+                                 : reminding ? L("Enviar automáticamente a la hora") : L("Crear automáticamente a la hora"))
                                 .font(.gpLabel).foregroundStyle(GP.text)
                             Text(autoDetail(paying: paying, reminding: reminding, auto: auto.wrappedValue)).font(.gpNote).foregroundStyle(GP.muted)
                         }
@@ -241,16 +241,16 @@ private struct ProposalCard: View {
                 GPButton(confirmTitle(cancelling: cancelling, splitting: splitting, reminding: reminding, paying: paying, later: scheduledForLater),
                          icon: paying ? "faceid" : GPIcon.check,
                          kind: cancelling ? .danger : .primary) { model.confirm(proposal) }
-                GPButton("Descartar", kind: .ghost) { model.discard(proposal) }
+                GPButton(L("Descartar"), kind: .ghost) { model.discard(proposal) }
             case .confirming:
-                WorkingRow(text: "Confirmando…")
+                WorkingRow(text: L("Confirmando…"))
             case .confirmed:
-                StatusPill(text: cancelling ? "Cancelado" : scheduledForLater ? "Programado" : reminding ? "Enviado" : "Cobros creados", kind: .success)
-                if scheduledForLater && !cancelling { GPButton("Ver programados", kind: .secondary, action: onOpenScheduled) }
+                StatusPill(text: cancelling ? L("Cancelado") : scheduledForLater ? L("Programado") : reminding ? L("Enviado") : L("Cobros creados"), kind: .success)
+                if scheduledForLater && !cancelling { GPButton(L("Ver programados"), kind: .secondary, action: onOpenScheduled) }
             case .discarded:
-                StatusPill(text: "Descartado", kind: .neutral)
+                StatusPill(text: L("Descartado"), kind: .neutral)
             case .failed:
-                StatusPill(text: "No se aplicó", kind: .failure)
+                StatusPill(text: L("No se aplicó"), kind: .failure)
             }
         }
         .padding(16)
@@ -259,31 +259,31 @@ private struct ProposalCard: View {
 
     private var title: String {
         switch proposal.action {
-        case "cancel_scheduled": "Cancelar programación"
-        case "split_bill": "Dividir cuenta"
-        case "recurring_charge": "Cobro recurrente"
-        case "reminder": "Recordatorio"
-        case "schedule_payment": "Pago programado"
-        default: "Cobro programado"
+        case "cancel_scheduled": L("Cancelar programación")
+        case "split_bill": L("Dividir cuenta")
+        case "recurring_charge": L("Cobro recurrente")
+        case "reminder": L("Recordatorio")
+        case "schedule_payment": L("Pago programado")
+        default: L("Cobro programado")
         }
     }
 
     private func whenText(reminding: Bool) -> String {
-        guard let label = proposal.runAtLabel else { return reminding ? "Se envía al confirmar" : "Se cobra al confirmar" }
-        return proposal.recurrence != nil ? "Primero: \(label)" : label
+        guard let label = proposal.runAtLabel else { return reminding ? L("Se envía al confirmar") : L("Se cobra al confirmar") }
+        return proposal.recurrence != nil ? L("Primero: %@", "\(label)") : label
     }
 
     private func autoDetail(paying: Bool, reminding: Bool, auto: Bool) -> String {
-        if paying { return auto ? "Se enviará sin volver a pedirte Face ID." : "A la hora te pediré vista previa y Face ID para enviarlo." }
-        if !auto { return "A la hora te pediré confirmarlo." }
-        return reminding ? "Se envía solo a la hora." : "Se crea solo; tu contacto lo aprueba en PayPal."
+        if paying { return auto ? L("Se enviará sin volver a pedirte Face ID.") : L("A la hora te pediré vista previa y Face ID para enviarlo.") }
+        if !auto { return L("A la hora te pediré confirmarlo.") }
+        return reminding ? L("Se envía solo a la hora.") : L("Se crea solo; tu contacto lo aprueba en PayPal.")
     }
 
     private func confirmTitle(cancelling: Bool, splitting: Bool, reminding: Bool, paying: Bool, later: Bool) -> String {
-        if cancelling { return "Sí, cancelar" }
-        if splitting && !later { return "Crear \(proposal.participants.count) cobros" }
-        if reminding && !later { return "Enviar recordatorio" }
-        if paying { return "Confirmar con Face ID" }
-        return "Confirmar"
+        if cancelling { return L("Sí, cancelar") }
+        if splitting && !later { return L("Crear %@ cobros", "\(proposal.participants.count)") }
+        if reminding && !later { return L("Enviar recordatorio") }
+        if paying { return L("Confirmar con Face ID") }
+        return L("Confirmar")
     }
 }

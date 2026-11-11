@@ -18,42 +18,42 @@ struct ProfileView: View {
                         .font(.gpTitle).foregroundStyle(GP.text)
                         .multilineTextAlignment(.center).lineLimit(2)
                         .padding(.top, 6)
-                    Text("Cuenta de cobrador · Sandbox").font(.gpNote).foregroundStyle(GP.muted)
+                    Text(L("Cuenta de cobrador · Sandbox")).font(.gpNote).foregroundStyle(GP.muted)
                 }
                 .frame(maxWidth: .infinity)
                 .reveal(revealed, index: 0)
 
-                section("Mover dinero") {
-                    ProfileRow(icon: GPIcon.charge, title: "Cobrar", description: "Escanea el QR de un amigo y dicta el cobro", highlighted: true) {
+                section(L("Mover dinero")) {
+                    ProfileRow(icon: GPIcon.charge, title: L("Cobrar"), description: L("Escanea el QR de un amigo y dicta el cobro"), highlighted: true) {
                         app.openCharge()
                     }
                     rowDivider
-                    ProfileRow(icon: GPIcon.send, title: "Enviar", description: "Envía dinero a uno de tus contactos") { app.open(.send(nil)) }
+                    ProfileRow(icon: GPIcon.send, title: L("Enviar"), description: L("Envía dinero a uno de tus contactos")) { app.open(.send(nil)) }
                     rowDivider
-                    ProfileRow(icon: GPIcon.qr, title: "Mi QR", description: "Muéstralo para que te cobren o te agreguen") { app.open(.myQr) }
+                    ProfileRow(icon: GPIcon.qr, title: L("Mi QR"), description: L("Muéstralo para que te cobren o te agreguen")) { app.open(.myQr) }
                 }
                 .reveal(revealed, index: 1)
 
-                section("Cuenta") {
-                    ProfileRow(icon: GPIcon.mail, title: "Recibir envíos", description: payoutDescription) { app.open(.payoutEmail) }
+                section(L("Cuenta")) {
+                    ProfileRow(icon: GPIcon.mail, title: L("Recibir envíos"), description: payoutDescription) { app.open(.payoutEmail) }
                     rowDivider
-                    ProfileRow(icon: GPIcon.clock, title: "Programados", description: "Cobros y pagos que programaste con el asistente") {
+                    ProfileRow(icon: GPIcon.clock, title: L("Programados"), description: L("Cobros y pagos que programaste con el asistente")) {
                         app.open(.scheduled)
                     }
                     rowDivider
-                    ProfileRow(icon: "eyeglasses", title: "Lentes", description: "Cobra mirando el QR con tus lentes") {
+                    ProfileRow(icon: "eyeglasses", title: L("Lentes"), description: L("Cobra mirando el QR con tus lentes")) {
                         app.open(.glasses)
                     }
                 }
                 .reveal(revealed, index: 2)
 
-                section("Seguridad y privacidad") {
+                section(L("Seguridad y privacidad")) {
                     Toggle(isOn: $app.amountsVisible) {
                         HStack(spacing: 16) {
                             EyeGlyph(open: app.amountsVisible)
                                 .frame(width: 40, height: 40)
                                 .background(GP.raised, in: Circle())
-                            rowTexts("Mostrar montos", "Se ocultan de nuevo al salir de la app")
+                            rowTexts(L("Mostrar montos"), L("Se ocultan de nuevo al salir de la app"))
                         }
                     }
                     .tint(GP.accent)
@@ -65,14 +65,19 @@ struct ProfileView: View {
                 }
                 .reveal(revealed, index: 3)
 
-                InlineNotice("Actividad en GlassPay (Sandbox). No es una cuenta bancaria.", icon: GPIcon.lock)
-                    .reveal(revealed, index: 4)
+                section(L("Idioma")) {
+                    languageRow
+                }
+                .reveal(revealed, index: 4)
+
+                InlineNotice(L("Actividad en GlassPay (Sandbox). No es una cuenta bancaria."), icon: GPIcon.lock)
+                    .reveal(revealed, index: 5)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
         }
         .gpScreen()
-        .navigationTitle("Mi perfil")
+        .navigationTitle(L("Mi perfil"))
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { revealed = true }
         // Se vuelve a cargar cada vez que se entra (por ejemplo, al volver de "Recibir envíos").
@@ -81,10 +86,34 @@ struct ProfileView: View {
 
     private var payoutDescription: String {
         switch profile {
-        case .loading: "Cargando…"
-        case .failed: "Correo de PayPal Sandbox para recibir envíos"
-        case let .loaded(value): value.payoutEmail.map { "Recibes en \($0)" } ?? "Registra tu correo de PayPal Sandbox"
+        case .loading: L("Cargando…")
+        case .failed: L("Correo de PayPal Sandbox para recibir envíos")
+        case let .loaded(value): value.payoutEmail.map { L("Recibes en %@", "\($0)") } ?? L("Registra tu correo de PayPal Sandbox")
         }
+    }
+
+    /// Español o inglés: cambia al instante la interfaz, la voz del cobro y las respuestas del servidor.
+    private var languageRow: some View {
+        let selection = Binding(
+            get: { AppLanguageStore.shared.current },
+            set: { AppLanguageStore.shared.current = $0 }
+        )
+        return HStack(spacing: 16) {
+            IconBadge(icon: "globe")
+            rowTexts(L("Idioma de la app"), L("Pantallas, voz y asistente"))
+            Spacer(minLength: 0)
+            Picker(L("Idioma de la app"), selection: selection) {
+                ForEach(AppLanguage.allCases) { option in
+                    Text(verbatim: option.nativeName).tag(option)
+                }
+            }
+            .pickerStyle(.menu)
+            .tint(GP.accent)
+            .fixedSize()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .frame(minHeight: 72)
     }
 
     /// Fila informativa (sin acción): no tiene chevron ni efecto al tocar.
@@ -94,13 +123,13 @@ struct ProfileView: View {
         return HStack(spacing: 16) {
             IconBadge(icon: GPIcon.lock, tint: GP.status(kind), background: GP.statusSoft(kind))
             rowTexts(
-                "Bloqueo con tu teléfono",
+                L("Bloqueo con tu teléfono"),
                 lockOn
-                    ? "Se pide al abrir, tras 5 min fuera y antes de enviar dinero"
-                    : "Configura un código en tu teléfono para proteger GlassPay"
+                    ? L("Se pide al abrir, tras 5 min fuera y antes de enviar dinero")
+                    : L("Configura un código en tu teléfono para proteger GlassPay")
             )
             Spacer(minLength: 0)
-            StatusPill(text: lockOn ? "Activo" : "Inactivo", kind: kind)
+            StatusPill(text: lockOn ? L("Activo") : L("Inactivo"), kind: kind)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)

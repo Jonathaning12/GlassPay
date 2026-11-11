@@ -4,6 +4,7 @@ const { createRateLimiter, hashOpaqueToken } = require("../services/payers");
 const { authenticateCollector } = require("./collectors");
 const { PaymentRequestError, createPaymentRequestFromResolutionHash } = require("../services/payment-requests");
 const { sanitizeConcept } = require("./payments");
+const { pick, requestLanguage } = require("../services/language");
 
 function isResolutionId(value) {
   return typeof value === "string" && /^[A-Za-z0-9_-]{32,128}$/.test(value);
@@ -13,12 +14,13 @@ function isProposalId(value) {
   return typeof value === "string" && /^[A-Za-z0-9_-]{43,128}$/.test(value);
 }
 
-function validateProposal(proposal, config) {
+function validateProposal(proposal, config, language = "es") {
   const concept = sanitizeConcept(proposal.concept);
   if (proposal.needsClarification) {
     return {
       needsClarification: true,
-      clarificationQuestion: proposal.clarificationQuestion || "¿Qué dato debo aclarar?",
+      clarificationQuestion: proposal.clarificationQuestion
+        || pick(language, { es: "¿Qué dato debo aclarar?", en: "What should I clarify?" }),
       method: proposal.method,
     };
   }
@@ -32,7 +34,10 @@ function validateProposal(proposal, config) {
   ) {
     return {
       needsClarification: true,
-      clarificationQuestion: "¿Qué monto positivo, moneda permitida y concepto debo cobrar?",
+      clarificationQuestion: pick(language, {
+        es: "¿Qué monto positivo, moneda permitida y concepto debo cobrar?",
+        en: "What positive amount, allowed currency and purpose should I charge?",
+      }),
       method: proposal.method,
     };
   }
@@ -69,14 +74,17 @@ function createAgentRouter({ database, agent, paypal, config }) {
     }
 
     const startedAt = Date.now();
+    const language = requestLanguage(request);
     const proposal = await agent.parseCharge(text, {
       defaultCurrency: config.payments.defaultCurrency,
       allowedCurrencies: config.payments.allowedCurrencies,
       maxAmount: config.payments.maxAmount,
+      language,
     });
-    const result = validateProposal(proposal, config);
+    const result = validateProposal(proposal, config, language);
     console.info("Charge interpretation completed", {
       method: result.method,
+      language,
       valid: !result.needsClarification,
       latencyMs: Date.now() - startedAt,
     });

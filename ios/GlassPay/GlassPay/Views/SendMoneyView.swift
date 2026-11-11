@@ -29,7 +29,7 @@ struct SendMoneyView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .gpScreen()
-        .navigationTitle("Enviar dinero")
+        .navigationTitle(L("Enviar dinero"))
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(model.step == .result)
         .onChange(of: locked, initial: true) { _, value in model.locked = value }
@@ -41,12 +41,12 @@ struct SendMoneyView: View {
 
     @ViewBuilder
     private var pick: some View {
-        Overline("¿A quién le envías?")
+        Overline(L("¿A quién le envías?"))
         switch model.contacts {
         case .loading: ForEach(0..<3, id: \.self) { _ in SkeletonBox(height: 72) }
-        case .failed: InlineNotice("No pudimos cargar tus contactos.", kind: .failure)
+        case .failed: InlineNotice(L("No pudimos cargar tus contactos."), kind: .failure)
         case let .loaded(contacts):
-            if contacts.isEmpty { InlineNotice("Aún no tienes contactos. Agrégalos desde Contactos.", icon: GPIcon.contacts) }
+            if contacts.isEmpty { InlineNotice(L("Aún no tienes contactos. Agrégalos desde Contactos."), icon: GPIcon.contacts) }
             ForEach(contacts) { contact in
                 Button { model.pick(contact) } label: {
                     HStack(spacing: 12) {
@@ -69,19 +69,19 @@ struct SendMoneyView: View {
         HStack(spacing: 12) {
             AvatarView(name: model.contact?.displayName ?? "", size: 48)
             VStack(alignment: .leading) {
-                Overline("Enviar a")
+                Overline(L("Enviar a"))
                 Text(model.contact?.displayName ?? "").font(.gpHeading).foregroundStyle(GP.text)
             }
         }
         HStack(spacing: 6) {
             Text("$").font(.gpTitle).foregroundStyle(GP.muted)
-            TextField("Monto (MXN)", text: $model.amountText).keyboardType(.decimalPad).font(.gpTitle)
+            TextField(L("Monto (MXN)"), text: $model.amountText).keyboardType(.decimalPad).font(.gpTitle)
         }
         .gpField()
         .disabled(model.busy)
-        TextField("Nota (opcional)", text: $model.note).gpField().disabled(model.busy)
+        TextField(L("Nota (opcional)"), text: $model.note).gpField().disabled(model.busy)
         if let message = model.message { InlineNotice(message, kind: .failure) }
-        GPButton(model.busy ? "Revisando…" : "Revisar") { model.requestPreview() }
+        GPButton(model.busy ? L("Revisando…") : L("Revisar")) { model.requestPreview() }
             .disabled(model.amountText.trimmingCharacters(in: .whitespaces).isEmpty || model.busy)
     }
 
@@ -91,22 +91,22 @@ struct SendMoneyView: View {
             let expired = model.remaining <= 0
             let timeColor = expired ? GP.error : GP.warning
             GPCard(padding: 24, spacing: 16) {
-                Overline("Revisa el envío")
+                Overline(L("Revisa el envío"))
                 MoneyText(formatted: formatMoney(proposal.amount, proposal.currency))
-                field("Destinatario", proposal.recipientName)
-                if let note = proposal.note { field("Nota", note) }
+                field(L("Destinatario"), proposal.recipientName)
+                if let note = proposal.note { field(L("Nota"), note) }
                 Divider().overlay(GP.line)
                 HStack(spacing: 8) {
                     Image(systemName: GPIcon.clock)
-                    Text(expired ? "La vista previa venció. Revísala de nuevo." : "Vence en \(model.remaining) s").font(.gpLabel)
+                    Text(expired ? L("La vista previa venció. Revísala de nuevo.") : L("Vence en %@ s", "\(model.remaining)")).font(.gpLabel)
                 }
                 .foregroundStyle(timeColor)
             }
-            InlineNotice("Para enviar te pediremos Face ID o el código del teléfono.", icon: GPIcon.lock)
+            InlineNotice(L("Para enviar te pediremos Face ID o el código del teléfono."), icon: GPIcon.lock)
             if let message = model.message { InlineNotice(message, kind: .failure) }
-            GPButton("Confirmar envío", icon: "faceid") { model.confirmWithAuth() }.disabled(!model.canConfirm)
-            if expired { GPButton("Revisar de nuevo", kind: .secondary) { model.reviewAgain() } }
-            if model.confirmBlocked { GPButton("Ver en Movimientos", kind: .secondary, action: onOpenMovements) }
+            GPButton(L("Confirmar envío"), icon: "faceid") { model.confirmWithAuth() }.disabled(!model.canConfirm)
+            if expired { GPButton(L("Revisar de nuevo"), kind: .secondary) { model.reviewAgain() } }
+            if model.confirmBlocked { GPButton(L("Ver en Movimientos"), kind: .secondary, action: onOpenMovements) }
         }
     }
 
@@ -137,26 +137,26 @@ private struct ResultView: View {
                     }
                     .scaleEffect(entered || reduceMotion ? 1 : 0.6)
                     .onAppear { withAnimation(.spring(response: 0.5, dampingFraction: 0.6)) { entered = true } }
-                    .accessibilityLabel("Envío completado")
-                    Text("¡Enviado!").font(.gpTitle).foregroundStyle(GP.success)
+                    .accessibilityLabel(L("Envío completado"))
+                    Text(L("¡Enviado!")).font(.gpTitle).foregroundStyle(GP.success)
                     MoneyText(formatted: formatMoney(outcome.amount, outcome.currency))
-                    Text("a \(outcome.recipientName)").font(.gpBody).foregroundStyle(GP.muted)
+                    Text(L("a %@", "\(outcome.recipientName)")).font(.gpBody).foregroundStyle(GP.muted)
                 case "fallida":
                     IconBadge(icon: GPIcon.close, tint: GP.error, size: 88, background: GP.errorSoft)
-                    Text("El envío no se pudo completar. Tu saldo no se descontó.")
+                    Text(L("El envío no se pudo completar. Tu saldo no se descontó."))
                         .font(.gpBodyStrong).foregroundStyle(GP.error).multilineTextAlignment(.center)
                 default:
                     if model.pollGaveUp || reduceMotion {
                         IconBadge(icon: GPIcon.clock, tint: GP.warning, size: 88, background: GP.warningSoft)
                     } else {
-                        ProgressView().controlSize(.large).tint(GP.accent).accessibilityLabel("Enviando")
+                        ProgressView().controlSize(.large).tint(GP.accent).accessibilityLabel(L("Enviando"))
                     }
-                    Text("Enviando a \(outcome.recipientName)…").font(.gpHeading).foregroundStyle(GP.text)
+                    Text(L("Enviando a %@…", "\(outcome.recipientName)")).font(.gpHeading).foregroundStyle(GP.text)
                     MoneyText(formatted: formatMoney(outcome.amount, outcome.currency), font: .gpAmountMedium)
-                    if model.pollGaveUp { InlineNotice("Tu envío sigue en proceso. Revísalo en Movimientos.", kind: .pending) }
+                    if model.pollGaveUp { InlineNotice(L("Tu envío sigue en proceso. Revísalo en Movimientos."), kind: .pending) }
                 }
-                GPButton("Listo", action: onDone).padding(.top, 16)
-                GPButton("Ver en Movimientos", kind: .secondary, action: onOpenMovements)
+                GPButton(L("Listo"), action: onDone).padding(.top, 16)
+                GPButton(L("Ver en Movimientos"), kind: .secondary, action: onOpenMovements)
             }
             .frame(maxWidth: .infinity)
             .padding(.top, 24)

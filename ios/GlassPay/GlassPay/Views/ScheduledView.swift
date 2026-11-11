@@ -8,20 +8,20 @@ struct ScheduledView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                InlineNotice("Lo programado vive en el servidor de prueba: si se reinicia o se actualiza, se pierde.", kind: .pending)
+                InlineNotice(L("Lo programado vive en el servidor de prueba: si se reinicia o se actualiza, se pierde."), kind: .pending)
                 if let message = model.message { InlineNotice(message) }
                 switch model.state {
                 case .loading:
                     ForEach(0..<3, id: \.self) { _ in SkeletonBox(height: 110) }
                 case .failed:
-                    InlineNotice("No pudimos cargar lo programado.", kind: .failure)
-                    GPButton("Reintentar", kind: .secondary) { Task { await model.reload() } }
+                    InlineNotice(L("No pudimos cargar lo programado."), kind: .failure)
+                    GPButton(L("Reintentar"), kind: .secondary) { Task { await model.reload() } }
                 case let .loaded(items):
                     if items.isEmpty {
                         GPCard {
                             IconBadge(icon: GPIcon.clock, size: 56)
-                            Text("No tienes nada programado").font(.gpBodyStrong).foregroundStyle(GP.text)
-                            Text("Pídeselo al asistente: «cóbrale a Ana 300 por la renta mañana a las 6».").font(.gpNote).foregroundStyle(GP.muted)
+                            Text(L("No tienes nada programado")).font(.gpBodyStrong).foregroundStyle(GP.text)
+                            Text(L("Pídeselo al asistente: «cóbrale a Ana 300 por la renta mañana a las 6».")).font(.gpNote).foregroundStyle(GP.muted)
                         }
                     }
                     ForEach(items) { card($0) }
@@ -31,7 +31,7 @@ struct ScheduledView: View {
         }
         .refreshable { await model.reload() }
         .gpScreen()
-        .navigationTitle("Programados")
+        .navigationTitle(L("Programados"))
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.reload() }
         .confirmationDialog(
@@ -39,19 +39,19 @@ struct ScheduledView: View {
             isPresented: Binding(get: { model.pendingCancel != nil }, set: { if !$0 { model.pendingCancel = nil } }),
             titleVisibility: .visible
         ) {
-            Button(model.pendingCancel?.kind == "reminder" ? "Cancelar recordatorio" : "Cancelar cobro", role: .destructive) {
+            Button(model.pendingCancel?.kind == "reminder" ? L("Cancelar recordatorio") : L("Cancelar cobro"), role: .destructive) {
                 if let item = model.pendingCancel { model.cancel(item) }
                 model.pendingCancel = nil
             }
-            Button("Volver", role: .cancel) { model.pendingCancel = nil }
+            Button(L("Volver"), role: .cancel) { model.pendingCancel = nil }
         }
     }
 
     private var cancelTitle: String {
         guard let item = model.pendingCancel else { return "" }
         return item.kind == "reminder"
-            ? "¿Cancelar el recordatorio a \(item.contactName)?"
-            : "¿Cancelar el cobro a \(item.contactName) por \(formatMoney(item.amount, item.currency))?"
+            ? L("¿Cancelar el recordatorio a %@?", "\(item.contactName)")
+            : L("¿Cancelar el cobro a %@ por %@?", "\(item.contactName)", "\(formatMoney(item.amount, item.currency))")
     }
 
     private func card(_ item: ScheduledItem) -> some View {
@@ -68,18 +68,18 @@ struct ScheduledView: View {
                 StatusPill(text: scheduledStateLabel(item.state, kind: item.kind), kind: scheduledStateKind(item.state))
             }
             Label(item.recurrence != nil
-                  ? "\(item.runAtLabel) (\(item.occurrencesDone + 1) de \(item.occurrencesTotal))"
+                  ? L("%@ (%@ de %@)", "\(item.runAtLabel)", "\(item.occurrencesDone + 1)", "\(item.occurrencesTotal)")
                   : item.runAtLabel, systemImage: GPIcon.clock)
                 .font(.gpLabel).foregroundStyle(GP.muted)
             if let failure = scheduledFailureMessage(item.failure) { Text(failure).font(.gpNote).foregroundStyle(GP.error) }
             if model.busyId == item.scheduledId {
-                Text("Procesando…").font(.gpNote).foregroundStyle(GP.muted)
+                Text(L("Procesando…")).font(.gpNote).foregroundStyle(GP.muted)
             } else {
                 if item.state == "esperando_confirmacion" {
                     GPButton(runTitle(item), icon: item.kind == "payment" ? "faceid" : nil) { model.run(item) }
                 }
                 if isScheduledActive(item.state) && item.state != "ejecutando" {
-                    GPButton("Cancelar", kind: .ghost) { model.pendingCancel = item }
+                    GPButton(L("Cancelar"), kind: .ghost) { model.pendingCancel = item }
                 }
             }
         }
@@ -87,17 +87,17 @@ struct ScheduledView: View {
 
     private func prefix(_ item: ScheduledItem) -> String {
         switch item.kind {
-        case "reminder": "Recordar a "
-        case "payment": "Pagar a "
-        default: "Cobrar a "
+        case "reminder": L("Recordar a ")
+        case "payment": L("Pagar a ")
+        default: L("Cobrar a ")
         }
     }
 
     private func runTitle(_ item: ScheduledItem) -> String {
         switch item.kind {
-        case "payment": "Enviar con Face ID"
-        case "reminder": "Enviar recordatorio ahora"
-        default: "Crear el cobro ahora"
+        case "payment": L("Enviar con Face ID")
+        case "reminder": L("Enviar recordatorio ahora")
+        default: L("Crear el cobro ahora")
         }
     }
 }
