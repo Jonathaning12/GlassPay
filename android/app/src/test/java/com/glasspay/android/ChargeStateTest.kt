@@ -1,6 +1,7 @@
 package com.glasspay.android
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -372,6 +373,34 @@ class ChargeStateTest {
                 InputSessionDecisionReason.INTERPRET_DEFINITIVE_ERROR,
             ),
         )
+    }
+    @Test
+    fun receiptEchoOverBluetoothNeverConfirms() {
+        val preview = ChargeState.Preview(proposal, 30)
+        assertEquals(VoiceCommand.NONE, voiceCommand("¿Confirmas?", preview))
+        assertEquals(VoiceCommand.NONE, voiceCommand("Cobro de 50 pesos por la cena ¿Confirmas?", preview))
+    }
+
+    @Test
+    fun previewListensAgainAfterSilenceOrUnknownPhrase() {
+        val preview = ChargeState.Preview(proposal, 30)
+        assertTrue(shouldListenAgainInPreview(preview, errorCode = 6, listens = 0))
+        assertTrue(shouldListenAgainInPreview(preview, errorCode = 7, listens = 0))
+        assertTrue(shouldListenAgainInPreview(preview, errorCode = null, listens = MAX_PREVIEW_LISTENS - 1))
+    }
+
+    @Test
+    fun previewStopsListeningAfterLimitOrOtherErrors() {
+        val preview = ChargeState.Preview(proposal, 30)
+        assertFalse(shouldListenAgainInPreview(preview, errorCode = 6, listens = MAX_PREVIEW_LISTENS))
+        assertFalse(shouldListenAgainInPreview(preview, errorCode = 9, listens = 0))
+        assertFalse(shouldListenAgainInPreview(preview, errorCode = 8, listens = 0))
+    }
+
+    @Test
+    fun previewDoesNotListenAgainWhenExpiredOrOutsidePreview() {
+        assertFalse(shouldListenAgainInPreview(ChargeState.Preview(proposal, 0), errorCode = 6, listens = 0))
+        assertFalse(shouldListenAgainInPreview(ChargeState.Listening, errorCode = 6, listens = 0))
     }
 
     private fun sampleSession(): ChargeInputSession {

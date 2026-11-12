@@ -68,6 +68,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) setRecentsScreenshotEnabled(false)
+        // Lentes: el SDK solo se inicia si ya se dio el permiso de Bluetooth (se pide en Perfil > Lentes).
+        GlassesSupport.initializeIfAllowed(this)
         setContent { GlassPayTheme { GlassPayRoot() } }
     }
 }
@@ -97,6 +99,7 @@ fun GlassPayRoot() {
     var sendContact by remember { mutableStateOf<Contact?>(null) }
     var showPayoutEmail by remember { mutableStateOf(false) }
     var showScheduled by remember { mutableStateOf(false) }
+    var showGlasses by remember { mutableStateOf(false) }
     var showStats by remember { mutableStateOf(false) }
     var showProfile by remember { mutableStateOf(false) }
     // Cobrar ya no es pestaña: es una pantalla completa que se abre desde Inicio, el perfil o un contacto.
@@ -123,6 +126,7 @@ fun GlassPayRoot() {
         session = null
         pendingContactResolution = null
         showScheduled = false
+        showGlasses = false
         showProfile = false
         showCharge = false
         assistantChat.value = ChatState()
@@ -143,6 +147,7 @@ fun GlassPayRoot() {
         sendContact = null
         showPayoutEmail = false
         showScheduled = false
+        showGlasses = false
         showStats = false
         showProfile = false
         showCharge = false
@@ -372,6 +377,7 @@ fun GlassPayRoot() {
                                 onSessionInvalid = ::invalidateSession,
                                 onBack = { showStats = false },
                             )
+                            showGlasses -> GlassesSetupScreen(onBack = { showGlasses = false })
                             showScheduled -> ScheduledScreen(
                                 session = current,
                                 api = api,
@@ -415,6 +421,7 @@ fun GlassPayRoot() {
                                 onOpenMyQr = { showMyQr = true },
                                 onPayoutEmail = { showPayoutEmail = true },
                                 onOpenScheduled = { showScheduled = true },
+                                onOpenGlasses = { showGlasses = true },
                                 amountsVisible = amountsVisible,
                                 onToggleAmounts = { amountsVisible = !amountsVisible },
                                 lockAvailability = authAvailability,

@@ -61,6 +61,7 @@ fun ProfileScreen(
     onOpenMyQr: () -> Unit,
     onPayoutEmail: () -> Unit,
     onOpenScheduled: () -> Unit,
+    onOpenGlasses: () -> Unit,
     amountsVisible: Boolean,
     onToggleAmounts: () -> Unit,
     lockAvailability: DeviceAuthAvailability,
@@ -133,6 +134,8 @@ fun ProfileScreen(
                     ProfileRow(R.drawable.ic_mail, "Recibir envíos", payoutDescription, onPayoutEmail)
                     RowDivider()
                     ProfileRow(R.drawable.ic_clock, "Programados", "Cobros y pagos que programaste con el asistente", onOpenScheduled)
+                    RowDivider()
+                    ProfileRow(R.drawable.ic_glasses, "Lentes", "Cobra mirando el QR con tus lentes", onOpenGlasses)
                 }
             }
             Reveal(revealed, index = 3) {

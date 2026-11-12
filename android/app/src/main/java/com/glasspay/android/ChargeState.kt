@@ -217,6 +217,21 @@ fun shouldAcceptVoiceError(state: ChargeState): Boolean {
         state is ChargeState.Preview
 }
 
+/** Veces que el recibo vuelve a escuchar tras un silencio o una frase que no es un comando. */
+const val MAX_PREVIEW_LISTENS = 4
+
+/**
+ * El recibo sigue vigente aunque no se entienda la voz: nunca se confirma solo. Tras un silencio (6),
+ * una frase no entendida (7) o una frase que no es comando (`errorCode` nulo) se vuelve a escuchar unas
+ * veces; después, o ante otro error de voz, quedan los botones.
+ */
+fun shouldListenAgainInPreview(state: ChargeState, errorCode: Int?, listens: Int): Boolean {
+    return state is ChargeState.Preview &&
+        state.remainingSeconds > 0 &&
+        listens < MAX_PREVIEW_LISTENS &&
+        (errorCode == null || errorCode == 6 || errorCode == 7)
+}
+
 enum class ChargeFailureType {
     NETWORK,
     TIMEOUT,

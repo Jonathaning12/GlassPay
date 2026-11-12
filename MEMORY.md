@@ -13,7 +13,7 @@ La demo debe funcionar sin lentes físicos usando Mock Device Kit o la cámara d
 - `server/`: Node.js LTS + Express; único componente que habla con PayPal y la IA.
 - `payer-web/`: React + Vite para generar QR y aprobar pagos.
 - `ios/` (nuevo, 2026-10-27, aprobado por el usuario y agregado a AGENTS.md): Swift + SwiftUI (iOS 17+), MVVM, app del cobrador traducida de la de Android (PR #1, autor Javier Ruiz). Proyecto `ios/GlassPay/GlassPay.xcodeproj`; se compila en un Mac con Xcode.
-- `android/`: Kotlin + Jetpack Compose; app de teléfono con 5A terminada, 5B implementada y polling de estado de pago añadido como entrega acotada previa a 5C; la integración Meta Wearables DAT sigue pospuesta.
+- `android/`: Kotlin + Jetpack Compose; app de teléfono con 5A terminada, 5B implementada y polling de estado de pago añadido como entrega acotada previa a 5C. Desde 2026-11-07 integra Meta Wearables DAT 1.0.1 (`mwdat-core`, `mwdat-camera`) igual que iOS: Perfil > Lentes y Cobrar con los lentes, SIN PROBAR con lentes en Android.
 - Despliegue: Render; el servidor puede servir la build de `payer-web/`.
 - URL pública: `https://glasspay-1qdu.onrender.com`.
 - Estado: Entrega 5.0, 5A y la implementación 5B están en el árbol local; el estado privado usa `statusToken` independiente de la resolución. 5B queda pendiente de prueba manual del flujo de voz/texto en el Samsung; 5C no iniciada. Entrega A.1 (normalización de comandos de voz y política de errores) terminada el 2026-10-25; Entrega B y retiro de logs `GlassPayVoice` terminados el 2026-10-25 (83 tests); falta la prueba manual del Samsung para cerrar 5B.

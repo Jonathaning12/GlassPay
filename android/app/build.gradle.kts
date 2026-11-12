@@ -22,6 +22,10 @@ android {
             "glasspayApiUrl must use HTTPS"
         }
         buildConfigField("String", "API_BASE_URL", "\"$apiUrl\"")
+
+        // Meta Wearables DAT en modo desarrollador: sin atestación, ambos valores van en "0" (guía oficial).
+        manifestPlaceholders["mwdat_application_id"] = "0"
+        manifestPlaceholders["mwdat_client_token"] = "0"
     }
 
     buildFeatures {
@@ -57,6 +61,11 @@ dependencies {
     implementation("com.google.zxing:core:3.5.4")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    // Lentes Oakley Meta (Meta Wearables DAT). Verificada: 1.0.1 en Maven Central, la última al 07-nov-2026.
+    implementation("com.meta.wearable:mwdat-core:1.0.1")
+    implementation("com.meta.wearable:mwdat-camera:1.0.1")
+    // Lentes simulados (Mock Device Kit) solo para probar sin lentes; no entra en release.
+    debugImplementation("com.meta.wearable:mwdat-mockdevice:1.0.1")
 
     testImplementation("junit:junit:4.13.2")
 }
