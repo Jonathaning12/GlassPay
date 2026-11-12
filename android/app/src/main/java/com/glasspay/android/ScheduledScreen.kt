@@ -82,11 +82,11 @@ fun ScheduledScreen(
                 if (run) {
                     val result = api.runScheduled(session, item.scheduledId)
                     message = if (result.state == "completado" && item.kind == "payment") {
-                        "Envío creado a ${item.contactName}. Revisa su estado en Movimientos."
+                        L("Envío creado a %s. Revisa su estado en Movimientos.", item.contactName)
                     } else if (result.state == "completado") {
-                        "Cobro creado. ${item.contactName} debe aprobarlo en PayPal."
+                        L("Cobro creado. %s debe aprobarlo en PayPal.", item.contactName)
                     } else {
-                        scheduledFailureMessage(result.failure) ?: "No se pudo crear el cobro."
+                        scheduledFailureMessage(result.failure) ?: L("No se pudo crear el cobro.")
                     }
                 } else {
                     api.cancelScheduled(session, item.scheduledId)
@@ -100,7 +100,7 @@ fun ScheduledScreen(
                     return@launch
                 }
                 message = if (exception.type == ApiFailureType.NOT_FOUND) {
-                    "Esa programación ya cambió de estado."
+                    L("Esa programación ya cambió de estado.")
                 } else {
                     assistantErrorMessage(exception.type)
                 }
@@ -122,13 +122,13 @@ fun ScheduledScreen(
         }
         val activity = context.findActivity() ?: return
         if (DeviceAuthenticator.availability(context) != DeviceAuthAvailability.AVAILABLE) {
-            message = "Configura un bloqueo de pantalla para enviar dinero."
+            message = L("Configura un bloqueo de pantalla para enviar dinero.")
             return
         }
         requireDeviceAuth(
             activity,
             onSuccess = { act(item, run = true) },
-            onFailure = { message = "Necesitamos confirmar que eres tú para enviar el pago." },
+            onFailure = { message = L("Necesitamos confirmar que eres tú para enviar el pago.") },
         )
     }
 
@@ -138,9 +138,9 @@ fun ScheduledScreen(
             text = {
                 Text(
                     if (item.kind == "reminder") {
-                        "¿Cancelar el recordatorio a ${item.contactName}?"
+                        L("¿Cancelar el recordatorio a %s?", item.contactName)
                     } else {
-                        "¿Cancelar el cobro a ${item.contactName} por ${formatMoney(item.amount, item.currency)}?"
+                        L("¿Cancelar el cobro a %s por %s?", item.contactName, formatMoney(item.amount, item.currency))
                     },
                 )
             },
@@ -148,14 +148,14 @@ fun ScheduledScreen(
                 TextButton(onClick = {
                     pendingCancel = null
                     act(item, run = false)
-                }) { Text(if (item.kind == "reminder") "Cancelar recordatorio" else "Cancelar cobro") }
+                }) { Text(if (item.kind == "reminder") L("Cancelar recordatorio") else L("Cancelar cobro")) }
             },
-            dismissButton = { TextButton(onClick = { pendingCancel = null }) { Text("No") } },
+            dismissButton = { TextButton(onClick = { pendingCancel = null }) { Text(L("No")) } },
         )
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        ScreenHeader("Programados", onBack = onBack)
+        ScreenHeader(L("Programados"), onBack = onBack)
         PullToRefreshBox(isRefreshing = refreshing, onRefresh = { reload += 1 }, modifier = Modifier.weight(1f)) {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -164,7 +164,7 @@ fun ScheduledScreen(
             ) {
                 item(key = "notice") {
                     InlineNotice(
-                        "Lo programado vive en el servidor de prueba: si se reinicia o se actualiza, se pierde.",
+                        L("Lo programado vive en el servidor de prueba: si se reinicia o se actualiza, se pierde."),
                         kind = StatusKind.PENDING,
                         icon = R.drawable.ic_clock,
                     )
@@ -174,8 +174,8 @@ fun ScheduledScreen(
                     LoadState.Loading -> items(3) { SkeletonBox(Modifier.fillMaxWidth().height(120.dp)) }
                     LoadState.Failed -> item(key = "failed") {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            InlineNotice("No pudimos cargar lo programado.", kind = StatusKind.FAILURE)
-                            GpButton("Reintentar", onClick = { reload += 1 }, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
+                            InlineNotice(L("No pudimos cargar lo programado."), kind = StatusKind.FAILURE)
+                            GpButton(L("Reintentar"), onClick = { reload += 1 }, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
                         }
                     }
                     is LoadState.Loaded -> {
@@ -206,9 +206,9 @@ private fun EmptyScheduled() {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         IconBadge(R.drawable.ic_clock, tint = GlassPayColors.Accent, size = 72.dp, background = GlassPayColors.AccentSoft)
-        Text("No tienes nada programado", style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
+        Text(L("No tienes nada programado"), style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
         Text(
-            "Pídeselo al asistente: «cóbrale a Ana 300 por la renta mañana a las 6».",
+            L("Pídeselo al asistente: «cóbrale a Ana 300 por la renta mañana a las 6»."),
             style = MaterialTheme.typography.bodyMedium,
             color = GlassPayColors.MutedText,
             textAlign = TextAlign.Center,
@@ -230,9 +230,9 @@ private fun ScheduledCard(
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     when (item.kind) {
-                        "reminder" -> "Recordar a "
-                        "payment" -> "Pagar a "
-                        else -> "Cobrar a "
+                        "reminder" -> L("Recordar a ")
+                        "payment" -> L("Pagar a ")
+                        else -> L("Cobrar a ")
                     } + item.contactName,
                     style = MaterialTheme.typography.titleMedium,
                     color = GlassPayColors.Text,
@@ -252,8 +252,8 @@ private fun ScheduledCard(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(painterResource(R.drawable.ic_clock), contentDescription = null, tint = GlassPayColors.MutedText, modifier = Modifier.size(18.dp))
             Text(
-                item.runAtLabel + (if (item.autoExecute) " · automático" else " · con tu confirmación") +
-                    (recurrenceLabel(item.recurrence, null)?.let { " · $it (${item.occurrencesDone} de ${item.occurrencesTotal})" } ?: ""),
+                item.runAtLabel + (if (item.autoExecute) L(" · automático") else L(" · con tu confirmación")) +
+                    (recurrenceLabel(item.recurrence, null)?.let { L(" · %s (%s de %s)", it, item.occurrencesDone, item.occurrencesTotal) } ?: ""),
                 style = MaterialTheme.typography.bodySmall,
                 color = GlassPayColors.MutedText,
                 modifier = Modifier.weight(1f),
@@ -264,22 +264,22 @@ private fun ScheduledCard(
             Text(it, style = MaterialTheme.typography.bodySmall, color = GlassPayColors.Error)
         }
         if (busy) {
-            Text("Procesando…", style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
+            Text(L("Procesando…"), style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
         } else if (item.state == "esperando_confirmacion") {
             GpButton(
                 when (item.kind) {
-                    "payment" -> "Enviar con huella"
-                    "reminder" -> "Enviar recordatorio ahora"
-                    else -> "Crear el cobro ahora"
+                    "payment" -> L("Enviar con huella")
+                    "reminder" -> L("Enviar recordatorio ahora")
+                    else -> L("Crear el cobro ahora")
                 },
                 onClick = onRun,
                 enabled = enabled,
                 icon = if (item.kind == "payment") R.drawable.ic_lock else R.drawable.ic_check,
                 modifier = Modifier.fillMaxWidth(),
             )
-            GpButton("Cancelar", onClick = onCancel, enabled = enabled, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
+            GpButton(L("Cancelar"), onClick = onCancel, enabled = enabled, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
         } else if (item.state == "programado") {
-            GpButton("Cancelar", onClick = onCancel, enabled = enabled, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
+            GpButton(L("Cancelar"), onClick = onCancel, enabled = enabled, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
         }
     }
 }

@@ -30,13 +30,13 @@ fun transferErrorMessage(type: ApiFailureType, serverError: String?, recipientNa
     return when (type) {
         ApiFailureType.CONFLICT -> when (serverError) {
             "recipient cannot receive" ->
-                "${recipientName ?: "El destinatario"} todavía no registró su correo para recibir envíos."
-            "insufficient balance" -> "No tienes saldo suficiente."
-            else -> "No se pudo completar el envío."
+                L("%s todavía no registró su correo para recibir envíos.", recipientName ?: L("El destinatario"))
+            "insufficient balance" -> L("No tienes saldo suficiente.")
+            else -> L("No se pudo completar el envío.")
         }
-        ApiFailureType.BAD_REQUEST -> "Revisa el monto (máximo 1,000 MXN)."
-        ApiFailureType.NOT_FOUND -> "La vista previa venció. Revísala de nuevo."
-        ApiFailureType.RATE_LIMITED -> "Demasiados intentos. Espera unos segundos."
-        else -> "No pudimos confirmar el envío. Revisa Movimientos antes de intentarlo de nuevo."
+        ApiFailureType.BAD_REQUEST -> L("Revisa el monto (máximo 1,000 MXN).")
+        ApiFailureType.NOT_FOUND -> L("La vista previa venció. Revísala de nuevo.")
+        ApiFailureType.RATE_LIMITED -> L("Demasiados intentos. Espera unos segundos.")
+        else -> L("No pudimos confirmar el envío. Revisa Movimientos antes de intentarlo de nuevo.")
     }
 }

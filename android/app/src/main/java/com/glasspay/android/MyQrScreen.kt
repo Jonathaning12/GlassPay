@@ -73,9 +73,9 @@ fun MyQrScreen(
                         if (isSessionInvalid(exception.type)) {
                             onSessionInvalid(SESSION_INVALID_MESSAGE)
                         } else if (exception.type == ApiFailureType.RATE_LIMITED) {
-                            error = "Demasiados intentos. Espera unos segundos."
+                            error = L("Demasiados intentos. Espera unos segundos.")
                         } else if (qr == null || remainingSeconds(qr!!.expiresAt) <= 0) {
-                            error = "No pudimos generar tu QR."
+                            error = L("No pudimos generar tu QR.")
                         }
                         if (error != null) return@repeatOnLifecycle
                         // Fallo de red: espera antes de reintentar, no cada segundo.
@@ -83,7 +83,7 @@ fun MyQrScreen(
                         continue
                     } catch (_: Exception) {
                         Log.i("GlassPay", "myQr failure type=UNKNOWN httpCode=none")
-                        error = "No pudimos generar tu QR."
+                        error = L("No pudimos generar tu QR.")
                         return@repeatOnLifecycle
                     }
                 }
@@ -94,14 +94,14 @@ fun MyQrScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        ScreenHeader("Mi QR", onBack = onBack)
+        ScreenHeader(L("Mi QR"), onBack = onBack)
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             Text(
-                "Muéstralo para que te agreguen o te cobren.",
+                L("Muéstralo para que te agreguen o te cobren."),
                 style = MaterialTheme.typography.bodyLarge,
                 color = GlassPayColors.MutedText,
                 textAlign = TextAlign.Center,
@@ -118,13 +118,13 @@ fun MyQrScreen(
                 ) {
                     Image(
                         bitmap = bitmap,
-                        contentDescription = "Tu código QR de GlassPay",
+                        contentDescription = L("Tu código QR de GlassPay"),
                         filterQuality = FilterQuality.None,
                         modifier = Modifier.size(260.dp),
                     )
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(session.displayName, style = MaterialTheme.typography.headlineSmall, color = QrInk)
-                        Text("Sin datos personales en el código", style = MaterialTheme.typography.bodySmall, color = QrInkMuted)
+                        Text(L("Sin datos personales en el código"), style = MaterialTheme.typography.bodySmall, color = QrInkMuted)
                     }
                 }
                 Row(
@@ -143,12 +143,12 @@ fun MyQrScreen(
                         gapSize = 0.dp,
                         modifier = Modifier.size(22.dp),
                     )
-                    Text("Se renueva en ${secondsLeft} s", color = GlassPayColors.Text, style = MaterialTheme.typography.labelLarge)
+                    Text(L("Se renueva en %s s", secondsLeft), color = GlassPayColors.Text, style = MaterialTheme.typography.labelLarge)
                 }
             } else if (error != null) {
                 InlineNotice(error ?: "", kind = StatusKind.FAILURE)
                 GpButton(
-                    "Reintentar",
+                    L("Reintentar"),
                     onClick = {
                         error = null
                         qr = null
@@ -159,7 +159,7 @@ fun MyQrScreen(
             } else {
                 CircularProgressIndicator(
                     color = GlassPayColors.Accent,
-                    modifier = Modifier.padding(top = 48.dp).semantics { contentDescription = "Generando tu QR" },
+                    modifier = Modifier.padding(top = 48.dp).semantics { contentDescription = L("Generando tu QR") },
                 )
             }
         }

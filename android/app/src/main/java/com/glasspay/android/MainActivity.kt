@@ -70,6 +70,7 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) setRecentsScreenshotEnabled(false)
         // Lentes: el SDK solo se inicia si ya se dio el permiso de Bluetooth (se pide en Perfil > Lentes).
         GlassesSupport.initializeIfAllowed(this)
+        AppLanguageStore.load(this)
         setContent { GlassPayTheme { GlassPayRoot() } }
     }
 }
@@ -129,6 +130,13 @@ fun GlassPayRoot() {
         showGlasses = false
         showProfile = false
         showCharge = false
+        // Al cerrar sesión (o perderla) no debe quedar abierta ninguna pantalla de la cuenta anterior.
+        showMyQr = false
+        showAddContact = false
+        showSend = false
+        sendContact = null
+        showPayoutEmail = false
+        showStats = false
         assistantChat.value = ChatState()
         cancelConfirmationChecks(context)
         tab = AppTab.HOME
@@ -239,8 +247,8 @@ fun GlassPayRoot() {
         prompting = true
         promptSignal[0] = DeviceAuthenticator.authenticate(
             host,
-            "Desbloquea GlassPay",
-            "Usa tu huella o el bloqueo de tu teléfono",
+            L("Desbloquea GlassPay"),
+            L("Usa tu huella o el bloqueo de tu teléfono"),
             onSuccess = {
                 prompting = false
                 locked = false
@@ -282,7 +290,7 @@ fun GlassPayRoot() {
                     tint = GlassPayColors.Background,
                     modifier = Modifier.size(20.dp),
                 )
-                Text("Sin conexión. Revisa tu red.", color = GlassPayColors.Background, style = MaterialTheme.typography.labelLarge)
+                Text(L("Sin conexión. Revisa tu red."), color = GlassPayColors.Background, style = MaterialTheme.typography.labelLarge)
             }
         }
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -298,7 +306,7 @@ fun GlassPayRoot() {
                         }
                         welcomeMessage = null
                         locked = false
-                        saveNotice = if (saved) null else "No pudimos guardar tu sesión en este teléfono."
+                        saveNotice = if (saved) null else L("No pudimos guardar tu sesión en este teléfono.")
                         tab = AppTab.HOME
                         session = created
                     }
@@ -347,7 +355,7 @@ fun GlassPayRoot() {
                         // Subpantallas primero (en orden de prioridad); al volver de una, se ve la que la abrió.
                         when {
                             showCharge -> Column(modifier = Modifier.fillMaxSize()) {
-                                ScreenHeader("Cobrar", onBack = if (canLeaveCharge) ::closeCharge else null)
+                                ScreenHeader(L("Cobrar"), onBack = if (canLeaveCharge) ::closeCharge else null)
                                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                                     ChargeScreen(
                                         session = current,
@@ -425,6 +433,7 @@ fun GlassPayRoot() {
                                 amountsVisible = amountsVisible,
                                 onToggleAmounts = { amountsVisible = !amountsVisible },
                                 lockAvailability = authAvailability,
+                                onLogout = { invalidateSession(L("Cerraste sesión en este teléfono.")) },
                             )
                             tab == AppTab.HOME -> HomeScreen(
                                 session = current,
@@ -502,12 +511,12 @@ private fun LockScreen(onUnlock: () -> Unit) {
         IconBadge(R.drawable.ic_lock, tint = GlassPayColors.Accent, size = 88.dp, background = GlassPayColors.AccentSoft)
         Text("GlassPay", style = MaterialTheme.typography.headlineLarge, color = GlassPayColors.Text)
         Text(
-            "Está bloqueada. Usa la huella o el bloqueo de tu teléfono.",
+            L("Está bloqueada. Usa la huella o el bloqueo de tu teléfono."),
             style = MaterialTheme.typography.bodyLarge,
             color = GlassPayColors.MutedText,
             textAlign = TextAlign.Center,
         )
-        GpButton("Desbloquear", onClick = onUnlock, icon = R.drawable.ic_lock, modifier = Modifier.fillMaxWidth())
+        GpButton(L("Desbloquear"), onClick = onUnlock, icon = R.drawable.ic_lock, modifier = Modifier.fillMaxWidth())
     }
 }
 
@@ -551,9 +560,9 @@ private fun TabIcon(icon: Int, selected: Boolean) {
     )
 }
 
-private val tabItems = listOf(
-    TabItem(AppTab.HOME, "Inicio", R.drawable.ic_home),
-    TabItem(AppTab.MOVEMENTS, "Movimientos", R.drawable.ic_movements),
-    TabItem(AppTab.ASSISTANT, "Asistente", R.drawable.ic_assistant),
-    TabItem(AppTab.CONTACTS, "Contactos", R.drawable.ic_contacts),
+private val tabItems: List<TabItem> get() = listOf(
+    TabItem(AppTab.HOME, L("Inicio"), R.drawable.ic_home),
+    TabItem(AppTab.MOVEMENTS, L("Movimientos"), R.drawable.ic_movements),
+    TabItem(AppTab.ASSISTANT, L("Asistente"), R.drawable.ic_assistant),
+    TabItem(AppTab.CONTACTS, L("Contactos"), R.drawable.ic_contacts),
 )

@@ -37,21 +37,21 @@ fun isAllowedApproveUrl(url: String?): Boolean {
 fun movementStatusLabel(state: String, kind: String = "cobro"): String {
     if (kind == "envio") {
         return when (state) {
-            "procesando" -> "Enviando"
-            "completada" -> "Enviado"
-            "no_reclamada" -> "Sin reclamar"
-            "fallida" -> "Falló"
-            else -> "Desconocido"
+            "procesando" -> L("Enviando")
+            "completada" -> L("Enviado")
+            "no_reclamada" -> L("Sin reclamar")
+            "fallida" -> L("Falló")
+            else -> L("Desconocido")
         }
     }
     return when (state) {
-        "pagada" -> "Pagado"
-        "aprobada", "enviada" -> "Procesando"
-        "pendiente_de_pagador", "creada" -> "Esperando al pagador"
-        "rechazada" -> "Rechazado"
-        "expirada" -> "Expirado"
-        "fallida" -> "Falló"
-        else -> "Desconocido"
+        "pagada" -> L("Pagado")
+        "aprobada", "enviada" -> L("Procesando")
+        "pendiente_de_pagador", "creada" -> L("Esperando al pagador")
+        "rechazada" -> L("Rechazado")
+        "expirada" -> L("Expirado")
+        "fallida" -> L("Falló")
+        else -> L("Desconocido")
     }
 }
 
@@ -90,7 +90,8 @@ fun formatMoney(amount: String, currency: String): String {
 
 fun formatMovementDate(iso: String): String {
     return try {
-        DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", Locale.forLanguageTag("es-MX"))
+        val pattern = if (currentLanguage == AppLanguage.EN) "MMM d, yyyy, h:mm a" else "d MMM yyyy, HH:mm"
+        DateTimeFormatter.ofPattern(pattern, currentLanguage.locale)
             .format(Instant.parse(iso).atZone(ZoneId.systemDefault()))
     } catch (_: Exception) {
         iso

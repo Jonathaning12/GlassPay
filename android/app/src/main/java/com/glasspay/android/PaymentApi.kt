@@ -544,6 +544,8 @@ class PaymentApi(
         val requestBuilder = Request.Builder()
             .url("$baseUrl$path")
             .header("Accept", "application/json")
+            // Idioma de la app: el servidor redacta en él aclaraciones, respuestas del asistente y etiquetas.
+            .header("X-GlassPay-Language", currentLanguage.code)
         headers.forEach { (name, value) -> requestBuilder.header(name, value) }
         when (method) {
             "POST" -> requestBuilder.post(requireNotNull(body))

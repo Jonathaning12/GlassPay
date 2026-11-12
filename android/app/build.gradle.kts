@@ -64,8 +64,6 @@ dependencies {
     // Lentes Oakley Meta (Meta Wearables DAT). Verificada: 1.0.1 en Maven Central, la última al 07-nov-2026.
     implementation("com.meta.wearable:mwdat-core:1.0.1")
     implementation("com.meta.wearable:mwdat-camera:1.0.1")
-    // Lentes simulados (Mock Device Kit) solo para probar sin lentes; no entra en release.
-    debugImplementation("com.meta.wearable:mwdat-mockdevice:1.0.1")
 
     testImplementation("junit:junit:4.13.2")
 }

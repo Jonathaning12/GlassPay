@@ -74,7 +74,7 @@ fun StatsScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        ScreenHeader("Estadísticas", onBack = onBack)
+        ScreenHeader(L("Estadísticas"), onBack = onBack)
         Column(
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -87,13 +87,13 @@ fun StatsScreen(
                     SkeletonBox(Modifier.fillMaxWidth().height(260.dp))
                 }
                 LoadState.Failed -> {
-                    InlineNotice("No pudimos cargar tus estadísticas.", kind = StatusKind.FAILURE)
-                    GpButton("Reintentar", onClick = { reload += 1 }, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
+                    InlineNotice(L("No pudimos cargar tus estadísticas."), kind = StatusKind.FAILURE)
+                    GpButton(L("Reintentar"), onClick = { reload += 1 }, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
                 }
                 is LoadState.Loaded -> StatsContent(current.value, period)
             }
             Text(
-                "Actividad en GlassPay (Sandbox). Solo cuenta cobros pagados y envíos completados; no es tu saldo bancario.",
+                L("Actividad en GlassPay (Sandbox). Solo cuenta cobros pagados y envíos completados; no es tu saldo bancario."),
                 style = MaterialTheme.typography.bodySmall,
                 color = GlassPayColors.MutedText,
                 textAlign = TextAlign.Center,
@@ -123,7 +123,7 @@ private fun PeriodSelector(selected: StatsPeriod, onSelect: (StatsPeriod) -> Uni
                 color = if (active) GlassPayColors.Raised else Color.Transparent,
                 contentColor = if (active) GlassPayColors.Text else GlassPayColors.MutedText,
                 modifier = Modifier.weight(1f).height(40.dp).semantics {
-                    contentDescription = if (active) "${option.label}, seleccionado" else option.label
+                    contentDescription = if (active) L("%s, seleccionado", option.label) else option.label
                 },
             ) {
                 Box(contentAlignment = Alignment.Center) {
@@ -140,7 +140,7 @@ private fun StatsContent(stats: Stats, period: StatsPeriod) {
         stats.pendingByStatus == 0 && stats.notCompletedByStatus == 0
     // Hero: balance del periodo y variación contra el anterior.
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Overline("Balance del periodo")
+        Overline(L("Balance del periodo"))
         Text(formatGroupedMoney(stats.netTotal, signed = true), style = MaterialTheme.typography.displaySmall, color = GlassPayColors.Text)
         netChangePercent(stats.netTotal, stats.previousNetTotal)?.let { change ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -154,7 +154,7 @@ private fun StatsContent(stats: Stats, period: StatsPeriod) {
                 ) {
                     Icon(
                         painterResource(if (up) R.drawable.ic_send else R.drawable.ic_receive),
-                        contentDescription = if (up) "Subió" else "Bajó",
+                        contentDescription = if (up) L("Subió") else L("Bajó"),
                         tint = if (up) GlassPayColors.Success else GlassPayColors.Error,
                         modifier = Modifier.size(16.dp),
                     )
@@ -165,11 +165,11 @@ private fun StatsContent(stats: Stats, period: StatsPeriod) {
         }
     }
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        TotalTile("Cobrado", stats.paidTotal, if (stats.paidCount == 1) "1 cobro pagado" else "${stats.paidCount} cobros pagados", GlassPayColors.ChartPaid, Modifier.weight(1f))
-        TotalTile("Enviado", stats.sentTotal, if (stats.sentCount == 1) "1 envío completado" else "${stats.sentCount} envíos completados", GlassPayColors.ChartSent, Modifier.weight(1f))
+        TotalTile(L("Cobrado"), stats.paidTotal, if (stats.paidCount == 1) L("1 cobro pagado") else L("%s cobros pagados", stats.paidCount), GlassPayColors.ChartPaid, Modifier.weight(1f))
+        TotalTile(L("Enviado"), stats.sentTotal, if (stats.sentCount == 1) L("1 envío completado") else L("%s envíos completados", stats.sentCount), GlassPayColors.ChartSent, Modifier.weight(1f))
     }
     if (empty) {
-        InlineNotice("Sin actividad en este periodo. Cuando cobres o envíes, aparecerá aquí.", icon = R.drawable.ic_chart)
+        InlineNotice(L("Sin actividad en este periodo. Cuando cobres o envíes, aparecerá aquí."), icon = R.drawable.ic_chart)
         return
     }
     ChartCard(stats, period)
@@ -204,10 +204,10 @@ private fun ChartCard(stats: Stats, period: StatsPeriod) {
     val bucket = stats.buckets.getOrNull(selected)
     GpCard(modifier = Modifier.fillMaxWidth(), spacing = 14.dp) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Por ${period.bucketNoun}", style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text, modifier = Modifier.weight(1f))
+            Text(L("Por %s", period.bucketNoun), style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text, modifier = Modifier.weight(1f))
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                LegendItem("Cobrado", GlassPayColors.ChartPaid)
-                LegendItem("Enviado", GlassPayColors.ChartSent)
+                LegendItem(L("Cobrado"), GlassPayColors.ChartPaid)
+                LegendItem(L("Enviado"), GlassPayColors.ChartSent)
             }
         }
         // Lectura del periodo seleccionado: arriba de la gráfica para que el dedo no la tape.
@@ -236,27 +236,27 @@ private fun ChartCard(stats: Stats, period: StatsPeriod) {
                 .fillMaxWidth()
                 .height(220.dp)
                 .semantics {
-                    contentDescription = "Gráfica de cobrado y enviado por ${period.bucketNoun}. " +
+                    contentDescription = L("Gráfica de cobrado y enviado por %s. ", period.bucketNoun) +
                         stats.buckets.joinToString(". ") {
-                            "${it.label}: cobrado ${formatGroupedMoney(it.paidTotal)}, enviado ${formatGroupedMoney(it.sentTotal)}"
+                            L("%s: cobrado %s, enviado %s", it.label, formatGroupedMoney(it.paidTotal), formatGroupedMoney(it.sentTotal))
                         }
                 },
         )
-        Text("Toca o desliza sobre la gráfica para ver cada ${period.bucketNoun}.", style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
+        Text(L("Toca o desliza sobre la gráfica para ver cada %s.", period.bucketNoun), style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
     }
 }
 
 @Composable
 private fun StatusCard(stats: Stats) {
     val parts = listOf(
-        Triple("Pagados", stats.paidByStatus, StatusKind.SUCCESS),
-        Triple("Pendientes", stats.pendingByStatus, StatusKind.PENDING),
-        Triple("No completados", stats.notCompletedByStatus, StatusKind.FAILURE),
+        Triple(L("Pagados"), stats.paidByStatus, StatusKind.SUCCESS),
+        Triple(L("Pendientes"), stats.pendingByStatus, StatusKind.PENDING),
+        Triple(L("No completados"), stats.notCompletedByStatus, StatusKind.FAILURE),
     )
     val total = parts.sumOf { it.second }
     if (total == 0) return
     GpCard(modifier = Modifier.fillMaxWidth(), spacing = 14.dp) {
-        Text("Cobros por estado", style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
+        Text(L("Cobros por estado"), style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
         val max = parts.maxOf { it.second }.coerceAtLeast(1)
         parts.forEachIndexed { order, (label, count, kind) ->
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -279,7 +279,7 @@ private fun StatusCard(stats: Stats) {
                 DotTrack(count.toFloat() / max, statusColor(kind), order = order)
             }
         }
-        Text("No completados = rechazados, expirados o fallidos.", style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
+        Text(L("No completados = rechazados, expirados o fallidos."), style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
     }
 }
 
@@ -287,14 +287,14 @@ private fun StatusCard(stats: Stats) {
 private fun TopPayersCard(payers: List<StatsPayer>) {
     val max = payers.maxOf { it.total }.coerceAtLeast(0.01)
     GpCard(modifier = Modifier.fillMaxWidth(), spacing = 16.dp) {
-        Text("Quién te pagó más", style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
+        Text(L("Quién te pagó más"), style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
         payers.forEachIndexed { order, payer ->
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Avatar(payer.name, size = 36.dp)
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Row {
                         Text(
-                            "${payer.name} · ${payer.count} ${if (payer.count == 1) "cobro" else "cobros"}",
+                            if (payer.count == 1) L("%s · 1 cobro", payer.name) else L("%s · %s cobros", payer.name, payer.count),
                             style = MaterialTheme.typography.labelLarge,
                             color = GlassPayColors.Text,
                             modifier = Modifier.weight(1f),

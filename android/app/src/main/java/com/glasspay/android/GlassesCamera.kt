@@ -175,7 +175,7 @@ class GlassesCamera {
     /** Pedir el permiso abre Meta AI, así que antes se confirma con el usuario. */
     fun permissionResult(status: PermissionStatus) {
         showPermissionPrompt = false
-        if (status == PermissionStatus.Granted) beginStream() else errorMessage = "Meta AI no autorizó la cámara de los lentes."
+        if (status == PermissionStatus.Granted) beginStream() else errorMessage = L("Meta AI no autorizó la cámara de los lentes.")
     }
 
     private fun sessionChanged(state: DeviceSessionState) {
@@ -191,7 +191,7 @@ class GlassesCamera {
                     autoRestarts += 1
                     start()
                 } else if (wantsStream) {
-                    errorMessage = "No pudimos conectar con la cámara de los lentes."
+                    errorMessage = L("No pudimos conectar con la cámara de los lentes.")
                 }
             }
             else -> Unit

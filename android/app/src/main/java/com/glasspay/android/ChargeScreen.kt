@@ -94,9 +94,9 @@ import com.meta.wearable.dat.core.types.Permission
 import com.meta.wearable.dat.core.types.PermissionStatus
 import java.util.concurrent.Executors
 
-const val SESSION_INVALID_MESSAGE = "Tu sesión ya no es válida. Crea tu cuenta de nuevo."
-const val SESSION_INVALID_CONFIRM_MESSAGE =
-    "Tu sesión ya no es válida. El cobro no se envió. Crea tu cuenta de nuevo."
+val SESSION_INVALID_MESSAGE: String get() = L("Tu sesión ya no es válida. Crea tu cuenta de nuevo.")
+val SESSION_INVALID_CONFIRM_MESSAGE: String get() =
+    L("Tu sesión ya no es válida. El cobro no se envió. Crea tu cuenta de nuevo.")
 
 @Composable
 fun ChargeScreen(
@@ -177,7 +177,7 @@ fun ChargeScreen(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         cameraGranted = granted
-        if (!granted) cameraError = "Necesitamos la cámara para leer el QR."
+        if (!granted) cameraError = L("Necesitamos la cámara para leer el QR.")
     }
     val audioPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -187,7 +187,7 @@ fun ChargeScreen(
         if (!granted) {
             startVoiceWhenPermissionGranted = false
             dispatchCharge(
-                chargeMachine.inputError("Permiso de micrófono denegado. Usa la entrada por texto."),
+                chargeMachine.inputError(L("Permiso de micrófono denegado. Usa la entrada por texto.")),
             )
         } else if (startVoiceWhenPermissionGranted) {
             startVoiceWhenPermissionGranted = false
@@ -200,13 +200,13 @@ fun ChargeScreen(
         VoiceRecognizer(
             context = context,
             onResult = { text ->
-                voiceStatus = "Procesando voz…"
+                voiceStatus = L("Procesando voz…")
                 lastRecognizedText = text
                 recognizedText = text
             },
-            onReady = { voiceStatus = "Escuchando por ${audioRoute.inputLabel}…" },
-            onEnd = { voiceStatus = "Procesando voz…" },
-            onPartial = { voiceStatus = "Escuchando por ${audioRoute.inputLabel}…" },
+            onReady = { voiceStatus = L("Escuchando por %s…", audioRoute.inputLabel) },
+            onEnd = { voiceStatus = L("Procesando voz…") },
+            onPartial = { voiceStatus = L("Escuchando por %s…", audioRoute.inputLabel) },
             reportError = { errorCode, message ->
                 if (!shouldAcceptVoiceError(chargeState)) {
                     return@VoiceRecognizer
@@ -245,11 +245,11 @@ fun ChargeScreen(
         }
         if (!voiceRecognizer.isAvailable()) {
             dispatchCharge(
-                chargeMachine.inputError("El reconocimiento de voz no está disponible. Usa la entrada por texto."),
+                chargeMachine.inputError(L("El reconocimiento de voz no está disponible. Usa la entrada por texto.")),
             )
             return
         }
-        voiceStatus = "Preparando micrófono…"
+        voiceStatus = L("Preparando micrófono…")
         audioRoute.activate()
         action()
     }
@@ -280,7 +280,7 @@ fun ChargeScreen(
         }
         dispatchCharge(chargeMachine.beginListening())
         speechOutput.speak(
-            "Dicta el monto y el concepto del cobro.",
+            L("Dicta el monto y el concepto del cobro."),
             "charge_prompt",
         ) {
             startVoiceAfterSpeech { voiceRecognizer.start() }
@@ -299,13 +299,13 @@ fun ChargeScreen(
                 ChargeInputAppendResult.TooManyRounds -> {
                     inputSession = null
                     dispatchCharge(
-                        chargeMachine.restartInput("No pude completar la aclaración. Empieza el cobro otra vez."),
+                        chargeMachine.restartInput(L("No pude completar la aclaración. Empieza el cobro otra vez.")),
                     )
                     return
                 }
                 ChargeInputAppendResult.TooLong -> {
                     inputSession = null
-                    dispatchCharge(chargeMachine.restartInput("La frase es demasiado larga. Empieza el cobro otra vez."))
+                    dispatchCharge(chargeMachine.restartInput(L("La frase es demasiado larga. Empieza el cobro otra vez.")))
                     return
                 }
                 ChargeInputAppendResult.Invalid -> return
@@ -313,7 +313,7 @@ fun ChargeScreen(
         }
         if (nextSession == null) {
             inputSession = null
-            dispatchCharge(chargeMachine.restartInput("La frase es demasiado larga. Empieza el cobro otra vez."))
+            dispatchCharge(chargeMachine.restartInput(L("La frase es demasiado larga. Empieza el cobro otra vez.")))
             return
         }
         inputSession = nextSession
@@ -328,8 +328,8 @@ fun ChargeScreen(
                         inputSession,
                         InputSessionDecisionReason.SERVER_CLARIFICATION,
                     )
-                    dispatchCharge(chargeMachine.clarification(result.clarificationQuestion ?: "¿Qué dato debo aclarar?"))
-                    speechOutput.speak(result.clarificationQuestion ?: "¿Qué dato debo aclarar?", "clarification")
+                    dispatchCharge(chargeMachine.clarification(result.clarificationQuestion ?: L("¿Qué dato debo aclarar?")))
+                    speechOutput.speak(result.clarificationQuestion ?: L("¿Qué dato debo aclarar?"), "clarification")
                 } else {
                     inputSession = inputSessionAfter(inputSession, ChargeInputClearReason.PROPOSAL_CREATED)
                     lastRecognizedText = null
@@ -338,7 +338,7 @@ fun ChargeScreen(
                     val remaining = remainingSeconds(next.expiresAt)
                     dispatchCharge(chargeMachine.preview(next, remaining))
                     speechOutput.speak(
-                        "Cobro de ${next.amount} ${next.currency} por ${next.concept}. ¿Confirmas?",
+                        L("Cobro de %s %s por %s. ¿Confirmas?", next.amount, next.currency, next.concept),
                         "charge_preview",
                     ) {
                         startVoiceAfterSpeech { voiceRecognizer.start() }
@@ -401,7 +401,7 @@ fun ChargeScreen(
             try {
                 val result = api.confirm(collector, preview.proposal.proposalId)
                 dispatchCharge(chargeMachine.created(result.requestId, result.statusToken))
-                speechOutput.speak("Solicitud enviada al pagador.", "request_created")
+                speechOutput.speak(L("Solicitud enviada al pagador."), "request_created")
             } catch (exception: ApiException) {
                 Log.i("GlassPay", "confirm failure type=${exception.type} httpCode=${exception.httpCode}")
                 if (isSessionInvalid(exception.type)) {
@@ -430,7 +430,7 @@ fun ChargeScreen(
         lastRecognizedText = null
         recognizedText = null
         dispatchCharge(chargeMachine.cancel())
-        speechOutput.speak("Cobro cancelado.", "charge_cancelled")
+        speechOutput.speak(L("Cobro cancelado."), "charge_cancelled")
     }
 
     fun startOverCharge() {
@@ -545,7 +545,7 @@ fun ChargeScreen(
             try {
                 val saved = api.saveContact(collector, identified.resolutionId)
                 dispatch(ResolveEvent.ContactSaved(saved.contactId))
-                contactMessage = "Guardado en tus contactos"
+                contactMessage = L("Guardado en tus contactos")
                 vibrate(context)
             } catch (exception: CancellationException) {
                 throw exception
@@ -553,14 +553,14 @@ fun ChargeScreen(
                 Log.i("GlassPay", "saveContact failure type=${exception.type} httpCode=${exception.httpCode}")
                 when (exception.type) {
                     ApiFailureType.UNAUTHORIZED -> invalidMessage = SESSION_INVALID_MESSAGE
-                    ApiFailureType.NOT_FOUND -> contactMessage = "No se pudo guardar. Escanea su QR de nuevo."
-                    ApiFailureType.CONFLICT -> contactMessage = "Llegaste al máximo de contactos."
-                    ApiFailureType.RATE_LIMITED -> contactMessage = "Demasiados intentos. Espera unos segundos."
-                    else -> contactMessage = "No se pudo guardar. Revisa tu conexión."
+                    ApiFailureType.NOT_FOUND -> contactMessage = L("No se pudo guardar. Escanea su QR de nuevo.")
+                    ApiFailureType.CONFLICT -> contactMessage = L("Llegaste al máximo de contactos.")
+                    ApiFailureType.RATE_LIMITED -> contactMessage = L("Demasiados intentos. Espera unos segundos.")
+                    else -> contactMessage = L("No se pudo guardar. Revisa tu conexión.")
                 }
             } catch (_: Exception) {
                 Log.i("GlassPay", "saveContact failure type=UNKNOWN httpCode=none")
-                contactMessage = "No se pudo guardar. Revisa tu conexión."
+                contactMessage = L("No se pudo guardar. Revisa tu conexión.")
             } finally {
                 savingContact = false
             }
@@ -652,7 +652,7 @@ fun ChargeScreen(
             lastRecognizedText = null
             voiceStatus = null
             dispatchCharge(chargeMachine.resetForNewScan(
-                    (chargeMachine.state as? ChargeState.Ready)?.message ?: "La resolución venció. Escanea otro QR.",
+                    (chargeMachine.state as? ChargeState.Ready)?.message ?: L("La resolución venció. Escanea otro QR."),
                 ))
             dispatch(ResolveEvent.Reset)
         }
@@ -696,7 +696,7 @@ fun ChargeScreen(
                 if (updated.payment == PaymentTracking.Paid && announcedPaymentRequestId != requestId) {
                     announcedPaymentRequestId = requestId
                     vibrate(context)
-                    speechOutput.speak("Pago recibido.", "payment_received")
+                    speechOutput.speak(L("Pago recibido."), "payment_received")
                 }
                 if (isTerminal(tracking)) break
             } catch (exception: ApiException) {
@@ -704,7 +704,7 @@ fun ChargeScreen(
                 if (exception.type == ApiFailureType.RATE_LIMITED) {
                     dispatchCharge(
                         chargeMachine.paymentUpdated(
-                            PaymentTracking.Error("Demasiados intentos. Espera unos segundos."),
+                            PaymentTracking.Error(L("Demasiados intentos. Espera unos segundos.")),
                         ),
                     )
                     break
@@ -712,7 +712,7 @@ fun ChargeScreen(
                 if (exception.type != ApiFailureType.NETWORK && exception.type != ApiFailureType.TIMEOUT) {
                     dispatchCharge(
                         chargeMachine.paymentUpdated(
-                            PaymentTracking.Error("No pudimos consultar el estado del pago."),
+                            PaymentTracking.Error(L("No pudimos consultar el estado del pago.")),
                         ),
                     )
                     break
@@ -756,7 +756,7 @@ fun ChargeScreen(
                         modifier = Modifier.size(22.dp),
                     )
                     Text(
-                        if (scansWithGlasses) "Mira el QR de tu amigo" else "Apunta al QR de tu amigo",
+                        if (scansWithGlasses) L("Mira el QR de tu amigo") else L("Apunta al QR de tu amigo"),
                         color = GlassPayColors.Text,
                         style = MaterialTheme.typography.titleMedium,
                     )
@@ -782,7 +782,7 @@ fun ChargeScreen(
                     ) {
                         CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp, color = GlassPayColors.Accent)
                         Text(
-                            if (state.waking) "Despertando el servidor…" else "Resolviendo QR…",
+                            if (state.waking) L("Despertando el servidor…") else L("Resolviendo QR…"),
                             color = GlassPayColors.Text,
                             style = MaterialTheme.typography.titleMedium,
                         )
@@ -796,16 +796,16 @@ fun ChargeScreen(
                 }
                 if (scansWithGlasses) {
                     if (glasses.isPaused) {
-                        Text("Video en pausa: toca el lateral de los lentes.", color = GlassPayColors.Warning, style = MaterialTheme.typography.bodyMedium)
+                        Text(L("Video en pausa: toca el lateral de los lentes."), color = GlassPayColors.Warning, style = MaterialTheme.typography.bodyMedium)
                     }
                     glasses.errorMessage?.let {
                         Text(it, color = GlassPayColors.Error, style = MaterialTheme.typography.bodyMedium)
-                        GpButton("Reintentar con los lentes", onClick = { glasses.restart() }, modifier = Modifier.fillMaxWidth())
+                        GpButton(L("Reintentar con los lentes"), onClick = { glasses.restart() }, modifier = Modifier.fillMaxWidth())
                     }
                 }
                 if (canUseGlasses && uiState is ResolveState.Scanning) {
                     GpButton(
-                        if (prefersPhoneCamera) "Usar los lentes" else "Usar la cámara del teléfono",
+                        if (prefersPhoneCamera) L("Usar los lentes") else L("Usar la cámara del teléfono"),
                         onClick = { prefersPhoneCamera = !prefersPhoneCamera },
                         kind = GpButtonKind.SECONDARY,
                         icon = if (prefersPhoneCamera) R.drawable.ic_glasses else R.drawable.ic_qr,
@@ -874,16 +874,16 @@ fun ChargeScreen(
                 glasses.showPermissionPrompt = false
                 glasses.stop()
             },
-            title = { Text("Autorizar en Meta AI") },
-            text = { Text("Se abrirá Meta AI para permitir que GlassPay use la cámara de los lentes.") },
+            title = { Text(L("Autorizar en Meta AI")) },
+            text = { Text(L("Se abrirá Meta AI para permitir que GlassPay use la cámara de los lentes.")) },
             confirmButton = {
-                TextButton(onClick = { glassesPermissionLauncher.launch(Permission.CAMERA) }) { Text("Abrir Meta AI") }
+                TextButton(onClick = { glassesPermissionLauncher.launch(Permission.CAMERA) }) { Text(L("Abrir Meta AI")) }
             },
             dismissButton = {
                 TextButton(onClick = {
                     glasses.showPermissionPrompt = false
                     glasses.stop()
-                }) { Text("Cancelar") }
+                }) { Text(L("Cancelar")) }
             },
         )
     }
@@ -918,14 +918,14 @@ private fun GlassesScanner(glasses: GlassesCamera, onToken: (String) -> Unit) {
         if (preview != null) {
             Image(
                 bitmap = preview,
-                contentDescription = "Video de los lentes",
+                contentDescription = L("Video de los lentes"),
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
             )
         } else if (glasses.errorMessage == null) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp, color = GlassPayColors.Accent)
-                Text("Conectando con tus lentes…", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodyMedium)
+                Text(L("Conectando con tus lentes…"), color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodyMedium)
             }
         }
     }
@@ -963,7 +963,7 @@ private fun IdentifiedContent(
     val audioRouteButton = @Composable {
         if (canSwitchAudio) {
             GpButton(
-                if (prefersGlassesAudio) "Usar el micrófono del teléfono" else "Usar el micrófono de los lentes",
+                if (prefersGlassesAudio) L("Usar el micrófono del teléfono") else L("Usar el micrófono de los lentes"),
                 onClick = onToggleAudioRoute,
                 kind = GpButtonKind.GHOST,
             )
@@ -975,19 +975,19 @@ private fun IdentifiedContent(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Avatar(state.displayName, size = 48.dp)
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Overline("Cobrar a")
+                    Overline(L("Cobrar a"))
                     Text(state.displayName, color = GlassPayColors.Text, style = MaterialTheme.typography.headlineSmall)
                 }
             }
             if (state.contactId != null) {
-                StatusPill("En tus contactos", StatusKind.SUCCESS)
+                StatusPill(L("En tus contactos"), StatusKind.SUCCESS)
             } else if (savingContact) {
                 CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp, color = GlassPayColors.Accent)
             } else if (chargeState is ChargeState.Ready ||
                 chargeState is ChargeState.Error ||
                 (chargeState is ChargeState.Created && isTerminal(chargeState.payment))
             ) {
-                GpButton("Guardar contacto", onClick = onSaveContact, kind = GpButtonKind.SECONDARY, icon = R.drawable.ic_plus, modifier = Modifier.fillMaxWidth())
+                GpButton(L("Guardar contacto"), onClick = onSaveContact, kind = GpButtonKind.SECONDARY, icon = R.drawable.ic_plus, modifier = Modifier.fillMaxWidth())
             }
         }
     }
@@ -995,7 +995,7 @@ private fun IdentifiedContent(
     // Los lentes están conectados en GlassPay, pero su audio Bluetooth no: la voz cae al teléfono.
     if (glassesAudioMissing && usesVoice(chargeState)) {
         InlineNotice(
-            "Tus lentes no están enlazados por Bluetooth; la voz sale por el teléfono.",
+            L("Tus lentes no están enlazados por Bluetooth; la voz sale por el teléfono."),
             kind = StatusKind.PENDING,
             icon = R.drawable.ic_glasses,
         )
@@ -1014,18 +1014,18 @@ private fun IdentifiedContent(
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 MicIndicator()
-                Text(voiceStatus ?: "Preparando micrófono…", color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
+                Text(voiceStatus ?: L("Preparando micrófono…"), color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
             }
             audioRouteButton()
         }
-        ChargeState.Interpreting -> WorkingRow("Interpretando…")
+        ChargeState.Interpreting -> WorkingRow(L("Interpretando…"))
         is ChargeState.Clarification -> GpCard(modifier = Modifier.fillMaxWidth(), spacing = 8.dp) {
-            Overline("Necesito un dato más", color = GlassPayColors.Warning)
+            Overline(L("Necesito un dato más"), color = GlassPayColors.Warning)
             Text(charge.question, color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
         }
         is ChargeState.Preview -> {
             ReceiptCard(charge, state.displayName)
-            if (voiceStatus != null && voiceStatus != "Procesando voz…" && charge.remainingSeconds > 0) {
+            if (voiceStatus != null && voiceStatus != L("Procesando voz…") && charge.remainingSeconds > 0) {
                 Row(
                     modifier = Modifier.fillMaxWidth().background(GlassPayColors.AccentSoft, MaterialTheme.shapes.medium).padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1033,14 +1033,14 @@ private fun IdentifiedContent(
                 ) {
                     MicIndicator()
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("Di «confirmar» o «cancelar»", color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
+                        Text(L("Di «confirmar» o «cancelar»"), color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
                         Text(voiceStatus, color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 audioRouteButton()
             }
         }
-        ChargeState.Confirming -> WorkingRow("Confirmando…")
+        ChargeState.Confirming -> WorkingRow(L("Confirmando…"))
         is ChargeState.Created -> {
             PaymentProgress(
                 payment = charge.payment,
@@ -1052,38 +1052,38 @@ private fun IdentifiedContent(
         is ChargeState.Error -> InlineNotice(charge.message, kind = StatusKind.FAILURE)
     }
     lastRecognizedText?.takeIf { showsRecognizedText(chargeState) }?.let {
-        EchoText("Entendí", displayText(it, 120))
+        EchoText(L("Entendí"), displayText(it, 120))
     }
     if (showsAccumulatedText(chargeState)) {
-        accumulatedText?.let { EchoText("Frase acumulada", displayText(it, 240)) }
+        accumulatedText?.let { EchoText(L("Frase acumulada"), displayText(it, 240)) }
     }
     if (ChargeAction.CONFIRM in actions) {
-        GpButton("Confirmar cobro", onClick = onConfirm, icon = R.drawable.ic_check, modifier = Modifier.fillMaxWidth())
+        GpButton(L("Confirmar cobro"), onClick = onConfirm, icon = R.drawable.ic_check, modifier = Modifier.fillMaxWidth())
     }
     if (ChargeAction.DICTATE in actions) {
-        GpButton("Dictar cobro", onClick = onStartCharge, icon = R.drawable.ic_mic, modifier = Modifier.fillMaxWidth())
+        GpButton(L("Dictar cobro"), onClick = onStartCharge, icon = R.drawable.ic_mic, modifier = Modifier.fillMaxWidth())
     }
     if (ChargeAction.ANSWER in actions) {
-        GpButton("Responder", onClick = onStartCharge, icon = R.drawable.ic_mic, modifier = Modifier.fillMaxWidth())
+        GpButton(L("Responder"), onClick = onStartCharge, icon = R.drawable.ic_mic, modifier = Modifier.fillMaxWidth())
     }
-    if (ChargeAction.RETRY in actions) GpButton("Intentar de nuevo", onClick = onRetry, modifier = Modifier.fillMaxWidth())
+    if (ChargeAction.RETRY in actions) GpButton(L("Intentar de nuevo"), onClick = onRetry, modifier = Modifier.fillMaxWidth())
     if (ChargeAction.CANCEL in actions) {
-        GpButton("Cancelar", onClick = onCancel, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
+        GpButton(L("Cancelar"), onClick = onCancel, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
     }
     if (ChargeAction.STOP_WAITING in actions) {
-        GpButton("Dejar de esperar", onClick = onStopWaiting, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
+        GpButton(L("Dejar de esperar"), onClick = onStopWaiting, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
     }
     if (ChargeAction.SCAN_ANOTHER in actions && chargeState !is ChargeState.Created) {
-        GpButton("Escanear otro QR", onClick = onReset, kind = GpButtonKind.SECONDARY, icon = R.drawable.ic_charge, modifier = Modifier.fillMaxWidth())
+        GpButton(L("Escanear otro QR"), onClick = onReset, kind = GpButtonKind.SECONDARY, icon = R.drawable.ic_charge, modifier = Modifier.fillMaxWidth())
     }
     if (ChargeAction.BACK in actions || ChargeAction.START_OVER in actions) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             if (ChargeAction.BACK in actions) {
-                GpButton("Volver", onClick = onBack, kind = GpButtonKind.GHOST, icon = R.drawable.ic_back)
+                GpButton(L("Volver"), onClick = onBack, kind = GpButtonKind.GHOST, icon = R.drawable.ic_back)
             } else {
                 Box(Modifier)
             }
-            if (ChargeAction.START_OVER in actions) GpButton("Empezar de nuevo", onClick = onStartOver, kind = GpButtonKind.GHOST)
+            if (ChargeAction.START_OVER in actions) GpButton(L("Empezar de nuevo"), onClick = onStartOver, kind = GpButtonKind.GHOST)
         }
     }
     if (showsTextInput(chargeState)) {
@@ -1091,8 +1091,8 @@ private fun IdentifiedContent(
         OutlinedTextField(
             value = textInput,
             onValueChange = onTextInput,
-            label = { Text("O escribe la frase del cobro") },
-            placeholder = { Text("Cóbrale 350 pesos por la cena") },
+            label = { Text(L("O escribe la frase del cobro")) },
+            placeholder = { Text(L("Cóbrale 350 pesos por la cena")) },
             shape = MaterialTheme.shapes.medium,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = GlassPayColors.Accent,
@@ -1103,7 +1103,7 @@ private fun IdentifiedContent(
             modifier = Modifier.fillMaxWidth(),
         )
         GpButton(
-            "Interpretar texto",
+            L("Interpretar texto"),
             onClick = onInterpretText,
             enabled = textInput.isNotBlank(),
             kind = GpButtonKind.SECONDARY,
@@ -1118,14 +1118,14 @@ private fun IdentifiedContent(
 private fun ReceiptCard(charge: ChargeState.Preview, payerName: String) {
     val expired = charge.remainingSeconds <= 0
     GpCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(24.dp), spacing = 18.dp) {
-        Overline("Revisa el cobro")
+        Overline(L("Revisa el cobro"))
         MoneyText(formatMoney(charge.proposal.amount, charge.proposal.currency), style = MaterialTheme.typography.displaySmall)
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text("Concepto", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
+            Text(L("Concepto"), color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
             Text(charge.proposal.concept, color = GlassPayColors.Text, style = MaterialTheme.typography.bodyLarge)
         }
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text("Pagador", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
+            Text(L("Pagador"), color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
             Text(payerName, color = GlassPayColors.Text, style = MaterialTheme.typography.bodyLarge)
         }
         HorizontalDivider(color = GlassPayColors.Line)
@@ -1133,7 +1133,7 @@ private fun ReceiptCard(charge: ChargeState.Preview, payerName: String) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(painterResource(R.drawable.ic_clock), contentDescription = null, tint = timeColor, modifier = Modifier.size(20.dp))
             Text(
-                if (expired) "La propuesta venció" else "Vence en ${formatCountdown(charge.remainingSeconds)}",
+                if (expired) L("La propuesta venció") else L("Vence en %s", formatCountdown(charge.remainingSeconds)),
                 color = timeColor,
                 style = MaterialTheme.typography.labelLarge,
             )
@@ -1149,7 +1149,7 @@ private fun ReceiptCard(charge: ChargeState.Preview, payerName: String) {
         charge.message?.let { Text(it, color = GlassPayColors.Error, style = MaterialTheme.typography.bodyMedium) }
     }
     if (!expired) {
-        InlineNotice("Di «confirmar» o toca el botón. «Cancelar» lo descarta.", icon = R.drawable.ic_mic)
+        InlineNotice(L("Di «confirmar» o toca el botón. «Cancelar» lo descarta."), icon = R.drawable.ic_mic)
     }
 }
 
@@ -1237,7 +1237,7 @@ private fun MicIndicator() {
             modifier = Modifier
                 .size(40.dp)
                 .background(GlassPayColors.Accent, CircleShape)
-                .semantics { contentDescription = "Micrófono escuchando" },
+                .semantics { contentDescription = L("Micrófono escuchando") },
             contentAlignment = Alignment.Center,
         ) {
             Icon(painterResource(R.drawable.ic_mic), contentDescription = null, tint = GlassPayColors.OnAccent, modifier = Modifier.size(22.dp))
@@ -1259,7 +1259,7 @@ private fun ResolveContent(
             when (state) {
                 is ResolveState.Failed -> state.message
                 is ResolveState.RetryableError -> state.message
-                else -> "Buscando un QR de GlassPay…"
+                else -> L("Buscando un QR de GlassPay…")
             },
             color = if (failed) GlassPayColors.Error else GlassPayColors.Text,
             style = MaterialTheme.typography.titleMedium,
@@ -1267,14 +1267,14 @@ private fun ResolveContent(
     }
     if (!failed) {
         Text(
-            "Solo se leen códigos de GlassPay. Los demás se ignoran sin enviar nada.",
+            L("Solo se leen códigos de GlassPay. Los demás se ignoran sin enviar nada."),
             color = GlassPayColors.MutedText,
             style = MaterialTheme.typography.bodySmall,
         )
     }
-    if (state is ResolveState.RetryableError) GpButton("Reintentar", onClick = onRetry, modifier = Modifier.fillMaxWidth())
+    if (state is ResolveState.RetryableError) GpButton(L("Reintentar"), onClick = onRetry, modifier = Modifier.fillMaxWidth())
     if (state is ResolveState.Failed) {
-        GpButton("Escanear otro QR", onClick = onScanAnother, kind = GpButtonKind.SECONDARY, icon = R.drawable.ic_charge, modifier = Modifier.fillMaxWidth())
+        GpButton(L("Escanear otro QR"), onClick = onScanAnother, kind = GpButtonKind.SECONDARY, icon = R.drawable.ic_charge, modifier = Modifier.fillMaxWidth())
     }
     cameraError?.let { Text(it, color = GlassPayColors.Error, style = MaterialTheme.typography.bodyMedium) }
 }
@@ -1286,11 +1286,11 @@ internal fun remainingSeconds(expiresAt: String): Long {
 
 private fun waitingPaymentMessage(elapsedSeconds: Long): String {
     return when {
-        elapsedSeconds < 4 -> "Confirmando tu pago con PayPal…"
-        elapsedSeconds < 10 -> "Preparando tu comprobante…"
-        elapsedSeconds < 20 -> "Terminando detalles…"
-        elapsedSeconds < 30 -> "Esto está tardando un poco más de lo normal…"
-        else -> "Tu pago está en proceso…"
+        elapsedSeconds < 4 -> L("Confirmando tu pago con PayPal…")
+        elapsedSeconds < 10 -> L("Preparando tu comprobante…")
+        elapsedSeconds < 20 -> L("Terminando detalles…")
+        elapsedSeconds < 30 -> L("Esto está tardando un poco más de lo normal…")
+        else -> L("Tu pago está en proceso…")
     }
 }
 

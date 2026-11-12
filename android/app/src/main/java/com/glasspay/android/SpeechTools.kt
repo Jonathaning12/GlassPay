@@ -43,7 +43,7 @@ class VoiceRecognizer(
                     ?.firstOrNull()
                     .orEmpty()
                 if (text.isBlank()) {
-                    reportError(SpeechRecognizer.ERROR_NO_MATCH, "No escuché una frase.")
+                    reportError(SpeechRecognizer.ERROR_NO_MATCH, L("No escuché una frase."))
                 } else {
                     resultDelivered = true
                     onResult(text)
@@ -77,7 +77,7 @@ class VoiceRecognizer(
             } ?: run {
                 reportError(
                     SpeechRecognizer.ERROR_CLIENT,
-                    "El reconocimiento de voz no está disponible. Usa texto.",
+                    L("El reconocimiento de voz no está disponible. Usa texto."),
                 )
                 return@post
             }
@@ -86,8 +86,8 @@ class VoiceRecognizer(
                 speechRecognizer.cancel()
                 speechRecognizer.startListening(
                     Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                        putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-MX")
-                        putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "es-MX")
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE, currentLanguage.speechTag)
+                        putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, currentLanguage.speechTag)
                         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
                         putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
                     },
@@ -95,12 +95,12 @@ class VoiceRecognizer(
             } catch (_: SecurityException) {
                 reportError(
                     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS,
-                    "Permiso de micrófono denegado. Usa la entrada por texto.",
+                    L("Permiso de micrófono denegado. Usa la entrada por texto."),
                 )
             } catch (_: RuntimeException) {
                 reportError(
                     SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
-                    "El servicio de voz está ocupado o no pudo iniciar. Intenta de nuevo.",
+                    L("El servicio de voz está ocupado o no pudo iniciar. Intenta de nuevo."),
                 )
             }
         }
@@ -129,14 +129,14 @@ class VoiceRecognizer(
 fun voiceErrorMessage(error: Int): String {
     return when (error) {
         SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
-            "Permiso de micrófono denegado. Usa la entrada por texto."
+            L("Permiso de micrófono denegado. Usa la entrada por texto.")
         SpeechRecognizer.ERROR_RECOGNIZER_BUSY ->
-            "El servicio de voz está ocupado. Intenta de nuevo."
+            L("El servicio de voz está ocupado. Intenta de nuevo.")
         SpeechRecognizer.ERROR_NO_MATCH ->
-            "No entendí la frase. Intenta de nuevo."
+            L("No entendí la frase. Intenta de nuevo.")
         SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
-            "No detecté voz. Intenta de nuevo."
-        else -> "No pudimos usar el reconocimiento de voz. Usa la entrada por texto."
+            L("No detecté voz. Intenta de nuevo.")
+        else -> L("No pudimos usar el reconocimiento de voz. Usa la entrada por texto.")
     }
 }
 
@@ -185,7 +185,7 @@ class AudioRoute(context: Context) {
         get() = if (usesBluetooth) {
             audioManager.communicationDevice?.productName?.toString()?.takeIf { it.isNotBlank() } ?: "Bluetooth"
         } else {
-            "el teléfono"
+            L("el teléfono")
         }
 
     private fun bluetoothDevice(): AudioDeviceInfo? =
@@ -209,12 +209,23 @@ class SpeechOutput(
     init {
         speech = TextToSpeech(context) { status ->
             ready = status == TextToSpeech.SUCCESS
-            if (ready) speech.language = Locale("es", "MX")
+            if (ready) applyLanguage()
         }
+    }
+
+    // Voz en el idioma de la app; se ajusta al hablar por si el usuario lo cambió en Perfil.
+    private var spokenLanguage: AppLanguage? = null
+
+    private fun applyLanguage() {
+        val language = currentLanguage
+        if (spokenLanguage == language) return
+        runCatching { speech.language = language.locale }
+        spokenLanguage = language
     }
 
     fun speak(text: String, utteranceId: String, onDone: () -> Unit = {}) {
         val current = ++generation
+        if (ready) applyLanguage()
         audioRoute?.activate()
         val bluetooth = audioRoute?.usesBluetooth == true
         // Por Bluetooth SCO solo suena el audio de comunicación; en el teléfono se conserva el de siempre
@@ -266,12 +277,8 @@ class SpeechOutput(
     }
 }
 
-fun isConfirmation(text: String): Boolean {
-    val normalized = normalizeCommandText(text)
-    return normalized == "confirmar" || normalized == "si"
-}
+fun isConfirmation(text: String, language: AppLanguage = currentLanguage): Boolean =
+    normalizeCommandText(text) in VoiceCommandWords.forLanguage(language).confirm
 
-fun isCancellation(text: String): Boolean {
-    val normalized = normalizeCommandText(text)
-    return normalized == "no" || normalized == "cancelar"
-}
+fun isCancellation(text: String, language: AppLanguage = currentLanguage): Boolean =
+    normalizeCommandText(text) in VoiceCommandWords.forLanguage(language).cancel

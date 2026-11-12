@@ -24,8 +24,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private const val CREATE_ACCOUNT_ERROR =
-    "No pudimos crear tu cuenta. Revisa tu conexión e inténtalo de nuevo."
+private val CREATE_ACCOUNT_ERROR: String get() =
+    L("No pudimos crear tu cuenta. Revisa tu conexión e inténtalo de nuevo.")
 
 @Composable
 fun WelcomeScreen(
@@ -75,7 +75,7 @@ fun WelcomeScreen(
         IconBadge(R.drawable.ic_charge, tint = GlassPayColors.OnAccent, size = 72.dp, background = GlassPayColors.Accent)
         Text("GlassPay", style = MaterialTheme.typography.headlineLarge, color = GlassPayColors.Text)
         Text(
-            "Cobra a tus amigos con la voz y un QR.",
+            L("Cobra a tus amigos con la voz y un QR."),
             style = MaterialTheme.typography.bodyLarge,
             color = GlassPayColors.MutedText,
         )
@@ -83,8 +83,8 @@ fun WelcomeScreen(
         OutlinedTextField(
             value = name,
             onValueChange = { name = it.take(60) },
-            label = { Text("Tu nombre") },
-            supportingText = { Text("Es lo que verán tus amigos al cobrarles.") },
+            label = { Text(L("Tu nombre")) },
+            supportingText = { Text(L("Es lo que verán tus amigos al cobrarles.")) },
             singleLine = true,
             enabled = !creating,
             shape = MaterialTheme.shapes.medium,
@@ -92,14 +92,14 @@ fun WelcomeScreen(
             modifier = Modifier.fillMaxWidth(),
         )
         GpButton(
-            if (creating) "Creando tu cuenta…" else "Crear mi cuenta",
+            if (creating) L("Creando tu cuenta…") else L("Crear mi cuenta"),
             onClick = { createAccount() },
             enabled = name.isNotBlank() && !creating,
             modifier = Modifier.fillMaxWidth(),
         )
-        if (waking) InlineNotice("Despertando el servidor… la primera vez tarda unos segundos.", kind = StatusKind.PENDING)
+        if (waking) InlineNotice(L("Despertando el servidor… la primera vez tarda unos segundos."), kind = StatusKind.PENDING)
         Text(
-            "Actividad en GlassPay (Sandbox): no se mueve dinero real.",
+            L("Actividad en GlassPay (Sandbox): no se mueve dinero real."),
             style = MaterialTheme.typography.bodySmall,
             color = GlassPayColors.MutedText,
         )

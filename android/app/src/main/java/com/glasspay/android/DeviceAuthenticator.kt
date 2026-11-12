@@ -75,8 +75,8 @@ object DeviceAuthenticator {
 fun requireDeviceAuth(activity: Activity, onSuccess: () -> Unit, onFailure: () -> Unit = {}) {
     DeviceAuthenticator.authenticate(
         activity,
-        "Confirma el envío",
-        "Usa tu huella o el bloqueo de tu teléfono",
+        L("Confirma el envío"),
+        L("Usa tu huella o el bloqueo de tu teléfono"),
         onSuccess,
         onFailure,
     )

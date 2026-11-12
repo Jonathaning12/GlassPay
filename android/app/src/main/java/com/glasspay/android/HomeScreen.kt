@@ -154,16 +154,16 @@ fun HomeScreen(
 
     fun approve(request: IncomingRequest) {
         if (!isAllowedApproveUrl(request.approveUrl)) {
-            incomingMessage = "Enlace no válido."
+            incomingMessage = L("Enlace no válido.")
             return
         }
         try {
             context.startActivity(
                 Intent(Intent.ACTION_VIEW, Uri.parse(request.approveUrl)).addCategory(Intent.CATEGORY_BROWSABLE),
             )
-            incomingMessage = "Abriste PayPal. Cuando se confirme, desaparecerá de Por pagar."
+            incomingMessage = L("Abriste PayPal. Cuando se confirme, desaparecerá de Por pagar.")
         } catch (_: ActivityNotFoundException) {
-            incomingMessage = "No hay navegador disponible."
+            incomingMessage = L("No hay navegador disponible.")
         }
     }
 
@@ -182,11 +182,11 @@ fun HomeScreen(
                 when (exception.type) {
                     ApiFailureType.UNAUTHORIZED -> onSessionInvalid(SESSION_INVALID_MESSAGE)
                     ApiFailureType.NOT_FOUND -> reload += 1
-                    else -> incomingMessage = "No pudimos rechazar el cobro. Revisa tu conexión."
+                    else -> incomingMessage = L("No pudimos rechazar el cobro. Revisa tu conexión.")
                 }
             } catch (_: Exception) {
                 Log.i("GlassPay", "reject failure type=UNKNOWN httpCode=none")
-                incomingMessage = "No pudimos rechazar el cobro. Revisa tu conexión."
+                incomingMessage = L("No pudimos rechazar el cobro. Revisa tu conexión.")
             } finally {
                 rejecting = false
             }
@@ -198,17 +198,16 @@ fun HomeScreen(
             onDismissRequest = { pendingReject = null },
             text = {
                 Text(
-                    "¿Rechazar el cobro de ${request.fromName ?: "un contacto"} por " +
-                        "${formatMoney(request.amount, request.currency)}?",
+                    L("¿Rechazar el cobro de %s por %s?", request.fromName ?: L("un contacto"), formatMoney(request.amount, request.currency)),
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
                     pendingReject = null
                     reject(request)
-                }) { Text("Rechazar") }
+                }) { Text(L("Rechazar")) }
             },
-            dismissButton = { TextButton(onClick = { pendingReject = null }) { Text("Cancelar") } },
+            dismissButton = { TextButton(onClick = { pendingReject = null }) { Text(L("Cancelar")) } },
         )
     }
 
@@ -244,14 +243,14 @@ fun HomeScreen(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("Hola, ${session.displayName}", style = MaterialTheme.typography.headlineMedium, color = GlassPayColors.Text)
-                Text("Actividad en GlassPay (Sandbox)", style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
+                Text(L("Hola, %s", session.displayName), style = MaterialTheme.typography.headlineMedium, color = GlassPayColors.Text)
+                Text(L("Actividad en GlassPay (Sandbox)"), style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
             }
             ProfileAvatarButton(session.displayName, onClick = onOpenProfile)
         }
         if (showLockHint) {
             InlineNotice(
-                "Configura un bloqueo de pantalla en tu teléfono para proteger GlassPay.",
+                L("Configura un bloqueo de pantalla en tu teléfono para proteger GlassPay."),
                 kind = StatusKind.PENDING,
                 icon = R.drawable.ic_lock,
             )
@@ -259,13 +258,13 @@ fun HomeScreen(
         GpCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(24.dp), spacing = 20.dp) {
             Row(verticalAlignment = Alignment.Top) {
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Overline("Saldo disponible")
+                    Overline(L("Saldo disponible"))
                     when (val current = state) {
                         LoadState.Loading -> SkeletonBox(Modifier.fillMaxWidth(0.7f).height(48.dp))
-                        LoadState.Failed -> Text("No pudimos cargar tu actividad.", color = GlassPayColors.Error)
+                        LoadState.Failed -> Text(L("No pudimos cargar tu actividad."), color = GlassPayColors.Error)
                         is LoadState.Loaded -> {
                             if (current.value.activity.isEmpty()) {
-                                Text("Aún no has cobrado. Empieza con Cobrar.", color = GlassPayColors.MutedText)
+                                Text(L("Aún no has cobrado. Empieza con Cobrar."), color = GlassPayColors.MutedText)
                             }
                             current.value.activity.forEach { item ->
                                 MaskedMoney(
@@ -288,7 +287,7 @@ fun HomeScreen(
                     }
                 }
                 LoadState.Failed -> GpButton(
-                    "Reintentar",
+                    L("Reintentar"),
                     onClick = { reload += 1 },
                     kind = GpButtonKind.SECONDARY,
                     modifier = Modifier.fillMaxWidth(),
@@ -297,7 +296,7 @@ fun HomeScreen(
                     HorizontalDivider(color = GlassPayColors.Line)
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         TotalItem(
-                            label = "Cobrado",
+                            label = L("Cobrado"),
                             value = formatMoney(item.paidTotal, item.currency),
                             visible = amountsVisible,
                             icon = R.drawable.ic_receive,
@@ -305,7 +304,7 @@ fun HomeScreen(
                             modifier = Modifier.weight(1f),
                         )
                         TotalItem(
-                            label = "Enviado",
+                            label = L("Enviado"),
                             value = formatMoney(item.sentTotal, item.currency),
                             visible = amountsVisible,
                             icon = R.drawable.ic_send,
@@ -315,18 +314,18 @@ fun HomeScreen(
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            "${item.paidCount} pagos recibidos",
+                            L("%s pagos recibidos", item.paidCount),
                             style = MaterialTheme.typography.bodySmall,
                             color = GlassPayColors.MutedText,
                         )
                         if (item.inProgressCount > 0) {
-                            StatusPill("${item.inProgressCount} en proceso", StatusKind.PENDING)
+                            StatusPill(L("%s en proceso", item.inProgressCount), StatusKind.PENDING)
                         }
                     }
                 }
             }
             // Único acceso directo que queda en Inicio: cobrar es el flujo central de la demo.
-            GpButton("Cobrar", onClick = onCharge, icon = R.drawable.ic_charge, modifier = Modifier.fillMaxWidth())
+            GpButton(L("Cobrar"), onClick = onCharge, icon = R.drawable.ic_charge, modifier = Modifier.fillMaxWidth())
             if (state is LoadState.Loaded) {
                 HorizontalDivider(color = GlassPayColors.Line)
                 Surface(
@@ -337,7 +336,7 @@ fun HomeScreen(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Icon(painterResource(R.drawable.ic_chart), contentDescription = null, modifier = Modifier.size(20.dp))
-                        Text("Ver estadísticas", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+                        Text(L("Ver estadísticas"), style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
                         Icon(painterResource(R.drawable.ic_chevron_right), contentDescription = null, modifier = Modifier.size(20.dp))
                     }
                 }
@@ -349,20 +348,20 @@ fun HomeScreen(
                     IconBadge(R.drawable.ic_clock, tint = GlassPayColors.Warning, size = 40.dp, background = GlassPayColors.WarningSoft)
                     Text(
                         if (awaitingConfirmation == 1) {
-                            "1 cobro programado espera tu confirmación"
+                            L("1 cobro programado espera tu confirmación")
                         } else {
-                            "$awaitingConfirmation cobros programados esperan tu confirmación"
+                            L("%s cobros programados esperan tu confirmación", awaitingConfirmation)
                         },
                         style = MaterialTheme.typography.titleMedium,
                         color = GlassPayColors.Text,
                         modifier = Modifier.weight(1f),
                     )
                 }
-                GpButton("Revisar", onClick = onOpenScheduled, modifier = Modifier.fillMaxWidth())
+                GpButton(L("Revisar"), onClick = onOpenScheduled, modifier = Modifier.fillMaxWidth())
             }
         }
         if (reminders.isNotEmpty()) {
-            Text("Recordatorios", style = MaterialTheme.typography.headlineSmall, color = GlassPayColors.Text)
+            Text(L("Recordatorios"), style = MaterialTheme.typography.headlineSmall, color = GlassPayColors.Text)
             reminders.forEach { reminder ->
                 GpCard(modifier = Modifier.fillMaxWidth(), spacing = 12.dp) {
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -370,7 +369,7 @@ fun HomeScreen(
                         Text(reminder.text, style = MaterialTheme.typography.bodyLarge, color = GlassPayColors.Text, modifier = Modifier.weight(1f))
                     }
                     GpButton(
-                        "Descartar",
+                        L("Descartar"),
                         onClick = {
                             scope.launch {
                                 try {
@@ -397,9 +396,9 @@ fun HomeScreen(
         }
         if (visibleIncoming.isNotEmpty()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Por pagar", style = MaterialTheme.typography.headlineSmall, color = GlassPayColors.Text, modifier = Modifier.weight(1f))
+                Text(L("Por pagar"), style = MaterialTheme.typography.headlineSmall, color = GlassPayColors.Text, modifier = Modifier.weight(1f))
                 Text(
-                    if (visibleIncoming.size == 1) "1 solicitud" else "${visibleIncoming.size} solicitudes",
+                    if (visibleIncoming.size == 1) L("1 solicitud") else L("%s solicitudes", visibleIncoming.size),
                     style = MaterialTheme.typography.bodySmall,
                     color = GlassPayColors.MutedText,
                 )
@@ -410,7 +409,7 @@ fun HomeScreen(
                         Avatar(request.fromName ?: "?")
                         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text(
-                                "Te cobra ${request.fromName ?: "un contacto"}",
+                                L("Te cobra %s", request.fromName ?: L("un contacto")),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = GlassPayColors.Text,
                             )
@@ -423,16 +422,16 @@ fun HomeScreen(
                         )
                     }
                     if (request.state == "aprobada") {
-                        StatusPill("Procesando", StatusKind.PENDING)
+                        StatusPill(L("Procesando"), StatusKind.PENDING)
                     } else {
                         GpButton(
-                            "Aprobar con PayPal",
+                            L("Aprobar con PayPal"),
                             onClick = { approve(request) },
                             icon = R.drawable.ic_check,
                             modifier = Modifier.fillMaxWidth(),
                         )
                         GpButton(
-                            "Rechazar",
+                            L("Rechazar"),
                             onClick = { pendingReject = request },
                             kind = GpButtonKind.SECONDARY,
                             enabled = !rejecting,
@@ -445,7 +444,7 @@ fun HomeScreen(
         }
         if (state is LoadState.Loaded) {
             GpButton(
-                "Actualizar",
+                L("Actualizar"),
                 onClick = { reload += 1 },
                 kind = GpButtonKind.GHOST,
                 modifier = Modifier.align(Alignment.CenterHorizontally),
@@ -498,7 +497,7 @@ private fun ProfileAvatarButton(name: String, onClick: () -> Unit) {
         onClick = onClick,
         shape = CircleShape,
         color = Color.Transparent,
-        modifier = Modifier.size(48.dp).semantics { contentDescription = "Abrir mi perfil" },
+        modifier = Modifier.size(48.dp).semantics { contentDescription = L("Abrir mi perfil") },
     ) {
         Box(contentAlignment = Alignment.Center) {
             Avatar(name, size = 44.dp, highlighted = true)
