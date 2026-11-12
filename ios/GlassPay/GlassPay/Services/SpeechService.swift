@@ -1,7 +1,8 @@
 import AVFoundation
 import Speech
 
-// Equivalente iOS de SpeechTools.kt: reconocimiento es-MX con resultados parciales y síntesis de voz.
+// Equivalente iOS de SpeechTools.kt: reconocimiento con resultados parciales y síntesis de voz en el
+// idioma de la app (es-MX o en-US).
 // Nunca se registra el texto dictado. El micrófono solo se abre cuando termina de hablar el TTS (anti-eco).
 
 enum VoiceErrorKind {
@@ -9,12 +10,12 @@ enum VoiceErrorKind {
 
     var message: String {
         switch self {
-        case .permissionDenied: return "Permiso de micrófono denegado. Usa la entrada por texto."
-        case .busy: return "El servicio de voz está ocupado. Intenta de nuevo."
-        case .noMatch: return "No entendí la frase. Intenta de nuevo."
-        case .speechTimeout: return "No detecté voz. Intenta de nuevo."
-        case .unavailable: return "El reconocimiento de voz no está disponible. Usa la entrada por texto."
-        case .other: return "No pudimos usar el reconocimiento de voz. Usa la entrada por texto."
+        case .permissionDenied: return L("Permiso de micrófono denegado. Usa la entrada por texto.")
+        case .busy: return L("El servicio de voz está ocupado. Intenta de nuevo.")
+        case .noMatch: return L("No entendí la frase. Intenta de nuevo.")
+        case .speechTimeout: return L("No detecté voz. Intenta de nuevo.")
+        case .unavailable: return L("El reconocimiento de voz no está disponible. Usa la entrada por texto.")
+        case .other: return L("No pudimos usar el reconocimiento de voz. Usa la entrada por texto.")
         }
     }
 }
@@ -53,7 +54,7 @@ enum AudioRoute {
     /// Por dónde se escucha ahora mismo; no incluye datos del usuario.
     static var inputLabel: String {
         let input = AVAudioSession.sharedInstance().currentRoute.inputs.first
-        return input?.portType == .bluetoothHFP ? input?.portName ?? "Bluetooth" : "el iPhone"
+        return input?.portType == .bluetoothHFP ? input?.portName ?? "Bluetooth" : L("el iPhone")
     }
 }
 
@@ -65,7 +66,8 @@ final class VoiceRecognizer {
     var onPartial: () -> Void = {}
     var onError: (VoiceErrorKind) -> Void = { _ in }
 
-    private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "es-MX"))
+    private var recognizerLanguage = currentLanguage
+    private var recognizer = SFSpeechRecognizer(locale: Locale(identifier: currentLanguage.speechLocaleIdentifier))
     private var audioEngine = AVAudioEngine()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
@@ -78,7 +80,12 @@ final class VoiceRecognizer {
     private let endOfSpeechSilence: TimeInterval = 1.4
     private let noSpeechTimeout: TimeInterval = 6
 
-    var isAvailable: Bool { recognizer?.isAvailable == true }
+    var isAvailable: Bool {
+        if recognizerLanguage != currentLanguage {
+            return SFSpeechRecognizer(locale: Locale(identifier: currentLanguage.speechLocaleIdentifier))?.isAvailable == true
+        }
+        return recognizer?.isAvailable == true
+    }
 
     static func requestPermissions() async -> Bool {
         let speech = await withCheckedContinuation { continuation in
@@ -97,6 +104,10 @@ final class VoiceRecognizer {
         released = false
         resultDelivered = false
         latestText = ""
+        if recognizerLanguage != currentLanguage {
+            recognizerLanguage = currentLanguage
+            recognizer = SFSpeechRecognizer(locale: Locale(identifier: currentLanguage.speechLocaleIdentifier))
+        }
         guard let recognizer, recognizer.isAvailable else {
             onError(.unavailable)
             return
@@ -226,7 +237,7 @@ final class SpeechOutput: NSObject, AVSpeechSynthesizerDelegate {
         stop()
         try? AudioRoute.activate(recording: false)
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "es-MX")
+        utterance.voice = AVSpeechSynthesisVoice(language: currentLanguage.speechLocaleIdentifier)
         completions[ObjectIdentifier(utterance)] = onDone
         synthesizer.speak(utterance)
     }

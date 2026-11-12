@@ -24,7 +24,7 @@ enum DeviceAuthenticator {
     /// Face ID / Touch ID con respaldo al código del teléfono. Cancelar o fallar devuelve false.
     static func authenticate(reason: String) async -> Bool {
         let context = LAContext()
-        context.localizedCancelTitle = "Cancelar"
+        context.localizedCancelTitle = L("Cancelar")
         return (try? await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)) ?? false
     }
 }
@@ -110,7 +110,7 @@ enum ScheduledCheck {
     private static func notify() async {
         let content = UNMutableNotificationContent()
         content.title = "GlassPay"
-        content.body = "Tienes algo programado que espera tu confirmación."
+        content.body = L("Tienes algo programado que espera tu confirmación.")
         content.sound = .default
         let request = UNNotificationRequest(identifier: "scheduled-awaiting", content: content, trigger: nil)
         try? await UNUserNotificationCenter.current().add(request)

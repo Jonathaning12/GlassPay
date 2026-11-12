@@ -14,8 +14,8 @@ struct MovementsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Movimientos").font(.gpTitle).foregroundStyle(GP.text)
-                        Text("Actividad en GlassPay (Sandbox)").font(.gpNote).foregroundStyle(GP.muted)
+                        Text(L("Movimientos")).font(.gpTitle).foregroundStyle(GP.text)
+                        Text(L("Actividad en GlassPay (Sandbox)")).font(.gpNote).foregroundStyle(GP.muted)
                     }
                     Spacer()
                     EyeToggle(visible: amountsVisible) { amountsVisible.toggle() }
@@ -26,13 +26,13 @@ struct MovementsView: View {
                 case .loading:
                     ForEach(0..<5, id: \.self) { _ in SkeletonBox(height: 68) }
                 case .failed:
-                    InlineNotice("No pudimos cargar tus movimientos.", kind: .failure)
-                    GPButton("Reintentar", kind: .secondary) { Task { await model.reload() } }
+                    InlineNotice(L("No pudimos cargar tus movimientos."), kind: .failure)
+                    GPButton(L("Reintentar"), kind: .secondary) { Task { await model.reload() } }
                 case let .loaded(movements):
                     if movements.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("Aún no tienes movimientos.").font(.gpBodyStrong).foregroundStyle(GP.text)
-                            Text("Tus cobros y envíos aparecerán aquí.").font(.gpNote).foregroundStyle(GP.muted)
+                            Text(L("Aún no tienes movimientos.")).font(.gpBodyStrong).foregroundStyle(GP.text)
+                            Text(L("Tus cobros y envíos aparecerán aquí.")).font(.gpNote).foregroundStyle(GP.muted)
                         }
                     }
                     ForEach(movements) { movement in
@@ -83,7 +83,7 @@ struct MovementsView: View {
 }
 
 private func movementTitle(_ movement: Movement) -> String {
-    movement.kind == "envio" ? "Enviado a \(movement.payerName)" : movement.payerName
+    movement.kind == "envio" ? L("Enviado a %@", "\(movement.payerName)") : movement.payerName
 }
 
 private func amountSign(_ movement: Movement) -> String { movement.kind == "envio" ? "−" : "" }
@@ -102,40 +102,40 @@ private struct MovementDetailView: View {
                 GPCard(padding: 24, spacing: 16) {
                     StatusPill(text: movementStatusLabel(movement.state, kind: movement.kind), kind: movementStatusKind(movement.state, kind: movement.kind))
                     MaskedMoney(formatted: formatMoney(movement.amount, movement.currency), visible: amountsVisible, prefix: amountSign(movement))
-                    line("Concepto", movement.concept)
-                    line(outgoing ? "Destinatario" : "Pagador", movement.payerName)
-                    line("Creado", formatMovementDate(movement.createdAt))
-                    line("Actualizado", formatMovementDate(movement.updatedAt))
+                    line(L("Concepto"), movement.concept)
+                    line(outgoing ? L("Destinatario") : L("Pagador"), movement.payerName)
+                    line(L("Creado"), formatMovementDate(movement.createdAt))
+                    line(L("Actualizado"), formatMovementDate(movement.updatedAt))
                 }
-                InlineNotice("Actividad en GlassPay (Sandbox). Solo el servidor confirma un pago.", icon: GPIcon.lock)
+                InlineNotice(L("Actividad en GlassPay (Sandbox). Solo el servidor confirma un pago."), icon: GPIcon.lock)
                 if let notice = model.notice { InlineNotice(notice.text, kind: notice.kind) }
                 // Solo aparece en movimientos que no movieron dinero (expirados, rechazados, fallidos).
                 if canHideMovement(movement.state, kind: movement.kind) {
-                    GPButton(model.hiding ? "Quitando…" : "Eliminar de mi lista", icon: GPIcon.trash, kind: .danger) {
+                    GPButton(model.hiding ? L("Quitando…") : L("Eliminar de mi lista"), icon: GPIcon.trash, kind: .danger) {
                         confirmingHide = true
                     }
                     .disabled(model.hiding)
-                    Text("Solo lo quita de tu lista. El registro se conserva y tu saldo no cambia.")
+                    Text(L("Solo lo quita de tu lista. El registro se conserva y tu saldo no cambia."))
                         .font(.gpNote).foregroundStyle(GP.muted)
                 }
             }
             .padding(20)
         }
         .gpScreen()
-        .navigationTitle(outgoing ? "Detalle del envío" : "Detalle del cobro")
+        .navigationTitle(outgoing ? L("Detalle del envío") : L("Detalle del cobro"))
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { model.notice = nil }
-        .confirmationDialog("¿Eliminar de tu lista?", isPresented: $confirmingHide, titleVisibility: .visible) {
-            Button("Eliminar", role: .destructive) {
+        .confirmationDialog(L("¿Eliminar de tu lista?"), isPresented: $confirmingHide, titleVisibility: .visible) {
+            Button(L("Eliminar"), role: .destructive) {
                 Task {
                     guard await model.hide(movement) else { return }
                     dismiss()
                     await model.reload()
                 }
             }
-            Button("Cancelar", role: .cancel) {}
+            Button(L("Cancelar"), role: .cancel) {}
         } message: {
-            Text("Dejarás de ver este movimiento. El registro se conserva en GlassPay y tu saldo no cambia.")
+            Text(L("Dejarás de ver este movimiento. El registro se conserva en GlassPay y tu saldo no cambia."))
         }
     }
 

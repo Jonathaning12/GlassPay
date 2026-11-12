@@ -27,7 +27,7 @@ final class WelcomeViewModel {
                 onCreated(try await api.createCollector(displayName: trimmed))
             } catch {
                 logFailure("createCollector", error)
-                self.error = "No pudimos crear tu cuenta. Revisa tu conexión e inténtalo de nuevo."
+                self.error = L("No pudimos crear tu cuenta. Revisa tu conexión e inténtalo de nuevo.")
             }
         }
     }
@@ -92,14 +92,14 @@ final class HomeViewModel {
     /// Solo se abre PayPal Sandbox con https y host exacto.
     func approve(_ request: IncomingRequest) {
         guard isAllowedApproveUrl(request.approveUrl), let url = request.approveUrl.flatMap(URL.init(string:)) else {
-            incomingMessage = "Enlace no válido."
+            incomingMessage = L("Enlace no válido.")
             return
         }
         UIApplication.shared.open(url) { [weak self] opened in
             Task { @MainActor in
                 self?.incomingMessage = opened
-                    ? "Abriste PayPal. Cuando se confirme, desaparecerá de Por pagar."
-                    : "No hay navegador disponible."
+                    ? L("Abriste PayPal. Cuando se confirme, desaparecerá de Por pagar.")
+                    : L("No hay navegador disponible.")
             }
         }
     }
@@ -118,7 +118,7 @@ final class HomeViewModel {
                 switch error.apiFailure {
                 case .unauthorized: context.invalidate(sessionInvalidMessage)
                 case .notFound: await reload()
-                default: incomingMessage = "No pudimos rechazar el cobro. Revisa tu conexión."
+                default: incomingMessage = L("No pudimos rechazar el cobro. Revisa tu conexión.")
                 }
             }
         }
@@ -171,7 +171,7 @@ final class MovementsViewModel {
         defer { hiding = false }
         do {
             try await context.api.hideMovement(context.session, movementId: movement.movementId)
-            notice = ("Quitamos el movimiento de tu lista. Tu saldo no cambia.", .success)
+            notice = (L("Quitamos el movimiento de tu lista. Tu saldo no cambia."), .success)
             return true
         } catch {
             guard !error.isCancellation else { return false }
@@ -181,12 +181,12 @@ final class MovementsViewModel {
                 context.invalidate(sessionInvalidMessage)
                 return false
             case .conflict:
-                notice = ("Este movimiento ya no se puede quitar: su estado cambió.", .failure)
+                notice = (L("Este movimiento ya no se puede quitar: su estado cambió."), .failure)
                 return false
             case .notFound:
                 return true
             default:
-                notice = ("No pudimos quitar el movimiento. Revisa tu conexión.", .failure)
+                notice = (L("No pudimos quitar el movimiento. Revisa tu conexión."), .failure)
                 return false
             }
         }
@@ -229,10 +229,10 @@ final class ContactsViewModel {
                 switch error.apiFailure {
                 case .unauthorized: context.invalidate(sessionInvalidMessage)
                 case .notFound:
-                    message = "Este contacto ya no existe."
+                    message = L("Este contacto ya no existe.")
                     await reload()
-                case .rateLimited: message = "Demasiados intentos. Espera unos segundos."
-                default: message = "No pudimos preparar el cobro. Revisa tu conexión."
+                case .rateLimited: message = L("Demasiados intentos. Espera unos segundos.")
+                default: message = L("No pudimos preparar el cobro. Revisa tu conexión.")
                 }
             }
         }
@@ -248,8 +248,8 @@ final class ContactsViewModel {
                 switch error.apiFailure {
                 case .unauthorized: context.invalidate(sessionInvalidMessage)
                 case .notFound: await reload()
-                case .rateLimited: message = "Demasiados intentos. Espera unos segundos."
-                default: message = "No pudimos eliminar el contacto. Revisa tu conexión."
+                case .rateLimited: message = L("Demasiados intentos. Espera unos segundos.")
+                default: message = L("No pudimos eliminar el contacto. Revisa tu conexión.")
                 }
             }
         }
@@ -278,20 +278,20 @@ final class AddContactViewModel {
             do {
                 let resolution = try await context.api.resolveQrToken(context.session, token: token, timeout: 15)
                 if resolution.contactId != nil {
-                    phase = .done(message: "\(resolution.displayName) ya está en tus contactos", isError: false)
+                    phase = .done(message: L("%@ ya está en tus contactos", "\(resolution.displayName)"), isError: false)
                 } else {
                     _ = try await context.api.saveContact(context.session, resolutionId: resolution.resolutionId)
-                    phase = .done(message: "\(resolution.displayName) se agregó a tus contactos", isError: false)
+                    phase = .done(message: L("%@ se agregó a tus contactos", "\(resolution.displayName)"), isError: false)
                 }
                 Haptics.success()
             } catch {
                 logFailure("addContact", error)
                 switch error.apiFailure {
                 case .unauthorized: context.invalidate(sessionInvalidMessage)
-                case .notFound: phase = .done(message: "Ese QR ya no es válido. Pide que lo actualicen.", isError: true)
-                case .conflict: phase = .done(message: "Ese es tu propio QR.", isError: true)
-                case .rateLimited: phase = .done(message: "Demasiados intentos. Espera unos segundos.", isError: true)
-                default: phase = .done(message: "Revisa tu conexión.", isError: true)
+                case .notFound: phase = .done(message: L("Ese QR ya no es válido. Pide que lo actualicen."), isError: true)
+                case .conflict: phase = .done(message: L("Ese es tu propio QR."), isError: true)
+                case .rateLimited: phase = .done(message: L("Demasiados intentos. Espera unos segundos."), isError: true)
+                default: phase = .done(message: L("Revisa tu conexión."), isError: true)
                 }
             }
         }
@@ -326,11 +326,11 @@ final class MyQrViewModel {
                     logFailure("myQr", error)
                     switch error.apiFailure {
                     case .unauthorized: return context.invalidate(sessionInvalidMessage)
-                    case .rateLimited: self.error = "Demasiados intentos. Espera unos segundos."
+                    case .rateLimited: self.error = L("Demasiados intentos. Espera unos segundos.")
                     case .network, .timeout:
                         // Si el QR actual sigue vigente, se muestra mientras se reintenta.
-                        if qr.map({ remainingSeconds($0.expiresAt) }) ?? 0 <= 0 { self.error = "No pudimos generar tu QR." }
-                    default: self.error = "No pudimos generar tu QR."
+                        if qr.map({ remainingSeconds($0.expiresAt) }) ?? 0 <= 0 { self.error = L("No pudimos generar tu QR.") }
+                    default: self.error = L("No pudimos generar tu QR.")
                     }
                     if self.error != nil { return }
                     try? await Task.sleep(for: .seconds(5))
@@ -356,7 +356,7 @@ final class PayoutEmailViewModel {
 
     func save(onSaved: @escaping () -> Void) {
         guard isValidPayoutEmail(email) else {
-            message = "Escribe un correo válido."
+            message = L("Escribe un correo válido.")
             return
         }
         guard !saving else { return }
@@ -371,9 +371,9 @@ final class PayoutEmailViewModel {
                 logFailure("payoutEmail", error)
                 switch error.apiFailure {
                 case .unauthorized: context.invalidate(sessionInvalidMessage)
-                case .badRequest: message = "Ese correo no es válido."
-                case .rateLimited: message = "Demasiados intentos. Espera unos segundos."
-                default: message = "No pudimos guardar tu correo. Revisa tu conexión."
+                case .badRequest: message = L("Ese correo no es válido.")
+                case .rateLimited: message = L("Demasiados intentos. Espera unos segundos.")
+                default: message = L("No pudimos guardar tu correo. Revisa tu conexión.")
                 }
             }
         }

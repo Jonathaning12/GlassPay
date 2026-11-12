@@ -165,3 +165,29 @@ test("debtors reply groups pending requests by payer and ignores paid or expired
     { name: "Ana", total: "150.50", count: 2 },
   ]);
 });
+
+test("fallback recognizes English questions and actions", () => {
+  assert.equal(intentOf("How much did I collect this week?"), "summary");
+  assert.equal(deterministicIntent("how much did I earn this month").period, "month");
+  assert.equal(intentOf("Who owes me?"), "debtors");
+  assert.equal(intentOf("What do I have scheduled?"), "scheduled");
+  assert.equal(intentOf("What can you do?"), "help");
+  assert.equal(intentOf("pay Luis 200 tomorrow at 5"), "schedule_payment");
+  assert.equal(intentOf("charge Ana 300 in 2 hours"), "schedule_charge");
+  assert.equal(intentOf("remind Sara to pay me"), "reminder");
+  assert.equal(intentOf("split 900 between Ana, Luis and me"), "split_bill");
+  assert.equal(intentOf("charge Ana 200 every month"), "recurring_charge");
+  assert.equal(intentOf("cancel tomorrow's payment"), "cancel_scheduled");
+  assert.equal(intentOf("hello"), "unknown");
+});
+
+test("replies are written in English when asked, Spanish by default", () => {
+  const database = { listCollectorMovements: () => [] };
+  const reply = (intent, language) => buildAssistantReply({
+    database, collectorId: "c", interpretation: { intent, period: "none" }, currency: "MXN", language,
+  }).text;
+  assert.equal(reply("debtors", "en"), "Nobody owes you right now.");
+  assert.equal(reply("debtors"), "Nadie te debe en este momento.");
+  assert.match(reply("help", "en"), /^I can tell you/);
+  assert.match(reply("unknown", "en"), /^I didn't understand/);
+});

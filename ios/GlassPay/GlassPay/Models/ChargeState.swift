@@ -77,39 +77,63 @@ enum ChargeInputAppendResult: Equatable {
     case invalid
 }
 
-private let chargeVerbs: Set<String> = ["cobrale", "cobrales", "cobra", "cobrar"]
+/// Comandos de voz por idioma: siempre coincidencia exacta de la frase completa (ya normalizada).
+struct VoiceCommandWords {
+    let chargeVerbs: Set<String>
+    let confirm: Set<String>
+    let cancel: Set<String>
+    let startOver: Set<String>
 
-func startsWithChargeVerb(_ text: String) -> Bool {
+    static func forLanguage(_ language: AppLanguage) -> VoiceCommandWords {
+        switch language {
+        case .es:
+            VoiceCommandWords(
+                chargeVerbs: ["cobrale", "cobrales", "cobra", "cobrar"],
+                confirm: ["confirmar", "si"],
+                cancel: ["no", "cancelar"],
+                startOver: ["empezar de nuevo"]
+            )
+        case .en:
+            VoiceCommandWords(
+                chargeVerbs: ["charge"],
+                confirm: ["confirm", "yes"],
+                cancel: ["no", "cancel"],
+                startOver: ["start over"]
+            )
+        }
+    }
+}
+
+func startsWithChargeVerb(_ text: String, language: AppLanguage = currentLanguage) -> Bool {
     guard let firstWord = normalizeCommandText(text).split(whereSeparator: \.isWhitespace).first else {
         return false
     }
-    return chargeVerbs.contains(String(firstWord))
+    return VoiceCommandWords.forLanguage(language).chargeVerbs.contains(String(firstWord))
 }
 
 enum VoiceCommand { case cancel, startOver, confirm, none }
 
-func voiceCommand(_ text: String, state: ChargeState) -> VoiceCommand {
-    if isCancellation(text) && (state.isListening || state.isClarification || state.isPreview) {
+func voiceCommand(_ text: String, state: ChargeState, language: AppLanguage = currentLanguage) -> VoiceCommand {
+    if isCancellation(text, language: language) && (state.isListening || state.isClarification || state.isPreview) {
         return .cancel
     }
-    if normalizeCommandText(text) == "empezar de nuevo" && (state.isClarification || state.isPreview) {
+    let words = VoiceCommandWords.forLanguage(language)
+    if words.startOver.contains(normalizeCommandText(text)) && (state.isClarification || state.isPreview) {
         return .startOver
     }
-    if isConfirmation(text) && state.isPreview { return .confirm }
+    if isConfirmation(text, language: language) && state.isPreview { return .confirm }
     return .none
 }
 
-func isConfirmation(_ text: String) -> Bool {
-    let normalized = normalizeCommandText(text)
-    return normalized == "confirmar" || normalized == "si"
+func isConfirmation(_ text: String, language: AppLanguage = currentLanguage) -> Bool {
+    VoiceCommandWords.forLanguage(language).confirm.contains(normalizeCommandText(text))
 }
 
-func isCancellation(_ text: String) -> Bool {
-    let normalized = normalizeCommandText(text)
-    return normalized == "no" || normalized == "cancelar"
+func isCancellation(_ text: String, language: AppLanguage = currentLanguage) -> Bool {
+    VoiceCommandWords.forLanguage(language).cancel.contains(normalizeCommandText(text))
 }
 
-/// Solo para comparar comandos: minúsculas es-MX, sin diacríticos, sin puntuación en los bordes
+/// Solo para comparar comandos: minúsculas (reglas es-MX, también válidas en inglés), sin diacríticos, sin puntuación en los bordes
 /// y espacios colapsados. El texto que se envía a /interpret no se modifica.
 func normalizeCommandText(_ text: String) -> String {
     let lowered = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -165,10 +189,12 @@ func shouldAcceptVoiceError(_ state: ChargeState) -> Bool {
 
 enum ChargeFailureType { case network, timeout, rateLimited, proposalInvalid, server }
 
-let stopWaitingMessage =
-    "Dejaste de seguir esta solicitud. El pagador todavía puede aprobarla desde su teléfono."
-let stopWaitingApprovedMessage =
-    "Dejaste de seguir esta solicitud. El pagador ya la aprobó; revisa Movimientos para ver cuándo se complete."
+var stopWaitingMessage: String {
+    L("Dejaste de seguir esta solicitud. El pagador todavía puede aprobarla desde su teléfono.")
+}
+var stopWaitingApprovedMessage: String {
+    L("Dejaste de seguir esta solicitud. El pagador ya la aprobó; revisa Movimientos para ver cuándo se complete.")
+}
 
 struct ChargeStateMachine {
     private(set) var state: ChargeState = .ready()
@@ -209,7 +235,7 @@ struct ChargeStateMachine {
     mutating func tick(remainingSeconds: Int) -> ChargeState {
         guard case let .preview(proposal, _, message) = state else { return state }
         state = remainingSeconds <= 0
-            ? .ready(message: "La propuesta venció. Dicta el cobro otra vez.")
+            ? .ready(message: L("La propuesta venció. Dicta el cobro otra vez."))
             : .preview(proposal: proposal, remainingSeconds: remainingSeconds, message: message)
         return state
     }
@@ -240,13 +266,13 @@ struct ChargeStateMachine {
         guard allowed else { return state }
         switch type {
         case .network, .timeout:
-            state = .error(message: "No pudimos interpretar. Revisa tu conexión e inténtalo de nuevo.", recoverable: true)
+            state = .error(message: L("No pudimos interpretar. Revisa tu conexión e inténtalo de nuevo."), recoverable: true)
         case .rateLimited:
-            state = .error(message: "Demasiados intentos. Espera unos segundos.", recoverable: true)
+            state = .error(message: L("Demasiados intentos. Espera unos segundos."), recoverable: true)
         case .proposalInvalid:
-            state = .ready(message: "La propuesta ya venció o no está disponible. Dicta el cobro otra vez.")
+            state = .ready(message: L("La propuesta ya venció o no está disponible. Dicta el cobro otra vez."))
         case .server:
-            state = .error(message: "GlassPay no pudo procesar la solicitud.", recoverable: true)
+            state = .error(message: L("GlassPay no pudo procesar la solicitud."), recoverable: true)
         }
         return state
     }
@@ -255,7 +281,7 @@ struct ChargeStateMachine {
     mutating func confirmationFailure() -> ChargeState {
         guard state == .confirming else { return state }
         state = .error(
-            message: "No pudimos confirmar. Revisa con el pagador antes de intentarlo de nuevo.",
+            message: L("No pudimos confirmar. Revisa con el pagador antes de intentarlo de nuevo."),
             recoverable: false
         )
         return state
@@ -263,7 +289,7 @@ struct ChargeStateMachine {
 
     @discardableResult
     mutating func cancel() -> ChargeState {
-        state = .ready(message: "Cobro cancelado.")
+        state = .ready(message: L("Cobro cancelado."))
         return state
     }
 
@@ -319,7 +345,7 @@ func paymentTrackingFor(serverState: String) -> PaymentTracking {
     case "rechazada": return .rejected
     case "expirada": return .expired
     case "fallida": return .failed
-    default: return .error("No pudimos consultar el estado del pago.")
+    default: return .error(L("No pudimos consultar el estado del pago."))
     }
 }
 
@@ -360,11 +386,11 @@ func availableActions(_ state: ChargeState) -> Set<ChargeAction> {
 
 func waitingPaymentMessage(elapsedSeconds: Int) -> String {
     switch elapsedSeconds {
-    case ..<4: return "Confirmando tu pago con PayPal…"
-    case ..<10: return "Preparando tu comprobante…"
-    case ..<20: return "Terminando detalles…"
-    case ..<30: return "Esto está tardando un poco más de lo normal…"
-    default: return "Tu pago está en proceso…"
+    case ..<4: return L("Confirmando tu pago con PayPal…")
+    case ..<10: return L("Preparando tu comprobante…")
+    case ..<20: return L("Terminando detalles…")
+    case ..<30: return L("Esto está tardando un poco más de lo normal…")
+    default: return L("Tu pago está en proceso…")
     }
 }
 

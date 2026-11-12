@@ -7,6 +7,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const PERIODS = new Set(["week", "month", "year"]);
 const DAY_LABELS = ["L", "M", "M", "J", "V", "S", "D"];
 const MONTH_LABELS = ["E", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
+// Etiquetas en inglés (header X-GlassPay-Language: en).
+const DAY_LABELS_EN = ["M", "T", "W", "T", "F", "S", "S"];
+const MONTH_LABELS_EN = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
 const PENDING_STATES = new Set(["creada", "enviada", "pendiente_de_pagador", "aprobada"]);
 const NOT_COMPLETED_STATES = new Set(["rechazada", "expirada", "fallida"]);
 
@@ -53,12 +56,13 @@ function periodRange(period, now = new Date()) {
   };
 }
 
-function bucketLabels(period, start) {
-  if (period === "week") return DAY_LABELS;
-  if (period === "year") return MONTH_LABELS;
+function bucketLabels(period, start, language = "es") {
+  const english = language === "en";
+  if (period === "week") return english ? DAY_LABELS_EN : DAY_LABELS;
+  if (period === "year") return english ? MONTH_LABELS_EN : MONTH_LABELS;
   const local = toLocal(start);
   const daysInMonth = new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth() + 1, 0)).getUTCDate();
-  return Array.from({ length: Math.ceil(daysInMonth / 7) }, (_, index) => `S${index + 1}`);
+  return Array.from({ length: Math.ceil(daysInMonth / 7) }, (_, index) => `${english ? "W" : "S"}${index + 1}`);
 }
 
 function bucketIndex(period, createdAt, start) {
@@ -90,7 +94,7 @@ function totals(activity, currency) {
   return { paidCents, paidCount, sentCents, sentCount };
 }
 
-function computeStats(database, collectorId, period, { currency = "MXN", now = new Date() } = {}) {
+function computeStats(database, collectorId, period, { currency = "MXN", now = new Date(), language = "es" } = {}) {
   const range = periodRange(period, now);
   const current = database.listCollectorActivityBetween(collectorId, range.start.toISOString(), range.end.toISOString());
   const previous = database.listCollectorActivityBetween(
@@ -101,7 +105,7 @@ function computeStats(database, collectorId, period, { currency = "MXN", now = n
   const currentTotals = totals(current, currency);
   const previousTotals = totals(previous, currency);
 
-  const labels = bucketLabels(period, range.start);
+  const labels = bucketLabels(period, range.start, language);
   const buckets = labels.map((label) => ({ label, paidCents: 0, sentCents: 0 }));
   for (const charge of current.charges) {
     if (charge.currency !== currency || charge.state !== "pagada") continue;

@@ -56,7 +56,7 @@ final class SendMoneyViewModel {
     func requestPreview() {
         guard let target = contact else { return }
         guard let amount = parseAmountInput(amountText) else {
-            message = "Escribe un monto válido (máximo 1,000.00)."
+            message = L("Escribe un monto válido (máximo 1,000.00).")
             return
         }
         guard !busy else { return }
@@ -77,8 +77,8 @@ final class SendMoneyViewModel {
                 logFailure("transferPreview", error)
                 switch error.apiFailure {
                 case .unauthorized: context.invalidate(sessionInvalidMessage)
-                case .notFound: message = "Este contacto ya no existe."
-                case .network, .timeout: message = "Revisa tu conexión."
+                case .notFound: message = L("Este contacto ya no existe.")
+                case .network, .timeout: message = L("Revisa tu conexión.")
                 case let type: message = transferErrorMessage(type, serverError: (error as? ApiError)?.serverError, recipientName: target.displayName)
                 }
             }
@@ -95,15 +95,15 @@ final class SendMoneyViewModel {
     func confirmWithAuth() {
         guard let proposal = preview, canConfirm else { return }
         guard DeviceAuthenticator.availability == .available else {
-            message = "Configura un bloqueo de pantalla para enviar dinero."
+            message = L("Configura un bloqueo de pantalla para enviar dinero.")
             return
         }
         busy = true
         message = nil
         Task {
-            guard await DeviceAuthenticator.authenticate(reason: "Confirma el envío de \(formatMoney(proposal.amount, proposal.currency))") else {
+            guard await DeviceAuthenticator.authenticate(reason: L("Confirma el envío de %@", "\(formatMoney(proposal.amount, proposal.currency))")) else {
                 busy = false
-                message = "Necesitamos confirmar que eres tú."
+                message = L("Necesitamos confirmar que eres tú.")
                 return
             }
             do {
@@ -205,7 +205,7 @@ final class AssistantViewModel {
         voiceMessage = nil
         Task {
             if !VoiceRecognizer.hasPermissions, !(await VoiceRecognizer.requestPermissions()) {
-                voiceMessage = "Sin permiso de micrófono. Escribe tu mensaje."
+                voiceMessage = L("Sin permiso de micrófono. Escribe tu mensaje.")
                 return
             }
             voice.start()
@@ -240,14 +240,14 @@ final class AssistantViewModel {
         guard proposal.action == "schedule_payment" else { return sendConfirmation(proposal, autoExecute: auto) }
         // Sale dinero: siempre vista previa (la tarjeta) + Face ID o código del teléfono.
         guard DeviceAuthenticator.availability == .available else {
-            chat.proposalFailed(proposal.proposalId, message: "Configura un bloqueo de pantalla para programar pagos.")
+            chat.proposalFailed(proposal.proposalId, message: L("Configura un bloqueo de pantalla para programar pagos."))
             return
         }
         Task {
-            if await DeviceAuthenticator.authenticate(reason: "Confirma el pago programado") {
+            if await DeviceAuthenticator.authenticate(reason: L("Confirma el pago programado")) {
                 sendConfirmation(proposal, autoExecute: auto)
             } else {
-                voiceMessage = "Necesitamos confirmar que eres tú para programar el pago."
+                voiceMessage = L("Necesitamos confirmar que eres tú para programar el pago.")
             }
         }
     }
@@ -298,14 +298,14 @@ final class ScheduledViewModel {
     func run(_ item: ScheduledItem) {
         guard item.kind == "payment" else { return act(item, run: true) }
         guard DeviceAuthenticator.availability == .available else {
-            message = "Configura un bloqueo de pantalla para enviar dinero."
+            message = L("Configura un bloqueo de pantalla para enviar dinero.")
             return
         }
         Task {
-            if await DeviceAuthenticator.authenticate(reason: "Confirma el envío a \(item.contactName)") {
+            if await DeviceAuthenticator.authenticate(reason: L("Confirma el envío a %@", "\(item.contactName)")) {
                 act(item, run: true)
             } else {
-                message = "Necesitamos confirmar que eres tú para enviar el pago."
+                message = L("Necesitamos confirmar que eres tú para enviar el pago.")
             }
         }
     }
@@ -323,10 +323,10 @@ final class ScheduledViewModel {
                     let result = try await context.api.runScheduled(context.session, scheduledId: item.scheduledId)
                     if result.state == "completado" {
                         message = item.kind == "payment"
-                            ? "Envío creado a \(item.contactName). Revisa su estado en Movimientos."
-                            : "Cobro creado. \(item.contactName) debe aprobarlo en PayPal."
+                            ? L("Envío creado a %@. Revisa su estado en Movimientos.", "\(item.contactName)")
+                            : L("Cobro creado. %@ debe aprobarlo en PayPal.", "\(item.contactName)")
                     } else {
-                        message = scheduledFailureMessage(result.failure) ?? "No se pudo crear el cobro."
+                        message = scheduledFailureMessage(result.failure) ?? L("No se pudo crear el cobro.")
                     }
                 } else {
                     try await context.api.cancelScheduled(context.session, scheduledId: item.scheduledId)
@@ -336,7 +336,7 @@ final class ScheduledViewModel {
                 logFailure(run ? "runScheduled" : "cancelScheduled", error)
                 switch error.apiFailure {
                 case .unauthorized: return context.invalidate(sessionInvalidMessage)
-                case .notFound: message = "Esa programación ya cambió de estado."
+                case .notFound: message = L("Esa programación ya cambió de estado.")
                 case let type: message = assistantErrorMessage(type)
                 }
                 await reload()

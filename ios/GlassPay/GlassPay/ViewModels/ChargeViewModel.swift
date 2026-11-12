@@ -58,13 +58,13 @@ final class ChargeViewModel {
         self.context = context
         self.onOpenMovements = onOpenMovements
         voice.onResult = { [weak self] text in
-            self?.voiceStatus = "Procesando voz…"
+            self?.voiceStatus = L("Procesando voz…")
             self?.lastRecognizedText = text
             self?.handleRecognized(text)
         }
-        voice.onReady = { [weak self] in self?.voiceStatus = "Escuchando por \(AudioRoute.inputLabel)…" }
-        voice.onPartial = { [weak self] in self?.voiceStatus = "Escuchando por \(AudioRoute.inputLabel)…" }
-        voice.onEnd = { [weak self] in self?.voiceStatus = "Procesando voz…" }
+        voice.onReady = { [weak self] in self?.voiceStatus = L("Escuchando por %@…", "\(AudioRoute.inputLabel)") }
+        voice.onPartial = { [weak self] in self?.voiceStatus = L("Escuchando por %@…", "\(AudioRoute.inputLabel)") }
+        voice.onEnd = { [weak self] in self?.voiceStatus = L("Procesando voz…") }
         voice.onError = { [weak self] kind in self?.voiceFailed(kind) }
     }
 
@@ -73,7 +73,7 @@ final class ChargeViewModel {
     func onAppear() async {
         if !cameraGranted {
             cameraGranted = await QRScannerView.requestCamera()
-            if !cameraGranted { cameraError = "Necesitamos la cámara para leer el QR." }
+            if !cameraGranted { cameraError = L("Necesitamos la cámara para leer el QR.") }
         }
         do {
             try await context.api.warmUp()
@@ -169,17 +169,17 @@ final class ChargeViewModel {
                 let saved = try await context.api.saveContact(context.session, resolutionId: resolutionId)
                 guard !Task.isCancelled else { return }
                 dispatch(.contactSaved(contactId: saved.contactId))
-                contactMessage = "Guardado en tus contactos"
+                contactMessage = L("Guardado en tus contactos")
                 Haptics.success()
             } catch {
                 guard !Task.isCancelled, !error.isCancellation else { return }
                 logFailure("saveContact", error)
                 switch error.apiFailure {
                 case .unauthorized: invalidateSession(sessionInvalidMessage)
-                case .notFound: contactMessage = "No se pudo guardar. Escanea su QR de nuevo."
-                case .conflict: contactMessage = "Llegaste al máximo de contactos."
-                case .rateLimited: contactMessage = "Demasiados intentos. Espera unos segundos."
-                default: contactMessage = "No se pudo guardar. Revisa tu conexión."
+                case .notFound: contactMessage = L("No se pudo guardar. Escanea su QR de nuevo.")
+                case .conflict: contactMessage = L("Llegaste al máximo de contactos.")
+                case .rateLimited: contactMessage = L("Demasiados intentos. Espera unos segundos.")
+                default: contactMessage = L("No se pudo guardar. Revisa tu conexión.")
                 }
             }
         }
@@ -190,7 +190,7 @@ final class ChargeViewModel {
     func startChargeInput() {
         if chargeMachine.state.isReady { lastRecognizedText = nil }
         applyCharge(chargeMachine.beginListening())
-        speech.speak("Dicta el monto y el concepto del cobro.") { [weak self] in self?.startVoiceAfterSpeech() }
+        speech.speak(L("Dicta el monto y el concepto del cobro.")) { [weak self] in self?.startVoiceAfterSpeech() }
     }
 
     func retry() {
@@ -212,16 +212,16 @@ final class ChargeViewModel {
                 if granted {
                     startVoiceAfterSpeech()
                 } else {
-                    applyCharge(chargeMachine.inputError("Permiso de micrófono denegado. Usa la entrada por texto."))
+                    applyCharge(chargeMachine.inputError(L("Permiso de micrófono denegado. Usa la entrada por texto.")))
                 }
             }
             return
         }
         guard voice.isAvailable else {
-            applyCharge(chargeMachine.inputError("El reconocimiento de voz no está disponible. Usa la entrada por texto."))
+            applyCharge(chargeMachine.inputError(L("El reconocimiento de voz no está disponible. Usa la entrada por texto.")))
             return
         }
-        voiceStatus = "Preparando micrófono…"
+        voiceStatus = L("Preparando micrófono…")
         voice.start()
     }
 
@@ -231,7 +231,7 @@ final class ChargeViewModel {
         AudioRoute.prefersGlasses = prefersGlassesAudio
         guard chargeMachine.state.isListening else { return }
         voice.cancel()
-        voiceStatus = "Preparando micrófono…"
+        voiceStatus = L("Preparando micrófono…")
         voice.start()
     }
 
@@ -243,7 +243,7 @@ final class ChargeViewModel {
             return
         }
         previewListens += 1
-        voiceStatus = "Preparando micrófono…"
+        voiceStatus = L("Preparando micrófono…")
         voice.start()
     }
 
@@ -280,11 +280,11 @@ final class ChargeViewModel {
             case let .accepted(updated): next = updated
             case .tooManyRounds:
                 inputSession = nil
-                applyCharge(chargeMachine.restartInput("No pude completar la aclaración. Empieza el cobro otra vez."))
+                applyCharge(chargeMachine.restartInput(L("No pude completar la aclaración. Empieza el cobro otra vez.")))
                 return
             case .tooLong:
                 inputSession = nil
-                applyCharge(chargeMachine.restartInput("La frase es demasiado larga. Empieza el cobro otra vez."))
+                applyCharge(chargeMachine.restartInput(L("La frase es demasiado larga. Empieza el cobro otra vez.")))
                 return
             case .invalid:
                 return
@@ -294,7 +294,7 @@ final class ChargeViewModel {
         }
         guard let next else {
             inputSession = nil
-            applyCharge(chargeMachine.restartInput("La frase es demasiado larga. Empieza el cobro otra vez."))
+            applyCharge(chargeMachine.restartInput(L("La frase es demasiado larga. Empieza el cobro otra vez.")))
             return
         }
         inputSession = next
@@ -309,11 +309,11 @@ final class ChargeViewModel {
                     lastRecognizedText = nil
                     previewListens = 0
                     applyCharge(chargeMachine.preview(proposal, remainingSeconds: remainingSeconds(proposal.expiresAt)))
-                    speech.speak("Cobro de \(proposal.amount) \(proposal.currency) por \(proposal.concept). ¿Confirmas?") {
+                    speech.speak(L("Cobro de %@ %@ por %@. ¿Confirmas?", "\(proposal.amount)", "\(proposal.currency)", "\(proposal.concept)")) {
                         self.startVoiceAfterSpeech()
                     }
                 } else {
-                    let question = result.clarificationQuestion.nonEmpty ?? "¿Qué dato debo aclarar?"
+                    let question = result.clarificationQuestion.nonEmpty ?? L("¿Qué dato debo aclarar?")
                     inputSession = inputSessionAfterDecision(inputSession, reason: .serverClarification)
                     applyCharge(chargeMachine.clarification(question))
                     speech.speak(question)
@@ -353,7 +353,7 @@ final class ChargeViewModel {
                 // Solo viaja el id de la propuesta; el servidor usa el monto y el concepto que guardó.
                 let created = try await context.api.confirm(context.session, proposalId: proposal.proposalId)
                 applyCharge(chargeMachine.created(requestId: created.requestId, statusToken: created.statusToken))
-                speech.speak("Solicitud enviada al pagador.")
+                speech.speak(L("Solicitud enviada al pagador."))
             } catch {
                 guard !error.isCancellation else { return }
                 logFailure("confirm", error)
@@ -376,7 +376,7 @@ final class ChargeViewModel {
         inputSession = inputSessionAfter(inputSession, reason: .cancelled)
         lastRecognizedText = nil
         applyCharge(chargeMachine.cancel())
-        speech.speak("Cobro cancelado.")
+        speech.speak(L("Cobro cancelado."))
     }
 
     func startOver() {
@@ -463,7 +463,7 @@ final class ChargeViewModel {
             voiceStatus = nil
             let kept: String?
             if case let .ready(message) = chargeMachine.state { kept = message } else { kept = nil }
-            applyCharge(chargeMachine.resetForNewScan(message: kept ?? "La resolución venció. Escanea otro QR."))
+            applyCharge(chargeMachine.resetForNewScan(message: kept ?? L("La resolución venció. Escanea otro QR.")))
             dispatch(.reset)
         }
     }
@@ -514,7 +514,7 @@ final class ChargeViewModel {
                     if updatedPayment == .paid && announcedPaymentRequestId != requestId {
                         announcedPaymentRequestId = requestId
                         Haptics.success()
-                        speech.speak("Pago recibido.")
+                        speech.speak(L("Pago recibido."))
                     }
                     if isTerminal(tracking) { break }
                 } catch {
@@ -522,11 +522,11 @@ final class ChargeViewModel {
                     logFailure("payment status", error)
                     let type = error.apiFailure
                     if type == .rateLimited {
-                        applyCharge(chargeMachine.paymentUpdated(.error("Demasiados intentos. Espera unos segundos.")))
+                        applyCharge(chargeMachine.paymentUpdated(.error(L("Demasiados intentos. Espera unos segundos."))))
                         break
                     }
                     if type != .network && type != .timeout {
-                        applyCharge(chargeMachine.paymentUpdated(.error("No pudimos consultar el estado del pago.")))
+                        applyCharge(chargeMachine.paymentUpdated(.error(L("No pudimos consultar el estado del pago."))))
                         break
                     }
                     if payment != .approved {

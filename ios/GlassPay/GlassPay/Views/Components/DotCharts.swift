@@ -24,8 +24,8 @@ struct DotLineChart: View {
 
     // Enviado primero para que Cobrado quede encima cuando se cruzan.
     private let series = [
-        Series(name: "Enviado", color: GP.chartSent, value: \.sentTotal),
-        Series(name: "Cobrado", color: GP.chartPaid, value: \.paidTotal),
+        Series(name: L("Enviado"), color: GP.chartSent, value: \.sentTotal),
+        Series(name: L("Cobrado"), color: GP.chartPaid, value: \.paidTotal),
     ]
 
     var body: some View {
@@ -33,22 +33,22 @@ struct DotLineChart: View {
         let selectedLabel = buckets.indices.contains(selected) ? buckets[selected].label : nil
         Chart {
             if let selectedLabel {
-                RuleMark(x: .value("Periodo", selectedLabel))
+                RuleMark(x: .value(L("Periodo"), selectedLabel))
                     .foregroundStyle(GP.line)
                     .lineStyle(StrokeStyle(lineWidth: 1))
             }
             ForEach(series) { item in
                 ForEach(Array(buckets.enumerated()), id: \.offset) { index, bucket in
                     LineMark(
-                        x: .value("Periodo", bucket.label),
-                        y: .value("Monto", item.value(bucket)),
-                        series: .value("Serie", item.name)
+                        x: .value(L("Periodo"), bucket.label),
+                        y: .value(L("Monto"), item.value(bucket)),
+                        series: .value(L("Serie"), item.name)
                     )
                     .foregroundStyle(item.color)
                     .interpolationMethod(.monotone)
                     .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
 
-                    PointMark(x: .value("Periodo", bucket.label), y: .value("Monto", item.value(bucket)))
+                    PointMark(x: .value(L("Periodo"), bucket.label), y: .value(L("Monto"), item.value(bucket)))
                         .symbol { ChartDot(color: item.color, emphasized: index == selected) }
                 }
             }

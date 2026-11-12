@@ -1,7 +1,9 @@
 const { randomBytes, randomUUID } = require("node:crypto");
 const { logRef, syncTransfer } = require("../services/transfers");
 const { computeStats, isPeriod } = require("../services/stats");
-const { SUGGESTIONS, buildAssistantReply } = require("../services/assistant-replies");
+const { buildAssistantReply, suggestionsFor } = require("../services/assistant-replies");
+const { requestLanguage } = require("../services/language");
+const { t } = require("../services/i18n");
 const {
   prepareCancel,
   prepareRecurringCharge,
@@ -143,7 +145,7 @@ function isScheduledId(value) {
   return typeof value === "string" && /^[A-Za-z0-9_-]{24,64}$/.test(value);
 }
 
-function toScheduledItem(item) {
+function toScheduledItem(item, language = "es") {
   return {
     scheduledId: item.scheduledId,
     kind: item.kind,
@@ -152,7 +154,7 @@ function toScheduledItem(item) {
     currency: item.currency,
     concept: item.concept,
     runAt: item.runAt,
-    runAtLabel: formatRunAt(new Date(item.runAt)),
+    runAtLabel: formatRunAt(new Date(item.runAt), language),
     autoExecute: item.autoExecute,
     state: item.state,
     failure: item.failure,
@@ -185,18 +187,22 @@ function isReminderId(value) {
 }
 
 // Sugiere recordar a los deudores que están en contactos (la sugerencia también pasa por confirmación).
-function debtorSuggestions(reply, contacts) {
-  if (reply.kind !== "debtors") return SUGGESTIONS;
+function debtorSuggestions(reply, contacts, language = "es") {
+  const suggestions = suggestionsFor(language);
+  if (reply.kind !== "debtors") return suggestions;
   const names = new Set(contacts.map((contact) => contact.displayName));
   const reminders = reply.debtors
     .filter((debtor) => names.has(debtor.name))
     .slice(0, 3)
-    .map((debtor) => `Recuérdale a ${debtor.name} que me pague ${Number(debtor.total).toFixed(2)}`);
-  return [...reminders, ...SUGGESTIONS].slice(0, 5);
+    .map((debtor) => t(language, "Recuérdale a {name} que me pague {total}", {
+      name: debtor.name,
+      total: Number(debtor.total).toFixed(2),
+    }));
+  return [...reminders, ...suggestions].slice(0, 5);
 }
 
-function activeScheduled(items) {
-  return items.filter((item) => ACTIVE_SCHEDULED_STATES.has(item.state)).map(toScheduledItem);
+function activeScheduled(items, language = "es") {
+  return items.filter((item) => ACTIVE_SCHEDULED_STATES.has(item.state)).map((item) => toScheduledItem(item, language));
 }
 
 function createCollectorsRouter({ database, config, paypal, assistant, scheduler }) {
@@ -330,7 +336,10 @@ function createCollectorsRouter({ database, config, paypal, assistant, scheduler
     await database.expirePaymentRequests();
     await refreshOpenTransfers(collector.id);
     return response.status(200).json(
-      computeStats(database, collector.id, period, { currency: config.payments.defaultCurrency }),
+      computeStats(database, collector.id, period, {
+        currency: config.payments.defaultCurrency,
+        language: requestLanguage(request),
+      }),
     );
   });
 
@@ -348,6 +357,7 @@ function createCollectorsRouter({ database, config, paypal, assistant, scheduler
 
     const startedAt = Date.now();
     const now = new Date();
+    const language = requestLanguage(request);
     const interpretation = await assistant.interpret(text, now);
     await database.expirePaymentRequests();
     let reply;
@@ -358,12 +368,15 @@ function createCollectorsRouter({ database, config, paypal, assistant, scheduler
         contacts: database.listCollectorContacts(collector.id),
         config,
         now,
+        language,
       });
       if (prepared.type === "proposal" && prepared.kind === "schedule_payment") {
         const contact = database.getCollectorContact(prepared.payload.contactId, collector.id);
         if (!database.getPayoutEmailForPayer(contact.payer_id)) {
           prepared.type = "clarification";
-          prepared.text = `${contact.display_name} aún no registra su correo para recibir envíos. Pídele que lo haga en su app.`;
+          prepared.text = t(language, "{name} aún no registra su correo para recibir envíos. Pídele que lo haga en su app.", {
+            name: contact.display_name,
+          });
         } else {
           const { availableCents } = database.getAvailableCents(collector.id, prepared.payload.currency);
           // Solo un aviso: el saldo se verifica de nuevo, de forma atómica, a la hora del envío.
@@ -371,25 +384,27 @@ function createCollectorsRouter({ database, config, paypal, assistant, scheduler
         }
       }
       reply = prepared.type === "proposal"
-        ? await storeProposal(collector.id, prepared, now)
+        ? await storeProposal(collector.id, prepared, now, language)
         : { kind: "text", text: prepared.text };
     } else if (interpretation.intent === "cancel_scheduled") {
       const scheduled = database.listScheduledActions(collector.id);
-      const prepared = prepareCancel({ interpretation, text, scheduled });
+      const prepared = prepareCancel({ interpretation, text, scheduled, language });
       if (prepared.type === "proposal") {
-        reply = await storeProposal(collector.id, prepared, now);
+        reply = await storeProposal(collector.id, prepared, now, language);
       } else if (prepared.type === "scheduled") {
-        reply = { kind: "scheduled", text: prepared.text, scheduled: activeScheduled(scheduled) };
+        reply = { kind: "scheduled", text: prepared.text, scheduled: activeScheduled(scheduled, language) };
       } else {
         reply = { kind: "text", text: prepared.text };
       }
     } else if (interpretation.intent === "scheduled") {
-      const active = activeScheduled(database.listScheduledActions(collector.id));
+      const active = activeScheduled(database.listScheduledActions(collector.id), language);
       reply = active.length === 0
-        ? { kind: "text", text: "Aún no tienes nada programado." }
+        ? { kind: "text", text: t(language, "Aún no tienes nada programado.") }
         : {
           kind: "scheduled",
-          text: active.length === 1 ? "Tienes 1 programación activa." : `Tienes ${active.length} programaciones activas.`,
+          text: active.length === 1
+            ? t(language, "Tienes 1 programación activa.")
+            : t(language, "Tienes {count} programaciones activas.", { count: active.length }),
           scheduled: active,
         };
     } else {
@@ -398,20 +413,22 @@ function createCollectorsRouter({ database, config, paypal, assistant, scheduler
         collectorId: collector.id,
         interpretation,
         currency: config.payments.defaultCurrency,
+        language,
       });
     }
     // Sin texto del usuario ni datos personales en el log.
     console.info("assistant message", {
       intent: interpretation.intent,
       method: interpretation.method,
+      language,
       reply: reply.kind,
       elapsedMs: Date.now() - startedAt,
     });
-    const suggestions = debtorSuggestions(reply, database.listCollectorContacts(collector.id));
+    const suggestions = debtorSuggestions(reply, database.listCollectorContacts(collector.id), language);
     return response.status(200).json({ reply, suggestions, method: interpretation.method });
   });
 
-  async function storeProposal(collectorId, prepared, now) {
+  async function storeProposal(collectorId, prepared, now, language = "es") {
     const proposalId = createOpaqueToken(32);
     const expiresAt = new Date(now.getTime() + config.scheduling.proposalTtlSeconds * 1000).toISOString();
     await database.createAssistantProposal({
@@ -425,7 +442,7 @@ function createCollectorsRouter({ database, config, paypal, assistant, scheduler
     const isSplit = prepared.kind === "split_bill";
     return {
       kind: "proposal",
-      text: PROPOSAL_INTRO[prepared.kind],
+      text: t(language, PROPOSAL_INTRO[prepared.kind]),
       proposal: {
         proposalId,
         action: prepared.kind,
@@ -435,7 +452,7 @@ function createCollectorsRouter({ database, config, paypal, assistant, scheduler
         currency: payload.currency,
         concept: payload.concept,
         runAt: payload.runAt,
-        runAtLabel: payload.runAt ? formatRunAt(new Date(payload.runAt)) : null,
+        runAtLabel: payload.runAt ? formatRunAt(new Date(payload.runAt), language) : null,
         recurrence: payload.recurrence || null,
         occurrencesTotal: payload.occurrencesTotal || null,
         participants: isSplit
@@ -556,7 +573,7 @@ function createCollectorsRouter({ database, config, paypal, assistant, scheduler
     const ids = new Set(actions.map((action) => action.id));
     const items = database.listScheduledActions(collector.id)
       .filter((entry) => ids.has(entry.scheduledId))
-      .map(toScheduledItem);
+      .map((item) => toScheduledItem(item, requestLanguage(request)));
     return response.status(201).json({ scheduled: items[0], scheduledItems: items });
   });
 
@@ -588,7 +605,7 @@ function createCollectorsRouter({ database, config, paypal, assistant, scheduler
       return response.status(401).json({ error: "collector authentication failed" });
     }
     return response.status(200).json({
-      scheduled: database.listScheduledActions(collector.id).map(toScheduledItem),
+      scheduled: database.listScheduledActions(collector.id).map((item) => toScheduledItem(item, requestLanguage(request))),
       maxActive: config.scheduling.maxActive,
     });
   });
@@ -619,7 +636,7 @@ function createCollectorsRouter({ database, config, paypal, assistant, scheduler
     }
     await scheduler.executeAction(action);
     const item = database.listScheduledActions(collector.id).find((entry) => entry.scheduledId === action.id);
-    return response.status(200).json({ scheduled: toScheduledItem(item) });
+    return response.status(200).json({ scheduled: toScheduledItem(item, requestLanguage(request)) });
   });
 
   router.put("/me/payout-email", settingsLimiter, async (request, response) => {
