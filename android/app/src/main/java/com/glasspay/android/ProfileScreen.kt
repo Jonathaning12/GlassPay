@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -65,9 +67,37 @@ fun ProfileScreen(
     amountsVisible: Boolean,
     onToggleAmounts: () -> Unit,
     lockAvailability: DeviceAuthAvailability,
+    onLogout: () -> Unit,
 ) {
     var profile by remember { mutableStateOf<LoadState<CollectorProfile>>(LoadState.Loading) }
     var revealed by remember { mutableStateOf(false) }
+    var confirmingLogout by remember { mutableStateOf(false) }
+    var showLanguage by remember { mutableStateOf(false) }
+
+    if (confirmingLogout) {
+        AlertDialog(
+            onDismissRequest = { confirmingLogout = false },
+            title = { Text(L("¿Cerrar sesión?")) },
+            text = {
+                Text(
+                    L("Se borrará tu cuenta de este teléfono. GlassPay no usa contraseña: para volver tendrás que crear una cuenta nueva y ya no verás el saldo, los movimientos ni los contactos de esta."),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmingLogout = false
+                    onLogout()
+                }) { Text(L("Cerrar sesión"), color = GlassPayColors.Error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmingLogout = false }) { Text(L("Cancelar")) } },
+        )
+    }
+
+    // "Idioma" es una subpantalla del perfil: al volver se ve el perfil otra vez.
+    if (showLanguage) {
+        LanguageScreen(onBack = { showLanguage = false })
+        return
+    }
 
     BackHandler { onBack() }
 
@@ -89,14 +119,14 @@ fun ProfileScreen(
     }
 
     val payoutDescription = when (val current = profile) {
-        LoadState.Loading -> "Cargando…"
-        LoadState.Failed -> "Correo de PayPal Sandbox para recibir envíos"
-        is LoadState.Loaded -> current.value.payoutEmail?.let { "Recibes en $it" }
-            ?: "Registra tu correo de PayPal Sandbox"
+        LoadState.Loading -> L("Cargando…")
+        LoadState.Failed -> L("Correo de PayPal Sandbox para recibir envíos")
+        is LoadState.Loaded -> current.value.payoutEmail?.let { L("Recibes en %s", it) }
+            ?: L("Registra tu correo de PayPal Sandbox")
     }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        ScreenHeader("Mi perfil", onBack = onBack)
+        ScreenHeader(L("Mi perfil"), onBack = onBack)
         Column(
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp),
@@ -117,32 +147,32 @@ fun ProfileScreen(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(top = 6.dp),
                     )
-                    Text("Cuenta de cobrador · Sandbox", style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
+                    Text(L("Cuenta de cobrador · Sandbox"), style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
                 }
             }
             Reveal(revealed, index = 1) {
-                ProfileSection("Mover dinero") {
-                    ProfileRow(R.drawable.ic_charge, "Cobrar", "Escanea el QR de un amigo y dicta el cobro", onCharge, highlighted = true)
+                ProfileSection(L("Mover dinero")) {
+                    ProfileRow(R.drawable.ic_charge, L("Cobrar"), L("Escanea el QR de un amigo y dicta el cobro"), onCharge, highlighted = true)
                     RowDivider()
-                    ProfileRow(R.drawable.ic_send, "Enviar", "Envía dinero a uno de tus contactos", onSend)
+                    ProfileRow(R.drawable.ic_send, L("Enviar"), L("Envía dinero a uno de tus contactos"), onSend)
                     RowDivider()
-                    ProfileRow(R.drawable.ic_qr, "Mi QR", "Muéstralo para que te cobren o te agreguen", onOpenMyQr)
+                    ProfileRow(R.drawable.ic_qr, L("Mi QR"), L("Muéstralo para que te cobren o te agreguen"), onOpenMyQr)
                 }
             }
             Reveal(revealed, index = 2) {
-                ProfileSection("Cuenta") {
-                    ProfileRow(R.drawable.ic_mail, "Recibir envíos", payoutDescription, onPayoutEmail)
+                ProfileSection(L("Cuenta")) {
+                    ProfileRow(R.drawable.ic_mail, L("Recibir envíos"), payoutDescription, onPayoutEmail)
                     RowDivider()
-                    ProfileRow(R.drawable.ic_clock, "Programados", "Cobros y pagos que programaste con el asistente", onOpenScheduled)
+                    ProfileRow(R.drawable.ic_clock, L("Programados"), L("Cobros y pagos que programaste con el asistente"), onOpenScheduled)
                     RowDivider()
-                    ProfileRow(R.drawable.ic_glasses, "Lentes", "Cobra mirando el QR con tus lentes", onOpenGlasses)
+                    ProfileRow(R.drawable.ic_glasses, L("Lentes"), L("Cobra mirando el QR con tus lentes"), onOpenGlasses)
                 }
             }
             Reveal(revealed, index = 3) {
-                ProfileSection("Seguridad y privacidad") {
+                ProfileSection(L("Seguridad y privacidad")) {
                     ProfileSwitchRow(
-                        title = "Mostrar montos",
-                        description = "Se ocultan de nuevo al salir de la app",
+                        title = L("Mostrar montos"),
+                        description = L("Se ocultan de nuevo al salir de la app"),
                         checked = amountsVisible,
                         onToggle = onToggleAmounts,
                     )
@@ -150,19 +180,29 @@ fun ProfileScreen(
                     val lockOn = lockAvailability == DeviceAuthAvailability.AVAILABLE
                     ProfileInfoRow(
                         icon = R.drawable.ic_lock,
-                        title = "Bloqueo con tu teléfono",
+                        title = L("Bloqueo con tu teléfono"),
                         description = if (lockOn) {
-                            "Se pide al abrir, tras 5 min fuera y antes de enviar dinero"
+                            L("Se pide al abrir, tras 5 min fuera y antes de enviar dinero")
                         } else {
-                            "Configura un bloqueo de pantalla en tu teléfono para proteger GlassPay"
+                            L("Configura un bloqueo de pantalla en tu teléfono para proteger GlassPay")
                         },
-                        status = if (lockOn) "Activo" else "Inactivo",
+                        status = if (lockOn) L("Activo") else L("Inactivo"),
                         statusKind = if (lockOn) StatusKind.SUCCESS else StatusKind.PENDING,
                     )
                 }
             }
             Reveal(revealed, index = 4) {
-                InlineNotice("Actividad en GlassPay (Sandbox). No es una cuenta bancaria.", icon = R.drawable.ic_lock)
+                ProfileSection(L("Idioma")) {
+                    ProfileRow(R.drawable.ic_globe, L("Idioma de la app"), currentLanguage.nativeName, { showLanguage = true })
+                }
+            }
+            Reveal(revealed, index = 5) {
+                ProfileSection(L("Sesión")) {
+                    LogoutRow(onClick = { confirmingLogout = true })
+                }
+            }
+            Reveal(revealed, index = 6) {
+                InlineNotice(L("Actividad en GlassPay (Sandbox). No es una cuenta bancaria."), icon = R.drawable.ic_lock)
             }
         }
     }
@@ -278,6 +318,29 @@ private fun ProfileInfoRow(@DrawableRes icon: Int, title: String, description: S
         IconBadge(icon, tint = statusColor(statusKind), size = 40.dp, background = statusSoftColor(statusKind))
         RowTexts(title, description, Modifier.weight(1f))
         StatusPill(status, statusKind)
+    }
+}
+
+/** Borra la cuenta de este teléfono tras confirmarlo (ver diálogo en ProfileScreen). */
+@Composable
+private fun LogoutRow(onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        color = Color.Transparent,
+        contentColor = GlassPayColors.Error,
+        modifier = Modifier.fillMaxWidth().heightIn(min = 72.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconBadge(R.drawable.ic_logout, tint = GlassPayColors.Error, size = 40.dp, background = GlassPayColors.ErrorSoft)
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(L("Cerrar sesión"), style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Error)
+                Text(L("Borra tu cuenta de este teléfono"), style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
+            }
+        }
     }
 }
 

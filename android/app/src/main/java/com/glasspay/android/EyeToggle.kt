@@ -53,8 +53,8 @@ fun EyeToggle(visible: Boolean, onToggle: () -> Unit, modifier: Modifier = Modif
                 scaleY = scale
             }
             .semantics {
-                contentDescription = if (visible) "Ocultar montos" else "Mostrar montos"
-                stateDescription = if (visible) "Montos visibles" else "Montos ocultos"
+                contentDescription = if (visible) L("Ocultar montos") else L("Mostrar montos")
+                stateDescription = if (visible) L("Montos visibles") else L("Montos ocultos")
             },
     ) {
         Box(contentAlignment = Alignment.Center) { EyeGlyph(open = visible) }
@@ -153,7 +153,7 @@ fun MaskedMoney(
     val masked = prefix + maskAmount(formatted, false).removeSuffix(" $currency")
     Row(
         modifier = modifier.clearAndSetSemantics {
-            contentDescription = if (visible) prefix + formatted else "Monto oculto"
+            contentDescription = if (visible) prefix + formatted else L("Monto oculto")
         },
         verticalAlignment = Alignment.Bottom,
         horizontalArrangement = Arrangement.spacedBy(if (large) 8.dp else 4.dp),

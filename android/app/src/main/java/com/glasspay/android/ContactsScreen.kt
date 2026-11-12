@@ -84,15 +84,15 @@ fun ContactsScreen(
                 when (exception.type) {
                     ApiFailureType.UNAUTHORIZED -> onSessionInvalid(SESSION_INVALID_MESSAGE)
                     ApiFailureType.NOT_FOUND -> {
-                        message = "Este contacto ya no existe."
+                        message = L("Este contacto ya no existe.")
                         reload += 1
                     }
-                    ApiFailureType.RATE_LIMITED -> message = "Demasiados intentos. Espera unos segundos."
-                    else -> message = "No pudimos preparar el cobro. Revisa tu conexión."
+                    ApiFailureType.RATE_LIMITED -> message = L("Demasiados intentos. Espera unos segundos.")
+                    else -> message = L("No pudimos preparar el cobro. Revisa tu conexión.")
                 }
             } catch (_: Exception) {
                 Log.i("GlassPay", "contactResolution failure type=UNKNOWN httpCode=none")
-                message = "No pudimos preparar el cobro. Revisa tu conexión."
+                message = L("No pudimos preparar el cobro. Revisa tu conexión.")
             } finally {
                 busyContactId = null
             }
@@ -114,12 +114,12 @@ fun ContactsScreen(
                 when (exception.type) {
                     ApiFailureType.UNAUTHORIZED -> onSessionInvalid(SESSION_INVALID_MESSAGE)
                     ApiFailureType.NOT_FOUND -> reload += 1
-                    ApiFailureType.RATE_LIMITED -> message = "Demasiados intentos. Espera unos segundos."
-                    else -> message = "No pudimos eliminar el contacto. Revisa tu conexión."
+                    ApiFailureType.RATE_LIMITED -> message = L("Demasiados intentos. Espera unos segundos.")
+                    else -> message = L("No pudimos eliminar el contacto. Revisa tu conexión.")
                 }
             } catch (_: Exception) {
                 Log.i("GlassPay", "deleteContact failure type=UNKNOWN httpCode=none")
-                message = "No pudimos eliminar el contacto. Revisa tu conexión."
+                message = L("No pudimos eliminar el contacto. Revisa tu conexión.")
             } finally {
                 busyContactId = null
             }
@@ -129,14 +129,14 @@ fun ContactsScreen(
     pendingDelete?.let { contact ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            text = { Text("¿Eliminar a ${contact.displayName} de tus contactos?") },
+            text = { Text(L("¿Eliminar a %s de tus contactos?", contact.displayName)) },
             confirmButton = {
                 TextButton(onClick = {
                     pendingDelete = null
                     deleteContact(contact)
-                }) { Text("Eliminar") }
+                }) { Text(L("Eliminar")) }
             },
-            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancelar") } },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text(L("Cancelar")) } },
         )
     }
 
@@ -149,15 +149,15 @@ fun ContactsScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text("Contactos", style = MaterialTheme.typography.headlineMedium, color = GlassPayColors.Text, modifier = Modifier.weight(1f))
-            CircleIconButton(R.drawable.ic_plus, "Agregar con QR", onAddWithQr, tint = GlassPayColors.Accent)
+            Text(L("Contactos"), style = MaterialTheme.typography.headlineMedium, color = GlassPayColors.Text, modifier = Modifier.weight(1f))
+            CircleIconButton(R.drawable.ic_plus, L("Agregar con QR"), onAddWithQr, tint = GlassPayColors.Accent)
         }
         message?.let { InlineNotice(it, kind = StatusKind.PENDING) }
         when (val current = state) {
             LoadState.Loading -> repeat(3) { SkeletonBox(Modifier.fillMaxWidth().height(124.dp)) }
             LoadState.Failed -> {
-                InlineNotice("No pudimos cargar tus contactos.", kind = StatusKind.FAILURE)
-                GpButton("Reintentar", onClick = { reload += 1 }, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
+                InlineNotice(L("No pudimos cargar tus contactos."), kind = StatusKind.FAILURE)
+                GpButton(L("Reintentar"), onClick = { reload += 1 }, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
             }
             is LoadState.Loaded -> {
                 if (current.value.isEmpty()) {
@@ -167,14 +167,14 @@ fun ContactsScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         IconBadge(R.drawable.ic_contacts, tint = GlassPayColors.Accent, size = 72.dp, background = GlassPayColors.AccentSoft)
-                        Text("Aún no tienes contactos", style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
+                        Text(L("Aún no tienes contactos"), style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
                         Text(
-                            "Escanea el QR de un amigo y guárdalo para cobrarle más rápido.",
+                            L("Escanea el QR de un amigo y guárdalo para cobrarle más rápido."),
                             style = MaterialTheme.typography.bodyMedium,
                             color = GlassPayColors.MutedText,
                             textAlign = TextAlign.Center,
                         )
-                        GpButton("Agregar con QR", onClick = onAddWithQr, icon = R.drawable.ic_qr, modifier = Modifier.fillMaxWidth())
+                        GpButton(L("Agregar con QR"), onClick = onAddWithQr, icon = R.drawable.ic_qr, modifier = Modifier.fillMaxWidth())
                     }
                 }
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.weight(1f)) {
@@ -189,7 +189,7 @@ fun ContactsScreen(
                         )
                     }
                     item {
-                        GpButton("Actualizar", onClick = { reload += 1 }, kind = GpButtonKind.GHOST, modifier = Modifier.fillMaxWidth())
+                        GpButton(L("Actualizar"), onClick = { reload += 1 }, kind = GpButtonKind.GHOST, modifier = Modifier.fillMaxWidth())
                     }
                 }
             }
@@ -221,13 +221,13 @@ private fun ContactRow(
             if (busy) {
                 CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp, color = GlassPayColors.Accent)
             } else {
-                CircleIconButton(R.drawable.ic_trash, "Eliminar a ${contact.displayName}", onDelete, tint = GlassPayColors.Error)
+                CircleIconButton(R.drawable.ic_trash, L("Eliminar a %s", contact.displayName), onDelete, tint = GlassPayColors.Error)
             }
         }
         if (!busy) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                GpButton("Cobrar", onClick = onCharge, enabled = enabled, icon = R.drawable.ic_receive, modifier = Modifier.weight(1f))
-                GpButton("Enviar", onClick = onSend, enabled = enabled, kind = GpButtonKind.SECONDARY, icon = R.drawable.ic_send, modifier = Modifier.weight(1f))
+                GpButton(L("Cobrar"), onClick = onCharge, enabled = enabled, icon = R.drawable.ic_receive, modifier = Modifier.weight(1f))
+                GpButton(L("Enviar"), onClick = onSend, enabled = enabled, kind = GpButtonKind.SECONDARY, icon = R.drawable.ic_send, modifier = Modifier.weight(1f))
             }
         }
     }

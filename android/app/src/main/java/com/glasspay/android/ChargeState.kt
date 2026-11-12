@@ -81,14 +81,37 @@ data class ChargeInputSession(
     }
 }
 
-private val CHARGE_VERBS = setOf("cobrale", "cobrales", "cobra", "cobrar")
+/** Comandos de voz por idioma: siempre coincidencia exacta de la frase completa (ya normalizada). */
+data class VoiceCommandWords(
+    val chargeVerbs: Set<String>,
+    val confirm: Set<String>,
+    val cancel: Set<String>,
+    val startOver: Set<String>,
+) {
+    companion object {
+        fun forLanguage(language: AppLanguage): VoiceCommandWords = when (language) {
+            AppLanguage.ES -> VoiceCommandWords(
+                chargeVerbs = setOf("cobrale", "cobrales", "cobra", "cobrar"),
+                confirm = setOf("confirmar", "si"),
+                cancel = setOf("no", "cancelar"),
+                startOver = setOf("empezar de nuevo"),
+            )
+            AppLanguage.EN -> VoiceCommandWords(
+                chargeVerbs = setOf("charge"),
+                confirm = setOf("confirm", "yes"),
+                cancel = setOf("no", "cancel"),
+                startOver = setOf("start over"),
+            )
+        }
+    }
+}
 
-fun startsWithChargeVerb(text: String): Boolean {
+fun startsWithChargeVerb(text: String, language: AppLanguage = currentLanguage): Boolean {
     val firstWord = normalizeCommandText(text)
         .split(Regex("\\s+"))
         .firstOrNull()
         ?: return false
-    return firstWord in CHARGE_VERBS
+    return firstWord in VoiceCommandWords.forLanguage(language).chargeVerbs
 }
 
 enum class VoiceCommand {
@@ -98,15 +121,15 @@ enum class VoiceCommand {
     NONE,
 }
 
-fun voiceCommand(text: String, state: ChargeState): VoiceCommand {
+fun voiceCommand(text: String, state: ChargeState, language: AppLanguage = currentLanguage): VoiceCommand {
     return when {
-        isCancellation(text) &&
+        isCancellation(text, language) &&
             (state is ChargeState.Listening ||
                 state is ChargeState.Clarification ||
                 state is ChargeState.Preview) -> VoiceCommand.CANCEL
-        normalizeCommandText(text) == "empezar de nuevo" &&
+        normalizeCommandText(text) in VoiceCommandWords.forLanguage(language).startOver &&
             (state is ChargeState.Clarification || state is ChargeState.Preview) -> VoiceCommand.START_OVER
-        isConfirmation(text) && state is ChargeState.Preview -> VoiceCommand.CONFIRM
+        isConfirmation(text, language) && state is ChargeState.Preview -> VoiceCommand.CONFIRM
         else -> VoiceCommand.NONE
     }
 }
@@ -279,7 +302,7 @@ class ChargeStateMachine(
     fun tick(remainingSeconds: Long): ChargeState {
         val current = state as? ChargeState.Preview ?: return state
         state = if (remainingSeconds <= 0) {
-            ChargeState.Ready("La propuesta venció. Dicta el cobro otra vez.")
+            ChargeState.Ready(L("La propuesta venció. Dicta el cobro otra vez."))
         } else {
             current.copy(remainingSeconds = remainingSeconds)
         }
@@ -310,18 +333,18 @@ class ChargeStateMachine(
         state = when (type) {
             ChargeFailureType.NETWORK,
             ChargeFailureType.TIMEOUT -> ChargeState.Error(
-                "No pudimos interpretar. Revisa tu conexión e inténtalo de nuevo.",
+                L("No pudimos interpretar. Revisa tu conexión e inténtalo de nuevo."),
                 recoverable = true,
             )
             ChargeFailureType.RATE_LIMITED -> ChargeState.Error(
-                "Demasiados intentos. Espera unos segundos.",
+                L("Demasiados intentos. Espera unos segundos."),
                 recoverable = true,
             )
             ChargeFailureType.PROPOSAL_INVALID -> ChargeState.Ready(
-                "La propuesta ya venció o no está disponible. Dicta el cobro otra vez.",
+                L("La propuesta ya venció o no está disponible. Dicta el cobro otra vez."),
             )
             ChargeFailureType.SERVER -> ChargeState.Error(
-                "GlassPay no pudo procesar la solicitud.",
+                L("GlassPay no pudo procesar la solicitud."),
                 recoverable = true,
             )
         }
@@ -331,14 +354,14 @@ class ChargeStateMachine(
     fun confirmationFailure(): ChargeState {
         if (state !is ChargeState.Confirming) return state
         state = ChargeState.Error(
-            "No pudimos confirmar. Revisa con el pagador antes de intentarlo de nuevo.",
+            L("No pudimos confirmar. Revisa con el pagador antes de intentarlo de nuevo."),
             recoverable = false,
         )
         return state
     }
 
     fun cancel(): ChargeState {
-        state = ChargeState.Ready("Cobro cancelado.")
+        state = ChargeState.Ready(L("Cobro cancelado."))
         return state
     }
 
@@ -398,11 +421,11 @@ class ChargeStateMachine(
     }
 }
 
-const val STOP_WAITING_MESSAGE =
-    "Dejaste de seguir esta solicitud. El pagador todavía puede aprobarla desde su teléfono."
+val STOP_WAITING_MESSAGE: String get() =
+    L("Dejaste de seguir esta solicitud. El pagador todavía puede aprobarla desde su teléfono.")
 
-const val STOP_WAITING_APPROVED_MESSAGE =
-    "Dejaste de seguir esta solicitud. El pagador ya la aprobó; revisa Movimientos para ver cuándo se complete."
+val STOP_WAITING_APPROVED_MESSAGE: String get() =
+    L("Dejaste de seguir esta solicitud. El pagador ya la aprobó; revisa Movimientos para ver cuándo se complete.")
 
 fun paymentTrackingFor(serverState: String): PaymentTracking {
     return when (serverState) {
@@ -412,7 +435,7 @@ fun paymentTrackingFor(serverState: String): PaymentTracking {
         "rechazada" -> PaymentTracking.Rejected
         "expirada" -> PaymentTracking.Expired
         "fallida" -> PaymentTracking.Failed
-        else -> PaymentTracking.Error("No pudimos consultar el estado del pago.")
+        else -> PaymentTracking.Error(L("No pudimos consultar el estado del pago."))
     }
 }
 

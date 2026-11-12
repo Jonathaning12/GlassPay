@@ -79,7 +79,7 @@ fun PaymentProgress(
 @Composable
 private fun ChargeSummary(confirmed: ConfirmedCharge?) {
     if (confirmed == null) return
-    Text("Cobro a ${confirmed.payerName}", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
+    Text(L("Cobro a %s", confirmed.payerName), color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
     MoneyText(formatMoney(confirmed.amount, confirmed.currency), style = MaterialTheme.typography.headlineLarge)
     Text(confirmed.concept, color = GlassPayColors.Text, style = MaterialTheme.typography.bodyLarge)
 }
@@ -87,14 +87,14 @@ private fun ChargeSummary(confirmed: ConfirmedCharge?) {
 @Composable
 private fun WaitingView(step: PaymentStep, payment: PaymentTracking, confirmed: ConfirmedCharge?) {
     val activeIndex = if (step == PaymentStep.CONFIRMING) 2 else 1
-    val awaitingDetail = (payment as? PaymentTracking.WaitingWithMessage)?.message ?: "Esperando al pagador."
-    val titles = listOf("Solicitud enviada", "El pagador está aprobando", "Confirmando con PayPal")
+    val awaitingDetail = (payment as? PaymentTracking.WaitingWithMessage)?.message ?: L("Esperando al pagador.")
+    val titles = listOf(L("Solicitud enviada"), L("El pagador está aprobando"), L("Confirmando con PayPal"))
     val details = listOf(
-        "Ya la ve en su teléfono.",
-        if (activeIndex == 1) awaitingDetail else "Aprobó en PayPal.",
-        "Solo PayPal puede marcarlo como pagado.",
+        L("Ya la ve en su teléfono."),
+        if (activeIndex == 1) awaitingDetail else L("Aprobó en PayPal."),
+        L("Solo PayPal puede marcarlo como pagado."),
     )
-    Text("Esperando el pago", style = MaterialTheme.typography.headlineSmall, color = GlassPayColors.Text)
+    Text(L("Esperando el pago"), style = MaterialTheme.typography.headlineSmall, color = GlassPayColors.Text)
     if (confirmed != null) {
         GpCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(24.dp), spacing = 6.dp) {
             ChargeSummary(confirmed)
@@ -111,7 +111,7 @@ private fun WaitingView(step: PaymentStep, payment: PaymentTracking, confirmed: 
             )
         }
     }
-    InlineNotice("Si dejas de esperar, el pagador todavía podrá aprobar desde su teléfono.", icon = R.drawable.ic_lock)
+    InlineNotice(L("Si dejas de esperar, el pagador todavía podrá aprobar desde su teléfono."), icon = R.drawable.ic_lock)
 }
 
 @Composable
@@ -168,9 +168,9 @@ private fun TimelineStep(
                         )
                         .semantics {
                             contentDescription = when {
-                                done -> "Paso completado"
-                                active -> "Paso en curso"
-                                else -> "Paso pendiente"
+                                done -> L("Paso completado")
+                                active -> L("Paso en curso")
+                                else -> L("Paso pendiente")
                             }
                         },
                 ) {
@@ -236,16 +236,16 @@ private fun PaidView(confirmed: ConfirmedCharge?, onNewCharge: () -> Unit, onOpe
                     this.alpha = alpha
                 }
                 .background(GlassPayColors.SuccessSoft, CircleShape)
-                .semantics { contentDescription = "Pago recibido" },
+                .semantics { contentDescription = L("Pago recibido") },
         ) {
             Box(Modifier.size(104.dp).background(GlassPayColors.Success, CircleShape), contentAlignment = Alignment.Center) {
                 Icon(painterResource(R.drawable.ic_check), contentDescription = null, tint = GlassPayColors.Background, modifier = Modifier.size(56.dp))
             }
         }
-        Text("¡Pago recibido!", style = MaterialTheme.typography.headlineMedium, color = GlassPayColors.Success)
+        Text(L("¡Pago recibido!"), style = MaterialTheme.typography.headlineMedium, color = GlassPayColors.Success)
         confirmed?.let {
             MoneyText(formatMoney(it.amount, it.currency), style = MaterialTheme.typography.displaySmall)
-            Text("De ${it.payerName} · ${it.concept}", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodyLarge)
+            Text(L("De %s · %s", it.payerName, it.concept), color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodyLarge)
         }
         Row(
             modifier = Modifier.background(GlassPayColors.Raised, RoundedCornerShape(50)).padding(horizontal = 14.dp, vertical = 6.dp),
@@ -253,21 +253,21 @@ private fun PaidView(confirmed: ConfirmedCharge?, onNewCharge: () -> Unit, onOpe
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(painterResource(R.drawable.ic_lock), contentDescription = null, tint = GlassPayColors.MutedText, modifier = Modifier.size(16.dp))
-            Text("Confirmado por PayPal (Sandbox)", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
+            Text(L("Confirmado por PayPal (Sandbox)"), color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
         }
-        GpButton("Nuevo cobro", onClick = onNewCharge, icon = R.drawable.ic_charge, modifier = Modifier.fillMaxWidth().padding(top = 16.dp))
-        GpButton("Ver en Movimientos", onClick = onOpenMovements, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
+        GpButton(L("Nuevo cobro"), onClick = onNewCharge, icon = R.drawable.ic_charge, modifier = Modifier.fillMaxWidth().padding(top = 16.dp))
+        GpButton(L("Ver en Movimientos"), onClick = onOpenMovements, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
     }
 }
 
 @Composable
 private fun StoppedView(payment: PaymentTracking, confirmed: ConfirmedCharge?, onNewCharge: () -> Unit) {
     val (text, kind) = when (payment) {
-        PaymentTracking.Rejected -> "El pagador rechazó la solicitud." to StatusKind.FAILURE
-        PaymentTracking.Expired -> "La solicitud expiró." to StatusKind.PENDING
-        PaymentTracking.Failed -> "El pago falló." to StatusKind.FAILURE
+        PaymentTracking.Rejected -> L("El pagador rechazó la solicitud.") to StatusKind.FAILURE
+        PaymentTracking.Expired -> L("La solicitud expiró.") to StatusKind.PENDING
+        PaymentTracking.Failed -> L("El pago falló.") to StatusKind.FAILURE
         is PaymentTracking.Error -> payment.message to StatusKind.FAILURE
-        else -> "No pudimos consultar el estado del pago." to StatusKind.FAILURE
+        else -> L("No pudimos consultar el estado del pago.") to StatusKind.FAILURE
     }
     GpCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(24.dp), spacing = 12.dp) {
         IconBadge(
@@ -279,5 +279,5 @@ private fun StoppedView(payment: PaymentTracking, confirmed: ConfirmedCharge?, o
         Text(text, color = statusColor(kind), style = MaterialTheme.typography.headlineSmall)
         ChargeSummary(confirmed)
     }
-    GpButton("Escanear otro QR", onClick = onNewCharge, icon = R.drawable.ic_charge, modifier = Modifier.fillMaxWidth())
+    GpButton(L("Escanear otro QR"), onClick = onNewCharge, icon = R.drawable.ic_charge, modifier = Modifier.fillMaxWidth())
 }

@@ -180,45 +180,48 @@ private fun JSONObject.optStringOrNull(name: String): String? = if (isNull(name)
 
 fun recurrenceLabel(recurrence: String?, total: Int?): String? {
     val every = when (recurrence) {
-        "weekly" -> "Cada semana"
-        "monthly" -> "Cada mes"
+        "weekly" -> L("Cada semana")
+        "monthly" -> L("Cada mes")
         else -> return null
     }
-    return if (total != null && total > 0) "$every · $total veces" else every
+    return if (total != null && total > 0) L("%s · %s veces", every, total) else every
 }
 
 /** Mensaje del chat tras confirmar; nunca dice "pagado": el pagador aún debe aprobar en PayPal. */
 fun proposalOutcomeMessage(outcome: ProposalOutcome, autoExecute: Boolean): String {
     return when (outcome) {
-        ProposalOutcome.Cancelled -> "Listo, cancelé la programación."
+        ProposalOutcome.Cancelled -> L("Listo, cancelé la programación.")
         is ProposalOutcome.ReminderSent ->
-            "Listo, le envié el recordatorio a ${outcome.contactName}. Lo verá en su sección «Por pagar»."
+            L("Listo, le envié el recordatorio a %s. Lo verá en su sección «Por pagar».", outcome.contactName)
         is ProposalOutcome.Split -> {
             val ok = outcome.results.filter { it.ok }
             val failed = outcome.results.filterNot { it.ok }
             buildString {
                 append(
                     if (ok.isEmpty()) {
-                        "No pude crear ningún cobro."
+                        L("No pude crear ningún cobro.")
                     } else {
-                        "Creé ${ok.size} ${if (ok.size == 1) "cobro" else "cobros"}: " +
-                            ok.joinToString(", ") { "${it.contactName} ${formatMoney(it.amount, "MXN").substringBeforeLast(" ")}" } +
-                            ". Cada quien lo aprueba en PayPal."
+                        val shares = ok.joinToString(", ") { "${it.contactName} ${formatMoney(it.amount, "MXN").substringBeforeLast(" ")}" }
+                        if (ok.size == 1) {
+                            L("Creé 1 cobro: %s. Cada quien lo aprueba en PayPal.", shares)
+                        } else {
+                            L("Creé %s cobros: %s. Cada quien lo aprueba en PayPal.", ok.size, shares)
+                        }
                     },
                 )
                 if (failed.isNotEmpty()) {
-                    append(" No se creó para: " + failed.joinToString(", ") { it.contactName } + ".")
+                    append(" " + L("No se creó para: %s.", failed.joinToString(", ") { it.contactName }))
                 }
             }
         }
         is ProposalOutcome.Scheduled -> {
             val first = outcome.items.firstOrNull()
-            val who = if (outcome.items.size > 1) "${outcome.items.size} personas" else first?.contactName.orEmpty()
+            val who = if (outcome.items.size > 1) L("%s personas", outcome.items.size) else first?.contactName.orEmpty()
             val series = recurrenceLabel(first?.recurrence, first?.occurrencesTotal)?.let { " ($it)" }.orEmpty()
             if (autoExecute) {
-                "Listo. El ${first?.runAtLabel} crearé el cobro a $who$series; luego lo aprueban en PayPal."
+                L("Listo. El %s crearé el cobro a %s%s; luego lo aprueban en PayPal.", first?.runAtLabel, who, series)
             } else {
-                "Listo. El ${first?.runAtLabel} te pediré confirmar el cobro a $who$series."
+                L("Listo. El %s te pediré confirmar el cobro a %s%s.", first?.runAtLabel, who, series)
             }
         }
     }
@@ -293,31 +296,31 @@ data class ChatState(
     )
 }
 
-val DEFAULT_ASSISTANT_SUGGESTIONS = listOf(
-    "¿Cuánto cobré esta semana?",
-    "¿Quién me debe?",
-    "¿Qué tengo programado?",
-    "¿Qué puedes hacer?",
+val DEFAULT_ASSISTANT_SUGGESTIONS: List<String> get() = listOf(
+    L("¿Cuánto cobré esta semana?"),
+    L("¿Quién me debe?"),
+    L("¿Qué tengo programado?"),
+    L("¿Qué puedes hacer?"),
 )
 
 fun scheduledStateLabel(state: String, kind: String = "charge"): String {
     if (state == "completado") {
         return when (kind) {
-            "reminder" -> "Enviado"
+            "reminder" -> L("Enviado")
             // El envío por PayPal puede seguir procesándose: se ve en Movimientos.
-            "payment" -> "Envío creado"
-            else -> "Cobro creado"
+            "payment" -> L("Envío creado")
+            else -> L("Cobro creado")
         }
     }
     return when (state) {
-        "programado" -> "Programado"
-        "esperando_confirmacion" -> "Espera tu confirmación"
-        "ejecutando" -> "Creando cobro"
+        "programado" -> L("Programado")
+        "esperando_confirmacion" -> L("Espera tu confirmación")
+        "ejecutando" -> L("Creando cobro")
         // "Creado", nunca "pagado": el pagador todavía tiene que aprobarlo en PayPal.
-        "completado" -> "Cobro creado"
-        "fallido" -> "No se creó"
-        "cancelado" -> "Cancelado"
-        "omitido" -> "Omitido"
+        "completado" -> L("Cobro creado")
+        "fallido" -> L("No se creó")
+        "cancelado" -> L("Cancelado")
+        "omitido" -> L("Omitido")
         else -> state
     }
 }
@@ -334,16 +337,16 @@ fun scheduledStateKind(state: String): StatusKind {
 fun scheduledFailureMessage(failure: String?): String? {
     return when (failure) {
         null, "" -> null
-        "demasiados_pendientes" -> "Tu contacto ya tenía demasiados cobros pendientes."
-        "paypal_no_disponible" -> "PayPal no respondió a tiempo."
-        "contacto_eliminado" -> "Eliminaste a este contacto antes de la hora."
-        "atrasado" -> "El servidor estaba inactivo a esa hora, así que no se creó."
-        "interrumpido" -> "Se interrumpió. Revisa Movimientos antes de volver a cobrar."
-        "sin_confirmar" -> "No lo confirmaste dentro de las 2 horas siguientes."
-        "limite_recordatorios" -> "Ya le enviaste 2 recordatorios hoy a este contacto."
-        "saldo_insuficiente" -> "No se envió: tu saldo no alcanzaba a esa hora."
-        "sin_correo" -> "No se envió: tu contacto ya no tiene correo de cobro."
-        else -> "No se pudo crear el cobro."
+        "demasiados_pendientes" -> L("Tu contacto ya tenía demasiados cobros pendientes.")
+        "paypal_no_disponible" -> L("PayPal no respondió a tiempo.")
+        "contacto_eliminado" -> L("Eliminaste a este contacto antes de la hora.")
+        "atrasado" -> L("El servidor estaba inactivo a esa hora, así que no se creó.")
+        "interrumpido" -> L("Se interrumpió. Revisa Movimientos antes de volver a cobrar.")
+        "sin_confirmar" -> L("No lo confirmaste dentro de las 2 horas siguientes.")
+        "limite_recordatorios" -> L("Ya le enviaste 2 recordatorios hoy a este contacto.")
+        "saldo_insuficiente" -> L("No se envió: tu saldo no alcanzaba a esa hora.")
+        "sin_correo" -> L("No se envió: tu contacto ya no tiene correo de cobro.")
+        else -> L("No se pudo crear el cobro.")
     }
 }
 
@@ -352,27 +355,27 @@ fun isScheduledActive(state: String): Boolean =
 
 fun proposalErrorMessage(type: ApiFailureType): String {
     return when (type) {
-        ApiFailureType.NOT_FOUND -> "La propuesta ya venció o se usó. Pídemela de nuevo."
+        ApiFailureType.NOT_FOUND -> L("La propuesta ya venció o se usó. Pídemela de nuevo.")
         ApiFailureType.CONFLICT ->
-            "No se pudo: ya pasó la hora, llegaste al máximo de programaciones o ya enviaste 2 recordatorios hoy a ese contacto."
+            L("No se pudo: ya pasó la hora, llegaste al máximo de programaciones o ya enviaste 2 recordatorios hoy a ese contacto.")
         else -> assistantErrorMessage(type)
     }
 }
 
 fun assistantErrorMessage(type: ApiFailureType): String {
     return when (type) {
-        ApiFailureType.NETWORK -> "Sin conexión. Revisa tu red e inténtalo de nuevo."
-        ApiFailureType.TIMEOUT -> "El servidor tardó demasiado. Si estaba dormido, inténtalo de nuevo en unos segundos."
-        ApiFailureType.RATE_LIMITED -> "Demasiados mensajes seguidos. Espera un momento."
-        ApiFailureType.BAD_REQUEST -> "Ese mensaje no es válido. Escríbelo de otra forma."
-        else -> "No pude responder ahora. Inténtalo de nuevo."
+        ApiFailureType.NETWORK -> L("Sin conexión. Revisa tu red e inténtalo de nuevo.")
+        ApiFailureType.TIMEOUT -> L("El servidor tardó demasiado. Si estaba dormido, inténtalo de nuevo en unos segundos.")
+        ApiFailureType.RATE_LIMITED -> L("Demasiados mensajes seguidos. Espera un momento.")
+        ApiFailureType.BAD_REQUEST -> L("Ese mensaje no es válido. Escríbelo de otra forma.")
+        else -> L("No pude responder ahora. Inténtalo de nuevo.")
     }
 }
 
 fun assistantPeriodLabel(period: String): String {
     return when (period) {
-        "month" -> "Este mes"
-        "year" -> "Este año"
-        else -> "Esta semana"
+        "month" -> L("Este mes")
+        "year" -> L("Este año")
+        else -> L("Esta semana")
     }
 }

@@ -207,7 +207,7 @@ fun ScreenHeader(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (onBack != null) CircleIconButton(R.drawable.ic_back, "Volver", onBack)
+        if (onBack != null) CircleIconButton(R.drawable.ic_back, L("Volver"), onBack)
         Text(title, style = MaterialTheme.typography.headlineSmall, color = GlassPayColors.Text, modifier = Modifier.weight(1f))
         actions()
     }

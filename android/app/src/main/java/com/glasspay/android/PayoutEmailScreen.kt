@@ -43,7 +43,7 @@ fun PayoutEmailScreen(
     fun save() {
         if (saving) return
         if (!isValidPayoutEmail(email)) {
-            message = "Escribe un correo válido."
+            message = L("Escribe un correo válido.")
             return
         }
         saving = true
@@ -61,13 +61,13 @@ fun PayoutEmailScreen(
                         onSessionInvalid(SESSION_INVALID_MESSAGE)
                         null
                     }
-                    ApiFailureType.BAD_REQUEST -> "Ese correo no es válido."
-                    ApiFailureType.RATE_LIMITED -> "Demasiados intentos. Espera unos segundos."
-                    else -> "No pudimos guardar tu correo. Revisa tu conexión."
+                    ApiFailureType.BAD_REQUEST -> L("Ese correo no es válido.")
+                    ApiFailureType.RATE_LIMITED -> L("Demasiados intentos. Espera unos segundos.")
+                    else -> L("No pudimos guardar tu correo. Revisa tu conexión.")
                 }
             } catch (_: Exception) {
                 Log.i("GlassPay", "payoutEmail failure type=UNKNOWN httpCode=none")
-                message = "No pudimos guardar tu correo. Revisa tu conexión."
+                message = L("No pudimos guardar tu correo. Revisa tu conexión.")
             } finally {
                 saving = false
             }
@@ -75,25 +75,25 @@ fun PayoutEmailScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        ScreenHeader("Recibir envíos", onBack = onBack)
+        ScreenHeader(L("Recibir envíos"), onBack = onBack)
         Column(
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             IconBadge(R.drawable.ic_mail, tint = GlassPayColors.Accent, size = 56.dp, background = GlassPayColors.AccentSoft)
             Text(
-                "Escribe el correo de tu cuenta de PayPal Sandbox.",
+                L("Escribe el correo de tu cuenta de PayPal Sandbox."),
                 style = MaterialTheme.typography.titleMedium,
                 color = GlassPayColors.Text,
             )
             InlineNotice(
-                "Tu correo se guarda solo en el servidor de GlassPay y nadie más lo ve.",
+                L("Tu correo se guarda solo en el servidor de GlassPay y nadie más lo ve."),
                 icon = R.drawable.ic_lock,
             )
             OutlinedTextField(
                 value = email,
                 onValueChange = { email = it.take(254) },
-                label = { Text("Correo de PayPal Sandbox") },
+                label = { Text(L("Correo de PayPal Sandbox")) },
                 singleLine = true,
                 enabled = !saving,
                 isError = message != null,
@@ -104,7 +104,7 @@ fun PayoutEmailScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
             GpButton(
-                if (saving) "Guardando…" else "Guardar",
+                if (saving) L("Guardando…") else L("Guardar"),
                 onClick = { save() },
                 enabled = email.isNotBlank() && !saving,
                 icon = R.drawable.ic_check,

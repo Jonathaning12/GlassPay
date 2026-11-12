@@ -61,7 +61,7 @@ fun MovementsScreen(
             try {
                 api.hideMovement(session, movement.movementId)
                 selected = null
-                notice = "Quitamos el movimiento de tu lista. Tu saldo no cambia." to StatusKind.SUCCESS
+                notice = L("Quitamos el movimiento de tu lista. Tu saldo no cambia.") to StatusKind.SUCCESS
                 reload += 1
             } catch (exception: CancellationException) {
                 throw exception
@@ -70,16 +70,16 @@ fun MovementsScreen(
                 when (exception.type) {
                     ApiFailureType.UNAUTHORIZED -> onSessionInvalid(SESSION_INVALID_MESSAGE)
                     ApiFailureType.CONFLICT ->
-                        notice = "Este movimiento ya no se puede quitar: su estado cambió." to StatusKind.FAILURE
+                        notice = L("Este movimiento ya no se puede quitar: su estado cambió.") to StatusKind.FAILURE
                     ApiFailureType.NOT_FOUND -> {
                         selected = null
                         reload += 1
                     }
-                    else -> notice = "No pudimos quitar el movimiento. Revisa tu conexión." to StatusKind.FAILURE
+                    else -> notice = L("No pudimos quitar el movimiento. Revisa tu conexión.") to StatusKind.FAILURE
                 }
             } catch (_: Exception) {
                 Log.i("GlassPay", "hide movement failure type=UNKNOWN httpCode=none")
-                notice = "No pudimos quitar el movimiento. Revisa tu conexión." to StatusKind.FAILURE
+                notice = L("No pudimos quitar el movimiento. Revisa tu conexión.") to StatusKind.FAILURE
             } finally {
                 hiding = false
             }
@@ -89,19 +89,19 @@ fun MovementsScreen(
     pendingHide?.let { movement ->
         AlertDialog(
             onDismissRequest = { pendingHide = null },
-            title = { Text("¿Eliminar de tu lista?") },
+            title = { Text(L("¿Eliminar de tu lista?")) },
             text = {
                 Text(
-                    "Dejarás de ver este movimiento. El registro se conserva en GlassPay y tu saldo no cambia.",
+                    L("Dejarás de ver este movimiento. El registro se conserva en GlassPay y tu saldo no cambia."),
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
                     pendingHide = null
                     hide(movement)
-                }) { Text("Eliminar", color = GlassPayColors.Error) }
+                }) { Text(L("Eliminar"), color = GlassPayColors.Error) }
             },
-            dismissButton = { TextButton(onClick = { pendingHide = null }) { Text("Cancelar") } },
+            dismissButton = { TextButton(onClick = { pendingHide = null }) { Text(L("Cancelar")) } },
         )
     }
 
@@ -153,8 +153,8 @@ fun MovementsScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("Movimientos", style = MaterialTheme.typography.headlineMedium, color = GlassPayColors.Text)
-                Text("Actividad en GlassPay (Sandbox)", style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
+                Text(L("Movimientos"), style = MaterialTheme.typography.headlineMedium, color = GlassPayColors.Text)
+                Text(L("Actividad en GlassPay (Sandbox)"), style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
             }
             if (onToggleAmounts != null) EyeToggle(visible = amountsVisible, onToggle = onToggleAmounts)
         }
@@ -164,8 +164,8 @@ fun MovementsScreen(
                 SkeletonBox(Modifier.fillMaxWidth().height(72.dp))
             }
             LoadState.Failed -> {
-                InlineNotice("No pudimos cargar tus movimientos.", kind = StatusKind.FAILURE)
-                GpButton("Reintentar", onClick = { reload += 1 }, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
+                InlineNotice(L("No pudimos cargar tus movimientos."), kind = StatusKind.FAILURE)
+                GpButton(L("Reintentar"), onClick = { reload += 1 }, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
             }
             is LoadState.Loaded -> {
                 if (current.value.isEmpty()) {
@@ -175,8 +175,8 @@ fun MovementsScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                         IconBadge(R.drawable.ic_movements, tint = GlassPayColors.MutedText, size = 64.dp)
-                        Text("Aún no tienes movimientos.", style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
-                        Text("Tus cobros y envíos aparecerán aquí.", style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
+                        Text(L("Aún no tienes movimientos."), style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text)
+                        Text(L("Tus cobros y envíos aparecerán aquí."), style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
                     }
                 }
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
@@ -188,7 +188,7 @@ fun MovementsScreen(
                     }
                     item {
                         GpButton(
-                            "Actualizar",
+                            L("Actualizar"),
                             onClick = { reload += 1 },
                             kind = GpButtonKind.GHOST,
                             modifier = Modifier.fillMaxWidth(),
@@ -202,7 +202,7 @@ fun MovementsScreen(
 }
 
 private fun movementTitle(movement: Movement): String =
-    if (movement.kind == "envio") "Enviado a ${movement.payerName}" else movement.payerName
+    if (movement.kind == "envio") L("Enviado a %s", movement.payerName) else movement.payerName
 
 @Composable
 private fun MovementRow(movement: Movement, amountsVisible: Boolean, onClick: () -> Unit) {
@@ -258,7 +258,7 @@ private fun MovementDetail(
 ) {
     val outgoing = movement.kind == "envio"
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        ScreenHeader(if (outgoing) "Detalle del envío" else "Detalle del cobro", onBack = onBack)
+        ScreenHeader(if (outgoing) L("Detalle del envío") else L("Detalle del cobro"), onBack = onBack)
         Column(
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
@@ -272,17 +272,17 @@ private fun MovementDetail(
                     prefix = amountSign(movement),
                 )
                 HorizontalDivider(color = GlassPayColors.Line)
-                DetailLine(if (outgoing) "Destinatario" else "Pagador", movement.payerName)
-                DetailLine(if (outgoing) "Nota" else "Concepto", movement.concept.ifBlank { "—" })
-                DetailLine("Creado", formatMovementDate(movement.createdAt))
-                DetailLine("Actualizado", formatMovementDate(movement.updatedAt))
+                DetailLine(if (outgoing) L("Destinatario") else L("Pagador"), movement.payerName)
+                DetailLine(if (outgoing) L("Nota") else L("Concepto"), movement.concept.ifBlank { "—" })
+                DetailLine(L("Creado"), formatMovementDate(movement.createdAt))
+                DetailLine(L("Actualizado"), formatMovementDate(movement.updatedAt))
             }
-            InlineNotice("Actividad en GlassPay (Sandbox). Solo el servidor confirma un pago.", icon = R.drawable.ic_lock)
+            InlineNotice(L("Actividad en GlassPay (Sandbox). Solo el servidor confirma un pago."), icon = R.drawable.ic_lock)
             notice?.let { (text, kind) -> InlineNotice(text, kind = kind) }
             // Solo aparece en movimientos que no movieron dinero (expirados, rechazados, fallidos).
             if (onHide != null) {
                 GpButton(
-                    if (hiding) "Quitando…" else "Eliminar de mi lista",
+                    if (hiding) L("Quitando…") else L("Eliminar de mi lista"),
                     onClick = onHide,
                     kind = GpButtonKind.DANGER,
                     enabled = !hiding,
@@ -290,7 +290,7 @@ private fun MovementDetail(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    "Solo lo quita de tu lista. El registro se conserva y tu saldo no cambia.",
+                    L("Solo lo quita de tu lista. El registro se conserva y tu saldo no cambia."),
                     style = MaterialTheme.typography.bodySmall,
                     color = GlassPayColors.MutedText,
                 )

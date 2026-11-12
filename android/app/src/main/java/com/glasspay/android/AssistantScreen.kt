@@ -97,7 +97,7 @@ fun AssistantScreen(
     DisposableEffect(Unit) { onDispose { recognizer.destroy() } }
 
     val micPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) recognizer.start() else voiceMessage = "Sin permiso de micrófono. Escribe tu mensaje."
+        if (granted) recognizer.start() else voiceMessage = L("Sin permiso de micrófono. Escribe tu mensaje.")
     }
 
     fun dictate() {
@@ -172,13 +172,13 @@ fun AssistantScreen(
             // Sale dinero: siempre vista previa (la tarjeta) + huella o bloqueo del teléfono.
             val activity = context.findActivity() ?: return
             if (DeviceAuthenticator.availability(context) != DeviceAuthAvailability.AVAILABLE) {
-                chat = chat.proposalFailed(proposal.proposalId, "Configura un bloqueo de pantalla para programar pagos.")
+                chat = chat.proposalFailed(proposal.proposalId, L("Configura un bloqueo de pantalla para programar pagos."))
                 return
             }
             requireDeviceAuth(
                 activity,
                 onSuccess = { sendConfirmation(proposal, autoExecute) },
-                onFailure = { voiceMessage = "Necesitamos confirmar que eres tú para programar el pago." },
+                onFailure = { voiceMessage = L("Necesitamos confirmar que eres tú para programar el pago.") },
             )
             return
         }
@@ -191,8 +191,8 @@ fun AssistantScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize().imePadding()) {
-        ScreenHeader("Asistente", onBack = onBack) {
-            CircleIconButton(R.drawable.ic_clock, "Ver programados", onOpenScheduled, tint = GlassPayColors.Accent)
+        ScreenHeader(L("Asistente"), onBack = onBack) {
+            CircleIconButton(R.drawable.ic_clock, L("Ver programados"), onOpenScheduled, tint = GlassPayColors.Accent)
         }
         LazyColumn(
             state = listState,
@@ -236,7 +236,7 @@ fun AssistantScreen(
                 OutlinedTextField(
                     value = input,
                     onValueChange = { input = it.take(MAX_ASSISTANT_MESSAGE_LENGTH) },
-                    placeholder = { Text(if (listening) "Escuchando…" else "Escribe un mensaje") },
+                    placeholder = { Text(if (listening) L("Escuchando…") else L("Escribe un mensaje")) },
                     maxLines = 4,
                     shape = MaterialTheme.shapes.extraLarge,
                     colors = gpTextFieldColors(),
@@ -244,7 +244,7 @@ fun AssistantScreen(
                 )
                 CircleIconButton(
                     R.drawable.ic_mic,
-                    if (listening) "Escuchando" else "Dictar mensaje",
+                    if (listening) L("Escuchando") else L("Dictar mensaje"),
                     onClick = {
                         if (listening) {
                             recognizer.cancel()
@@ -267,7 +267,7 @@ fun AssistantScreen(
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             painterResource(R.drawable.ic_send_message),
-                            contentDescription = "Enviar mensaje",
+                            contentDescription = L("Enviar mensaje"),
                             modifier = Modifier.size(22.dp),
                         )
                     }
@@ -280,15 +280,14 @@ fun AssistantScreen(
 @Composable
 private fun AssistantIntro() {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(bottom = 4.dp)) {
-        Text("¿En qué te ayudo?", style = MaterialTheme.typography.headlineSmall, color = GlassPayColors.Text)
+        Text(L("¿En qué te ayudo?"), style = MaterialTheme.typography.headlineSmall, color = GlassPayColors.Text)
         Text(
-            "Pregúntame cuánto cobraste o enviaste y quién te debe, o pídeme programar un cobro a un contacto. "
-                + "Respondo con tu actividad en GlassPay (Sandbox).",
+            L("Pregúntame cuánto cobraste o enviaste y quién te debe, o pídeme programar un cobro a un contacto. Respondo con tu actividad en GlassPay (Sandbox)."),
             style = MaterialTheme.typography.bodyMedium,
             color = GlassPayColors.MutedText,
         )
         InlineNotice(
-            "La IA solo interpreta tu mensaje: nunca cobra ni envía dinero sin que tú lo confirmes.",
+            L("La IA solo interpreta tu mensaje: nunca cobra ni envía dinero sin que tú lo confirmes."),
             icon = R.drawable.ic_lock,
         )
     }
@@ -342,7 +341,7 @@ private fun AssistantBubble(
             }
             message.reply?.scheduled?.takeIf { it.isNotEmpty() }?.let { items ->
                 items.forEach { ScheduledLine(it) }
-                GpButton("Ver programados", onClick = onOpenScheduled, kind = GpButtonKind.SECONDARY, icon = R.drawable.ic_clock, modifier = Modifier.fillMaxWidth())
+                GpButton(L("Ver programados"), onClick = onOpenScheduled, kind = GpButtonKind.SECONDARY, icon = R.drawable.ic_clock, modifier = Modifier.fillMaxWidth())
             }
         }
     }
@@ -354,8 +353,8 @@ private fun SummaryCard(summary: AssistantSummary) {
         Overline(assistantPeriodLabel(summary.period))
         MoneyText(formatMoney(summary.netTotal, summary.currency), style = MaterialTheme.typography.headlineLarge)
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            SummaryFigure("Cobrado", formatMoney(summary.paidTotal, summary.currency).substringBeforeLast(" "), "${summary.paidCount} pagos", Modifier.weight(1f))
-            SummaryFigure("Enviado", formatMoney(summary.sentTotal, summary.currency).substringBeforeLast(" "), "${summary.sentCount} envíos", Modifier.weight(1f))
+            SummaryFigure(L("Cobrado"), formatMoney(summary.paidTotal, summary.currency).substringBeforeLast(" "), L("%s pagos", summary.paidCount), Modifier.weight(1f))
+            SummaryFigure(L("Enviado"), formatMoney(summary.sentTotal, summary.currency).substringBeforeLast(" "), L("%s envíos", summary.sentCount), Modifier.weight(1f))
         }
     }
 }
@@ -378,7 +377,7 @@ private fun DebtorsCard(debtors: List<AssistantDebtor>) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(debtor.name, style = MaterialTheme.typography.labelLarge, color = GlassPayColors.Text)
                     Text(
-                        if (debtor.count == 1) "1 cobro pendiente" else "${debtor.count} cobros pendientes",
+                        if (debtor.count == 1) L("1 cobro pendiente") else L("%s cobros pendientes", debtor.count),
                         style = MaterialTheme.typography.bodySmall,
                         color = GlassPayColors.MutedText,
                     )
@@ -399,7 +398,7 @@ private fun TypingBubble() {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = GlassPayColors.Accent)
-            Text("Pensando…", style = MaterialTheme.typography.bodyMedium, color = GlassPayColors.MutedText)
+            Text(L("Pensando…"), style = MaterialTheme.typography.bodyMedium, color = GlassPayColors.MutedText)
         }
     }
 }
@@ -444,12 +443,12 @@ private fun ProposalCard(
     ) {
         Overline(
             when (proposal.action) {
-                "cancel_scheduled" -> "Cancelar programación"
-                "split_bill" -> "Dividir cuenta"
-                "recurring_charge" -> "Cobro recurrente"
-                "reminder" -> "Recordatorio"
-                "schedule_payment" -> "Pago programado"
-                else -> "Cobro programado"
+                "cancel_scheduled" -> L("Cancelar programación")
+                "split_bill" -> L("Dividir cuenta")
+                "recurring_charge" -> L("Cobro recurrente")
+                "reminder" -> L("Recordatorio")
+                "schedule_payment" -> L("Pago programado")
+                else -> L("Cobro programado")
             },
         )
         if (!splitting) {
@@ -458,20 +457,20 @@ private fun ProposalCard(
                 Text(proposal.contactName, style = MaterialTheme.typography.titleMedium, color = GlassPayColors.Text, modifier = Modifier.weight(1f))
             }
         }
-        if (splitting) Text("Total", style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
+        if (splitting) Text(L("Total"), style = MaterialTheme.typography.bodySmall, color = GlassPayColors.MutedText)
         proposal.amount?.let { MoneyText(formatMoney(it, proposal.currency), style = MaterialTheme.typography.headlineLarge) }
         if (proposal.concept.isNotBlank()) {
             Text(proposal.concept, style = MaterialTheme.typography.bodyMedium, color = GlassPayColors.Text)
         }
         if (paying && proposal.balanceWarning) {
             InlineNotice(
-                "Hoy tu saldo no alcanza para este pago. Se volverá a revisar a la hora; si no alcanza, no se envía.",
+                L("Hoy tu saldo no alcanza para este pago. Se volverá a revisar a la hora; si no alcanza, no se envía."),
                 kind = StatusKind.PENDING,
             )
         }
         if (reminding) {
             Text(
-                "Le llega como aviso en su sección «Por pagar». No crea ningún cobro.",
+                L("Le llega como aviso en su sección «Por pagar». No crea ningún cobro."),
                 style = MaterialTheme.typography.bodySmall,
                 color = GlassPayColors.MutedText,
             )
@@ -486,7 +485,7 @@ private fun ProposalCard(
             }
             proposal.myShare?.let {
                 Text(
-                    "Tu parte: ${formatMoney(it, proposal.currency).substringBeforeLast(" ")} (no se cobra)",
+                    L("Tu parte: %s (no se cobra)", formatMoney(it, proposal.currency).substringBeforeLast(" ")),
                     style = MaterialTheme.typography.bodySmall,
                     color = GlassPayColors.MutedText,
                 )
@@ -499,9 +498,9 @@ private fun ProposalCard(
             Icon(painterResource(R.drawable.ic_clock), contentDescription = null, tint = GlassPayColors.Warning, modifier = Modifier.size(18.dp))
             Text(
                 when {
-                    proposal.runAtLabel == null && reminding -> "Se envía al confirmar"
-                    proposal.runAtLabel == null -> "Se cobra al confirmar"
-                    proposal.recurrence != null -> "Primero: ${proposal.runAtLabel}"
+                    proposal.runAtLabel == null && reminding -> L("Se envía al confirmar")
+                    proposal.runAtLabel == null -> L("Se cobra al confirmar")
+                    proposal.recurrence != null -> L("Primero: %s", proposal.runAtLabel)
                     else -> proposal.runAtLabel
                 },
                 style = MaterialTheme.typography.labelLarge,
@@ -515,20 +514,20 @@ private fun ProposalCard(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 when {
-                                    paying -> "Enviar automáticamente a la hora (bajo tu riesgo)"
-                                    reminding -> "Enviar automáticamente a la hora"
-                                    else -> "Crear automáticamente a la hora"
+                                    paying -> L("Enviar automáticamente a la hora (bajo tu riesgo)")
+                                    reminding -> L("Enviar automáticamente a la hora")
+                                    else -> L("Crear automáticamente a la hora")
                                 },
                                 style = MaterialTheme.typography.labelLarge,
                                 color = GlassPayColors.Text,
                             )
                             Text(
                                 when {
-                                    paying && autoExecute -> "Se enviará sin volver a pedirte la huella."
-                                    paying -> "A la hora te pediré vista previa y huella para enviarlo."
-                                    !autoExecute -> "A la hora te pediré confirmarlo."
-                                    reminding -> "Se envía solo a la hora."
-                                    else -> "Se crea solo; tu contacto lo aprueba en PayPal."
+                                    paying && autoExecute -> L("Se enviará sin volver a pedirte la huella.")
+                                    paying -> L("A la hora te pediré vista previa y huella para enviarlo.")
+                                    !autoExecute -> L("A la hora te pediré confirmarlo.")
+                                    reminding -> L("Se envía solo a la hora.")
+                                    else -> L("Se crea solo; tu contacto lo aprueba en PayPal.")
                                 },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = GlassPayColors.MutedText,
@@ -547,39 +546,39 @@ private fun ProposalCard(
                 }
                 GpButton(
                     when {
-                        cancelling -> "Sí, cancelar"
-                        splitting && !scheduledForLater -> "Crear ${proposal.participants.size} cobros"
-                        reminding && !scheduledForLater -> "Enviar recordatorio"
-                        paying -> "Confirmar con huella"
-                        else -> "Confirmar"
+                        cancelling -> L("Sí, cancelar")
+                        splitting && !scheduledForLater -> L("Crear %s cobros", proposal.participants.size)
+                        reminding && !scheduledForLater -> L("Enviar recordatorio")
+                        paying -> L("Confirmar con huella")
+                        else -> L("Confirmar")
                     },
                     onClick = { onConfirm(proposal, autoExecute) },
                     kind = if (cancelling) GpButtonKind.DANGER else GpButtonKind.PRIMARY,
                     icon = R.drawable.ic_check,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                GpButton("Descartar", onClick = { onDiscard(proposal) }, kind = GpButtonKind.GHOST, modifier = Modifier.fillMaxWidth())
+                GpButton(L("Descartar"), onClick = { onDiscard(proposal) }, kind = GpButtonKind.GHOST, modifier = Modifier.fillMaxWidth())
             }
             ProposalStatus.CONFIRMING -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = GlassPayColors.Accent)
-                Text("Confirmando…", style = MaterialTheme.typography.bodyMedium, color = GlassPayColors.MutedText)
+                Text(L("Confirmando…"), style = MaterialTheme.typography.bodyMedium, color = GlassPayColors.MutedText)
             }
             ProposalStatus.CONFIRMED -> {
                 StatusPill(
                     when {
-                        cancelling -> "Cancelado"
-                        scheduledForLater -> "Programado"
-                        reminding -> "Enviado"
-                        else -> "Cobros creados"
+                        cancelling -> L("Cancelado")
+                        scheduledForLater -> L("Programado")
+                        reminding -> L("Enviado")
+                        else -> L("Cobros creados")
                     },
                     if (cancelling) StatusKind.NEUTRAL else StatusKind.SUCCESS,
                 )
                 if (scheduledForLater || cancelling) {
-                    GpButton("Ver programados", onClick = onOpenScheduled, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
+                    GpButton(L("Ver programados"), onClick = onOpenScheduled, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
                 }
             }
-            ProposalStatus.DISCARDED -> StatusPill("Descartado", StatusKind.NEUTRAL)
-            ProposalStatus.FAILED -> StatusPill("No se aplicó", StatusKind.FAILURE)
+            ProposalStatus.DISCARDED -> StatusPill(L("Descartado"), StatusKind.NEUTRAL)
+            ProposalStatus.FAILED -> StatusPill(L("No se aplicó"), StatusKind.FAILURE)
         }
     }
 }

@@ -31,7 +31,7 @@ fun shouldNotify(previousCount: Int, currentCount: Int): Boolean = currentCount 
 
 /** Texto de la notificación: sin montos ni nombres, porque puede verse con el teléfono bloqueado. */
 fun confirmationNotificationText(count: Int): String =
-    if (count == 1) "Tienes 1 programación esperando tu confirmación." else "Tienes $count programaciones esperando tu confirmación."
+    if (count == 1) L("Tienes 1 programación esperando tu confirmación.") else L("Tienes %s programaciones esperando tu confirmación.", count)
 
 /**
  * Revisa cada ~15 min (mínimo de WorkManager, no exacto) si algo programado espera confirmación
@@ -39,6 +39,8 @@ fun confirmationNotificationText(count: Int): String =
  */
 class ScheduledCheckWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
+        // Con la app cerrada no pasó por MainActivity: la notificación sale en el idioma elegido.
+        AppLanguageStore.load(applicationContext)
         val session = runCatching {
             CollectorSessionStore(SharedPreferencesStore(applicationContext), KeystoreSecretCipher()).load()
         }.getOrNull() ?: return Result.success()
@@ -66,8 +68,8 @@ private fun notifyWaiting(context: Context, count: Int) {
     }
     val manager = context.getSystemService(NotificationManager::class.java)
     manager.createNotificationChannel(
-        NotificationChannel(CHANNEL_ID, "Programados", NotificationManager.IMPORTANCE_DEFAULT).apply {
-            description = "Avisos de cobros y pagos programados que esperan tu confirmación"
+        NotificationChannel(CHANNEL_ID, L("Programados"), NotificationManager.IMPORTANCE_DEFAULT).apply {
+            description = L("Avisos de cobros y pagos programados que esperan tu confirmación")
         },
     )
     val open = PendingIntent.getActivity(

@@ -148,7 +148,7 @@ fun SendMoneyScreen(
         val target = contact ?: return
         val amount = parseAmountInput(amountText)
         if (amount == null) {
-            message = "Escribe un monto válido (máximo 1,000.00)."
+            message = L("Escribe un monto válido (máximo 1,000.00).")
             return
         }
         if (busy) return
@@ -170,13 +170,13 @@ fun SendMoneyScreen(
                         onSessionInvalid(SESSION_INVALID_MESSAGE)
                         null
                     }
-                    ApiFailureType.NOT_FOUND -> "Este contacto ya no existe."
-                    ApiFailureType.NETWORK, ApiFailureType.TIMEOUT -> "Revisa tu conexión."
+                    ApiFailureType.NOT_FOUND -> L("Este contacto ya no existe.")
+                    ApiFailureType.NETWORK, ApiFailureType.TIMEOUT -> L("Revisa tu conexión.")
                     else -> transferErrorMessage(exception.type, exception.serverError, target.displayName)
                 }
             } catch (_: Exception) {
                 Log.i("GlassPay", "transferPreview failure type=UNKNOWN httpCode=none")
-                message = "Revisa tu conexión."
+                message = L("Revisa tu conexión.")
             } finally {
                 busy = false
             }
@@ -225,7 +225,7 @@ fun SendMoneyScreen(
         if (busy || confirmBlocked || locked || remaining <= 0) return
         val activity = context.findActivity() ?: return
         if (DeviceAuthenticator.availability(context) != DeviceAuthAvailability.AVAILABLE) {
-            message = "Configura un bloqueo de pantalla para enviar dinero."
+            message = L("Configura un bloqueo de pantalla para enviar dinero.")
             return
         }
         busy = true
@@ -235,26 +235,26 @@ fun SendMoneyScreen(
             onSuccess = { doConfirm(proposal) },
             onFailure = {
                 busy = false
-                message = "Necesitamos confirmar que eres tú."
+                message = L("Necesitamos confirmar que eres tú.")
             },
         )
     }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        ScreenHeader("Enviar dinero", onBack = if (step != SendStep.RESULT) onBack else null)
+        ScreenHeader(L("Enviar dinero"), onBack = if (step != SendStep.RESULT) onBack else null)
         Column(
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
         when (step) {
             SendStep.PICK -> {
-                Overline("¿A quién le envías?")
+                Overline(L("¿A quién le envías?"))
                 when (val current = contacts) {
                     LoadState.Loading -> repeat(3) { SkeletonBox(Modifier.fillMaxWidth().height(72.dp)) }
-                    LoadState.Failed -> InlineNotice("No pudimos cargar tus contactos.", kind = StatusKind.FAILURE)
+                    LoadState.Failed -> InlineNotice(L("No pudimos cargar tus contactos."), kind = StatusKind.FAILURE)
                     is LoadState.Loaded -> {
                         if (current.value.isEmpty()) {
-                            InlineNotice("Aún no tienes contactos. Agrégalos desde Contactos.", icon = R.drawable.ic_contacts)
+                            InlineNotice(L("Aún no tienes contactos. Agrégalos desde Contactos."), icon = R.drawable.ic_contacts)
                         }
                         current.value.forEach { item ->
                             Surface(
@@ -285,14 +285,14 @@ fun SendMoneyScreen(
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Avatar(contact?.displayName.orEmpty(), size = 48.dp)
                     Column {
-                        Overline("Enviar a")
+                        Overline(L("Enviar a"))
                         Text(contact?.displayName.orEmpty(), style = MaterialTheme.typography.headlineSmall, color = GlassPayColors.Text)
                     }
                 }
                 OutlinedTextField(
                     value = amountText,
                     onValueChange = { amountText = it.take(12) },
-                    label = { Text("Monto (MXN)") },
+                    label = { Text(L("Monto (MXN)")) },
                     prefix = { Text("$") },
                     singleLine = true,
                     enabled = !busy,
@@ -305,7 +305,7 @@ fun SendMoneyScreen(
                 OutlinedTextField(
                     value = note,
                     onValueChange = { note = it.take(MAX_TRANSFER_NOTE_LENGTH) },
-                    label = { Text("Nota (opcional)") },
+                    label = { Text(L("Nota (opcional)")) },
                     enabled = !busy,
                     shape = MaterialTheme.shapes.medium,
                     colors = gpTextFieldColors(),
@@ -313,7 +313,7 @@ fun SendMoneyScreen(
                 )
                 message?.let { InlineNotice(it, kind = StatusKind.FAILURE) }
                 GpButton(
-                    if (busy) "Revisando…" else "Revisar",
+                    if (busy) L("Revisando…") else L("Revisar"),
                     onClick = { requestPreview() },
                     enabled = amountText.isNotBlank() && !busy,
                     modifier = Modifier.fillMaxWidth(),
@@ -324,15 +324,15 @@ fun SendMoneyScreen(
                 if (proposal != null) {
                     val expired = remaining <= 0
                     GpCard(modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(24.dp), spacing = 16.dp) {
-                        Overline("Revisa el envío")
+                        Overline(L("Revisa el envío"))
                         MoneyText(formatMoney(proposal.amount, proposal.currency), style = MaterialTheme.typography.displaySmall)
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text("Destinatario", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
+                            Text(L("Destinatario"), color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
                             Text(proposal.recipientName, style = MaterialTheme.typography.bodyLarge, color = GlassPayColors.Text)
                         }
                         proposal.note?.let {
                             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text("Nota", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
+                                Text(L("Nota"), color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodySmall)
                                 Text(it, style = MaterialTheme.typography.bodyLarge, color = GlassPayColors.Text)
                             }
                         }
@@ -341,16 +341,16 @@ fun SendMoneyScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(painterResource(R.drawable.ic_clock), contentDescription = null, tint = timeColor, modifier = Modifier.size(20.dp))
                             Text(
-                                if (!expired) "Vence en ${remaining} s" else "La vista previa venció. Revísala de nuevo.",
+                                if (!expired) L("Vence en %s s", remaining) else L("La vista previa venció. Revísala de nuevo."),
                                 color = timeColor,
                                 style = MaterialTheme.typography.labelLarge,
                             )
                         }
                     }
-                    InlineNotice("Para enviar te pediremos tu huella o el bloqueo del teléfono.", icon = R.drawable.ic_lock)
+                    InlineNotice(L("Para enviar te pediremos tu huella o el bloqueo del teléfono."), icon = R.drawable.ic_lock)
                     message?.let { InlineNotice(it, kind = StatusKind.FAILURE) }
                     GpButton(
-                        "Confirmar envío",
+                        L("Confirmar envío"),
                         onClick = { confirmWithAuth() },
                         enabled = !expired && !busy && !confirmBlocked && !locked,
                         icon = R.drawable.ic_lock,
@@ -358,7 +358,7 @@ fun SendMoneyScreen(
                     )
                     if (expired) {
                         GpButton(
-                            "Revisar de nuevo",
+                            L("Revisar de nuevo"),
                             onClick = {
                                 preview = null
                                 message = null
@@ -369,7 +369,7 @@ fun SendMoneyScreen(
                         )
                     }
                     if (confirmBlocked) {
-                        GpButton("Ver en Movimientos", onClick = onOpenMovements, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
+                        GpButton(L("Ver en Movimientos"), onClick = onOpenMovements, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
                     }
                 }
             }
@@ -411,20 +411,20 @@ private fun ResultView(
                             scaleY = scale
                         }
                         .background(GlassPayColors.SuccessSoft, CircleShape)
-                        .semantics { contentDescription = "Envío completado" },
+                        .semantics { contentDescription = L("Envío completado") },
                 ) {
                     Box(Modifier.size(104.dp).background(GlassPayColors.Success, CircleShape), contentAlignment = Alignment.Center) {
                         Icon(painterResource(R.drawable.ic_check), contentDescription = null, tint = GlassPayColors.Background, modifier = Modifier.size(56.dp))
                     }
                 }
-                Text("¡Enviado!", style = MaterialTheme.typography.headlineMedium, color = GlassPayColors.Success)
+                Text(L("¡Enviado!"), style = MaterialTheme.typography.headlineMedium, color = GlassPayColors.Success)
                 MoneyText(formatMoney(outcome.amount, outcome.currency), style = MaterialTheme.typography.displaySmall)
-                Text("a ${outcome.recipientName}", color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodyLarge)
+                Text(L("a %s", outcome.recipientName), color = GlassPayColors.MutedText, style = MaterialTheme.typography.bodyLarge)
             }
             "fallida" -> {
                 IconBadge(R.drawable.ic_close, tint = GlassPayColors.Error, size = 88.dp, background = GlassPayColors.ErrorSoft)
                 Text(
-                    "El envío no se pudo completar. Tu saldo no se descontó.",
+                    L("El envío no se pudo completar. Tu saldo no se descontó."),
                     color = GlassPayColors.Error,
                     style = MaterialTheme.typography.titleMedium,
                     textAlign = TextAlign.Center,
@@ -434,19 +434,19 @@ private fun ResultView(
                 if (animate && !gaveUp) {
                     CircularProgressIndicator(
                         color = GlassPayColors.Accent,
-                        modifier = Modifier.size(56.dp).semantics { contentDescription = "Enviando" },
+                        modifier = Modifier.size(56.dp).semantics { contentDescription = L("Enviando") },
                     )
                 } else {
                     IconBadge(R.drawable.ic_clock, tint = GlassPayColors.Warning, size = 88.dp, background = GlassPayColors.WarningSoft)
                 }
-                Text("Enviando a ${outcome.recipientName}…", style = MaterialTheme.typography.headlineSmall, color = GlassPayColors.Text)
+                Text(L("Enviando a %s…", outcome.recipientName), style = MaterialTheme.typography.headlineSmall, color = GlassPayColors.Text)
                 MoneyText(formatMoney(outcome.amount, outcome.currency), style = MaterialTheme.typography.headlineLarge)
                 if (gaveUp) {
-                    InlineNotice("Tu envío sigue en proceso. Revísalo en Movimientos.", kind = StatusKind.PENDING)
+                    InlineNotice(L("Tu envío sigue en proceso. Revísalo en Movimientos."), kind = StatusKind.PENDING)
                 }
             }
         }
-        GpButton("Listo", onClick = onDone, modifier = Modifier.fillMaxWidth().padding(top = 16.dp))
-        GpButton("Ver en Movimientos", onClick = onOpenMovements, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
+        GpButton(L("Listo"), onClick = onDone, modifier = Modifier.fillMaxWidth().padding(top = 16.dp))
+        GpButton(L("Ver en Movimientos"), onClick = onOpenMovements, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
     }
 }

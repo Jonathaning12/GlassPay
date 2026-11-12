@@ -10,10 +10,17 @@ import kotlin.math.log10
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
-enum class StatsPeriod(val apiValue: String, val label: String, val previousLabel: String, val bucketNoun: String) {
-    WEEK("week", "Semana", "vs. semana pasada", "día"),
-    MONTH("month", "Mes", "vs. mes pasado", "semana"),
-    YEAR("year", "Año", "vs. año pasado", "mes"),
+enum class StatsPeriod(val apiValue: String) {
+    WEEK("week"),
+    MONTH("month"),
+    YEAR("year"),
+    ;
+
+    // Se calculan en cada lectura para seguir el idioma elegido en Perfil.
+    val label: String get() = when (this) { WEEK -> L("Semana"); MONTH -> L("Mes"); YEAR -> L("Año") }
+    val previousLabel: String
+        get() = when (this) { WEEK -> L("vs. semana pasada"); MONTH -> L("vs. mes pasado"); YEAR -> L("vs. año pasado") }
+    val bucketNoun: String get() = when (this) { WEEK -> L("día"); MONTH -> L("semana"); YEAR -> L("mes") }
 }
 
 data class StatsBucket(val label: String, val paidTotal: Double, val sentTotal: Double)

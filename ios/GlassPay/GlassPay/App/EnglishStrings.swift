@@ -442,4 +442,10 @@ let englishStrings: [String: String] = [
     "Quién te pagó más": "Who paid you most",
     "%@ · 1 cobro": "%@ · 1 charge",
     "%@ · %@ cobros": "%@ · %@ charges",
+    "Sesión": "Session",
+    "¿Cerrar sesión?": "Sign out?",
+    "Cerrar sesión": "Sign out",
+    "Borra tu cuenta de este teléfono": "Removes your account from this phone",
+    "Cerraste sesión en este teléfono.": "You signed out on this phone.",
+    "Se borrará tu cuenta de este teléfono. GlassPay no usa contraseña: para volver tendrás que crear una cuenta nueva y ya no verás el saldo, los movimientos ni los contactos de esta.": "Your account will be removed from this phone. GlassPay doesn't use passwords: to come back you'll need to create a new account, and you won't see this account's balance, activity or contacts anymore.",
 ]

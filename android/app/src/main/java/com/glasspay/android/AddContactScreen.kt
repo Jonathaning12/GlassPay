@@ -78,11 +78,11 @@ fun AddContactScreen(
             try {
                 val resolution = api.resolveQrToken(session, token, 15_000)
                 if (resolution.contactId != null) {
-                    finish("${resolution.displayName} ya está en tus contactos", false)
+                    finish(L("%s ya está en tus contactos", resolution.displayName), false)
                 } else {
                     api.saveContact(session, resolution.resolutionId)
                     vibrate(context)
-                    finish("${resolution.displayName} se agregó a tus contactos", false)
+                    finish(L("%s se agregó a tus contactos", resolution.displayName), false)
                 }
             } catch (exception: CancellationException) {
                 throw exception
@@ -90,14 +90,14 @@ fun AddContactScreen(
                 Log.i("GlassPay", "addContact failure type=${exception.type} httpCode=${exception.httpCode}")
                 when (exception.type) {
                     ApiFailureType.UNAUTHORIZED -> onSessionInvalid(SESSION_INVALID_MESSAGE)
-                    ApiFailureType.NOT_FOUND -> finish("Ese QR ya no es válido. Pide que lo actualicen.", true)
-                    ApiFailureType.CONFLICT -> finish("Ese es tu propio QR.", true)
-                    ApiFailureType.RATE_LIMITED -> finish("Demasiados intentos. Espera unos segundos.", true)
-                    else -> finish("Revisa tu conexión.", true)
+                    ApiFailureType.NOT_FOUND -> finish(L("Ese QR ya no es válido. Pide que lo actualicen."), true)
+                    ApiFailureType.CONFLICT -> finish(L("Ese es tu propio QR."), true)
+                    ApiFailureType.RATE_LIMITED -> finish(L("Demasiados intentos. Espera unos segundos."), true)
+                    else -> finish(L("Revisa tu conexión."), true)
                 }
             } catch (_: Exception) {
                 Log.i("GlassPay", "addContact failure type=UNKNOWN httpCode=none")
-                finish("Revisa tu conexión.", true)
+                finish(L("Revisa tu conexión."), true)
             }
         }
     }
@@ -119,9 +119,9 @@ fun AddContactScreen(
                             .padding(20.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        Text("Agregar contacto", color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
+                        Text(L("Agregar contacto"), color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "Apunta al QR de tu amigo. Solo se guarda su nombre visible.",
+                            L("Apunta al QR de tu amigo. Solo se guarda su nombre visible."),
                             color = GlassPayColors.MutedText,
                             style = MaterialTheme.typography.bodySmall,
                         )
@@ -134,17 +134,17 @@ fun AddContactScreen(
                     ) {
                         IconBadge(R.drawable.ic_charge, tint = GlassPayColors.Accent, size = 72.dp, background = GlassPayColors.AccentSoft)
                         Text(
-                            "Necesitamos la cámara para leer el QR.",
+                            L("Necesitamos la cámara para leer el QR."),
                             style = MaterialTheme.typography.titleMedium,
                             color = GlassPayColors.Text,
                             textAlign = TextAlign.Center,
                         )
-                        GpButton("Permitir cámara", onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }, modifier = Modifier.fillMaxWidth())
+                        GpButton(L("Permitir cámara"), onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }, modifier = Modifier.fillMaxWidth())
                     }
                 }
                 CircleIconButton(
                     R.drawable.ic_back,
-                    "Volver",
+                    L("Volver"),
                     onDone,
                     modifier = Modifier.align(Alignment.TopStart).padding(16.dp),
                 )
@@ -155,7 +155,7 @@ fun AddContactScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 CircularProgressIndicator(color = GlassPayColors.Accent)
-                Text("Agregando contacto…", color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
+                Text(L("Agregando contacto…"), color = GlassPayColors.Text, style = MaterialTheme.typography.titleMedium)
             }
             is AddContactState.Result -> Column(
                 modifier = Modifier.align(Alignment.Center).padding(24.dp),
@@ -176,7 +176,7 @@ fun AddContactScreen(
                     textAlign = TextAlign.Center,
                 )
                 GpButton(
-                    "Agregar otro",
+                    L("Agregar otro"),
                     onClick = {
                         if (current.isError) lastToken = null
                         state = AddContactState.Scanning
@@ -184,7 +184,7 @@ fun AddContactScreen(
                     icon = R.drawable.ic_qr,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                GpButton("Listo", onClick = onDone, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
+                GpButton(L("Listo"), onClick = onDone, kind = GpButtonKind.SECONDARY, modifier = Modifier.fillMaxWidth())
             }
         }
     }

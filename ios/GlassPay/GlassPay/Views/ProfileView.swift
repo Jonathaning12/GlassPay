@@ -8,6 +8,7 @@ struct ProfileView: View {
     let context: AppContext
     @State private var profile: LoadState<CollectorProfile> = .loading
     @State private var revealed = false
+    @State private var confirmingLogout = false
 
     var body: some View {
         ScrollView {
@@ -70,8 +71,13 @@ struct ProfileView: View {
                 }
                 .reveal(revealed, index: 4)
 
+                section(L("Sesión")) {
+                    logoutRow
+                }
+                .reveal(revealed, index: 5)
+
                 InlineNotice(L("Actividad en GlassPay (Sandbox). No es una cuenta bancaria."), icon: GPIcon.lock)
-                    .reveal(revealed, index: 5)
+                    .reveal(revealed, index: 6)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
@@ -80,6 +86,14 @@ struct ProfileView: View {
         .navigationTitle(L("Mi perfil"))
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { revealed = true }
+        .confirmationDialog(L("¿Cerrar sesión?"), isPresented: $confirmingLogout, titleVisibility: .visible) {
+            Button(L("Cerrar sesión"), role: .destructive) {
+                context.invalidate(L("Cerraste sesión en este teléfono."))
+            }
+            Button(L("Cancelar"), role: .cancel) {}
+        } message: {
+            Text(L("Se borrará tu cuenta de este teléfono. GlassPay no usa contraseña: para volver tendrás que crear una cuenta nueva y ya no verás el saldo, los movimientos ni los contactos de esta."))
+        }
         // Se vuelve a cargar cada vez que se entra (por ejemplo, al volver de "Recibir envíos").
         .task { await load() }
     }
@@ -135,6 +149,25 @@ struct ProfileView: View {
         .padding(.vertical, 14)
         .frame(minHeight: 72)
         .accessibilityElement(children: .combine)
+    }
+
+    /// Borra la cuenta de este teléfono tras confirmarlo (igual que ProfileScreen.kt en Android).
+    private var logoutRow: some View {
+        Button { confirmingLogout = true } label: {
+            HStack(spacing: 16) {
+                IconBadge(icon: "rectangle.portrait.and.arrow.right", tint: GP.error, background: GP.errorSoft)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L("Cerrar sesión")).font(.gpBodyStrong).foregroundStyle(GP.error)
+                    Text(L("Borra tu cuenta de este teléfono")).font(.gpNote).foregroundStyle(GP.muted)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .multilineTextAlignment(.leading)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .frame(minHeight: 72)
+        }
+        .buttonStyle(PressScaleStyle())
     }
 
     private var rowDivider: some View {

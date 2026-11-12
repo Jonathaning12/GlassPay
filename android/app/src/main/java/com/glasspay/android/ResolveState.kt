@@ -142,11 +142,11 @@ class ResolveStateMachine(
 private fun ResolveFailureType.message(): String {
     return when (this) {
         ResolveFailureType.NETWORK,
-        ResolveFailureType.TIMEOUT -> "No pudimos conectar con GlassPay. Revisa tu conexión."
-        ResolveFailureType.RATE_LIMITED -> "Demasiados intentos. Espera unos segundos."
-        ResolveFailureType.SERVER -> "GlassPay no pudo procesar el QR. Intenta de nuevo."
-        ResolveFailureType.INVALID_RESPONSE -> "Recibimos una respuesta inválida de GlassPay."
-        ResolveFailureType.NOT_FOUND -> "El QR no es válido o ya venció."
-        ResolveFailureType.OWN_QR -> "Ese es tu propio QR."
+        ResolveFailureType.TIMEOUT -> L("No pudimos conectar con GlassPay. Revisa tu conexión.")
+        ResolveFailureType.RATE_LIMITED -> L("Demasiados intentos. Espera unos segundos.")
+        ResolveFailureType.SERVER -> L("GlassPay no pudo procesar el QR. Intenta de nuevo.")
+        ResolveFailureType.INVALID_RESPONSE -> L("Recibimos una respuesta inválida de GlassPay.")
+        ResolveFailureType.NOT_FOUND -> L("El QR no es válido o ya venció.")
+        ResolveFailureType.OWN_QR -> L("Ese es tu propio QR.")
     }
 }
